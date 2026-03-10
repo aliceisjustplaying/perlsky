@@ -384,6 +384,39 @@ sub get_blob ($self, $cid) {
   );
 }
 
+sub update_blob ($self, $cid, %args) {
+  my @sets;
+  my @bind;
+  for my $column (qw(did mime_type byte_size storage_path temporary referenced_at quarantined_at)) {
+    next unless exists $args{$column};
+    push @sets, "$column = ?";
+    push @bind, $column eq 'temporary' ? ($args{$column} ? 1 : 0) : $args{$column};
+  }
+  return $self->get_blob($cid) unless @sets;
+  push @bind, $cid;
+  $self->dbh->do(
+    'UPDATE blobs SET ' . join(', ', @sets) . ' WHERE cid = ?',
+    undef,
+    @bind,
+  );
+  return $self->get_blob($cid);
+}
+
+sub mark_blobs_referenced ($self, @cids) {
+  return 0 unless @cids;
+  my $now = time;
+  my %seen;
+  for my $cid (grep { defined && length && !$seen{$_}++ } @cids) {
+    $self->dbh->do(
+      q{UPDATE blobs SET referenced_at = ?, temporary = 0 WHERE cid = ?},
+      undef,
+      $now,
+      $cid,
+    );
+  }
+  return scalar keys %seen;
+}
+
 sub list_blobs_by_did ($self, $did, %args) {
   my $limit = $args{limit} // 500;
   my $cursor = $args{cursor};

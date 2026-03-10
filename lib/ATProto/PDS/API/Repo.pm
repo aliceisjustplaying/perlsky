@@ -12,6 +12,7 @@ use JSON::PP ();
 
 use ATProto::PDS::API::Server qw(require_auth);
 use ATProto::PDS::API::Util qw(blob_ref);
+use ATProto::PDS::Moderation qw(assert_record_readable assert_repo_readable assert_repo_writable is_record_takedown parse_at_uri);
 use ATProto::PDS::Repo::CID;
 
 our @EXPORT_OK = qw(register_repo_handlers);
@@ -20,6 +21,7 @@ sub register_repo_handlers ($registry, $app) {
   $registry->register('com.atproto.repo.describeRepo', sub ($c, $endpoint) {
     my $account = _resolve_repo($c, $c->param('repo'));
     _xrpc_error(404, 'RepoNotFound', 'Repository was not found') unless $account;
+    assert_repo_readable($c, $account);
 
     return {
       handle          => $account->{handle},
@@ -104,8 +106,10 @@ sub register_repo_handlers ($registry, $app) {
   $registry->register('com.atproto.repo.getRecord', sub ($c, $endpoint) {
     my $account = _resolve_repo($c, $c->param('repo'));
     _xrpc_error(404, 'RepoNotFound', 'Repository was not found') unless $account;
+    assert_repo_readable($c, $account);
     my $row = $c->store->get_record($account->{did}, $c->param('collection'), $c->param('rkey'));
     _xrpc_error(404, 'RecordNotFound', 'Record was not found') unless $row;
+    assert_record_readable($c, "at://$account->{did}/$row->{collection}/$row->{rkey}");
     return {
       uri   => "at://$account->{did}/$row->{collection}/$row->{rkey}",
       cid   => $row->{cid},
@@ -116,7 +120,9 @@ sub register_repo_handlers ($registry, $app) {
   $registry->register('com.atproto.repo.listRecords', sub ($c, $endpoint) {
     my $account = _resolve_repo($c, $c->param('repo'));
     _xrpc_error(404, 'RepoNotFound', 'Repository was not found') unless $account;
-    my $page = $c->store->list_records(
+    assert_repo_readable($c, $account);
+    my $page = _list_visible_records(
+      $c,
       $account->{did},
       $c->param('collection'),
       limit   => $c->param('limit') // 50,
@@ -139,8 +145,12 @@ sub register_repo_handlers ($registry, $app) {
 
   $registry->register('com.atproto.repo.uploadBlob', sub ($c, $endpoint) {
     my (undef, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
+    assert_repo_writable($c, $account);
     my $bytes = $c->req->body // q();
     my $cid = ATProto::PDS::Repo::CID->for_raw($bytes)->to_string;
+    my $existing = $c->store->get_blob($cid);
+    _xrpc_error(400, 'BlobTakenDown', 'Blob has been taken down')
+      if $existing && defined $existing->{quarantined_at};
     my $data_dir = $c->config_value('data_dir', File::Spec->catdir($c->app->project_root, 'data', 'runtime'));
     my $blob_dir = File::Spec->catdir($data_dir, 'blobs');
     make_path($blob_dir);
@@ -166,6 +176,7 @@ sub register_repo_handlers ($registry, $app) {
 
   $registry->register('com.atproto.repo.listMissingBlobs', sub ($c, $endpoint) {
     my (undef, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
+    assert_repo_writable($c, $account);
     my $page = {
       items  => [],
       cursor => undef,
@@ -177,6 +188,7 @@ sub register_repo_handlers ($registry, $app) {
 
   $registry->register('com.atproto.repo.importRepo', sub ($c, $endpoint) {
     my (undef, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
+    assert_repo_writable($c, $account);
     _xrpc_error(400, 'InvalidRequest', 'Service is not accepting repo imports')
       unless $c->config_value('accepting_imports', 1);
     my $car_bytes = $c->req->body // q();
@@ -210,7 +222,44 @@ sub _require_repo_owner ($c, $repo) {
   _xrpc_error(404, 'RepoNotFound', 'Repository was not found') unless $account;
   my ($claims) = require_auth($c, audience => 'access', allow_refresh => 1);
   _xrpc_error(401, 'AuthRequired', 'Token is not authorized for that repo') unless ($claims->{sub} // '') eq $account->{did};
+  assert_repo_writable($c, $account);
   return $account;
+}
+
+sub _list_visible_records ($c, $did, $collection, %args) {
+  my $limit = $args{limit} // 50;
+  my $cursor = $args{cursor};
+  my $reverse = $args{reverse} ? 1 : 0;
+  my @visible;
+  my $next_cursor = $cursor;
+  while (@visible < $limit + 1) {
+    my $page = $c->store->list_records(
+      $did,
+      $collection,
+      limit   => $limit + 1,
+      cursor  => $next_cursor,
+      reverse => $reverse,
+    );
+    last unless @{ $page->{items} };
+    for my $row (@{ $page->{items} }) {
+      next if is_record_takedown($c, "at://$did/$row->{collection}/$row->{rkey}");
+      push @visible, $row;
+      last if @visible >= $limit + 1;
+    }
+    last unless defined $page->{cursor};
+    $next_cursor = $page->{cursor};
+  }
+
+  my $out_cursor;
+  if (@visible > $limit) {
+    my $last = pop @visible;
+    $out_cursor = $last->{rkey};
+  }
+
+  return {
+    items  => \@visible,
+    cursor => $out_cursor,
+  };
 }
 
 sub _xrpc_error ($status, $error, $message) {

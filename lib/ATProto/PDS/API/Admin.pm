@@ -13,6 +13,7 @@ use ATProto::PDS::API::Util qw(xrpc_error);
 use ATProto::PDS::Auth::Password qw(hash_password);
 use ATProto::PDS::Crypto::Secp256k1 qw(signing_did_to_public_key_multibase);
 use ATProto::PDS::Identity qw(account_did_doc normalize_handle);
+use ATProto::PDS::Moderation qw(current_record_subject current_subject_status parse_at_uri);
 
 our @EXPORT_OK = qw(register_admin_handlers);
 
@@ -52,28 +53,45 @@ sub register_admin_handlers ($registry, $app) {
   $registry->register('com.atproto.admin.getSubjectStatus', sub ($c, $endpoint) {
     require_admin($c);
     my $subject = _subject_from_params($c);
-    my $status = $c->store->get_subject_status(subject_key($subject));
+    my $status = current_subject_status($c, $subject);
+    xrpc_error(404, 'NotFound', 'Subject not found') unless $status;
     return {
-      subject => $subject,
-      ($status && $status->{takedown} ? (takedown => $status->{takedown}) : ()),
-      ($status && $status->{deactivated} ? (deactivated => $status->{deactivated}) : ()),
+      subject => $status->{subject},
+      ($status->{takedown} ? (takedown => $status->{takedown}) : ()),
+      ($status->{deactivated} ? (deactivated => $status->{deactivated}) : ()),
     };
   });
 
   $registry->register('com.atproto.admin.updateSubjectStatus', sub ($c, $endpoint) {
     require_admin($c);
     my $body = $c->req->json || {};
-    my $subject = $body->{subject} || {};
+    my $subject = _validated_subject($c, $body->{subject} || {});
+    my $existing = $c->store->get_subject_status(subject_key($subject));
     my $status = $c->store->put_subject_status(
       subject_key  => subject_key($subject),
       subject      => $subject,
-      takedown     => $body->{takedown},
-      deactivated  => $body->{deactivated},
+      takedown     => exists($body->{takedown}) ? $body->{takedown} : ($existing ? $existing->{takedown} : undef),
+      deactivated  => exists($body->{deactivated}) ? $body->{deactivated} : ($existing ? $existing->{deactivated} : undef),
     );
-    if (exists($subject->{did}) && !exists($subject->{uri}) && !exists($subject->{cid}) && $body->{deactivated}) {
+    if (exists($subject->{did}) && !exists($subject->{uri}) && !exists($subject->{cid}) && exists($body->{deactivated})) {
       $c->store->update_account(
         $subject->{did},
         deactivated_at => $body->{deactivated}{applied} ? time : undef,
+      );
+      $c->store->append_event(
+        did     => $subject->{did},
+        type    => 'account',
+        rev     => ($c->store->get_account_by_did($subject->{did})->{repo_rev} // undef),
+        payload => {
+          active => $body->{deactivated}{applied} ? JSON::PP::false : JSON::PP::true,
+          ($body->{deactivated}{applied} ? (status => 'deactivated') : ()),
+        },
+      );
+    }
+    if (exists($subject->{did}) && exists($subject->{cid})) {
+      $c->store->update_blob(
+        $subject->{cid},
+        quarantined_at => ($status->{takedown} && $status->{takedown}{applied}) ? time : undef,
       );
     }
     return {
@@ -252,6 +270,35 @@ sub _subject_from_params ($c) {
     cid => $c->param('blob'),
   } if defined $c->param('blob');
   xrpc_error(400, 'InvalidRequest', 'A subject reference is required');
+}
+
+sub _validated_subject ($c, $subject) {
+  if (exists($subject->{did}) && !exists($subject->{uri}) && !exists($subject->{cid})) {
+    my $account = $c->store->get_account_by_did($subject->{did});
+    xrpc_error(404, 'NotFound', 'Subject not found') unless $account;
+    return {
+      %{$subject},
+      '$type' => ($subject->{'$type'} // 'com.atproto.admin.defs#repoRef'),
+    };
+  }
+  if (exists $subject->{uri}) {
+    my $current = current_record_subject($c, $subject->{uri});
+    xrpc_error(404, 'NotFound', 'Subject not found') unless $current;
+    return {
+      %{$current},
+      '$type' => ($subject->{'$type'} // 'com.atproto.repo.strongRef'),
+    };
+  }
+  if (exists($subject->{did}) && exists($subject->{cid})) {
+    my $blob = $c->store->get_blob($subject->{cid});
+    xrpc_error(404, 'NotFound', 'Subject not found')
+      unless $blob && ($blob->{did} // q()) eq ($subject->{did} // q());
+    return {
+      %{$subject},
+      '$type' => ($subject->{'$type'} // 'com.atproto.admin.defs#repoBlobRef'),
+    };
+  }
+  xrpc_error(400, 'InvalidRequest', 'Invalid subject');
 }
 
 1;

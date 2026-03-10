@@ -12,6 +12,7 @@ use Mojo::IOLoop;
 use ATProto::PDS::EventStream qw(encode_error_frame encode_info_frame encode_message_frame);
 use ATProto::PDS::API::Util qw(iso8601 resolve_did_account xrpc_error);
 use ATProto::PDS::Identity qw(service_host);
+use ATProto::PDS::Moderation qw(assert_blob_readable assert_record_readable assert_repo_readable);
 use ATProto::PDS::Repo::CAR qw(write_car);
 use ATProto::PDS::Repo::CID;
 use ATProto::PDS::Repo::Bytes;
@@ -22,6 +23,7 @@ sub register_sync_handlers ($registry, $app) {
   $registry->register('com.atproto.sync.getLatestCommit', sub ($c, $endpoint) {
     my $account = resolve_did_account($c, $c->param('did') // q());
     xrpc_error(404, 'RepoNotFound', 'Repository was not found') unless $account;
+    assert_repo_readable($c, $account, message => 'Could not find repo for DID: ' . ($c->param('did') // q()));
     my $head = $c->store->get_repo_head($account->{did});
     xrpc_error(404, 'RepoNotFound', 'Repository was not found') unless $head;
     return {
@@ -33,6 +35,7 @@ sub register_sync_handlers ($registry, $app) {
   $registry->register('com.atproto.sync.getHead', sub ($c, $endpoint) {
     my $account = resolve_did_account($c, $c->param('did') // q());
     xrpc_error(404, 'HeadNotFound', 'Repository head was not found') unless $account;
+    assert_repo_readable($c, $account, error => 'HeadNotFound', message => 'Repository head was not found');
     my $head = $c->store->get_repo_head($account->{did});
     xrpc_error(404, 'HeadNotFound', 'Repository head was not found') unless $head;
     return {
@@ -43,6 +46,7 @@ sub register_sync_handlers ($registry, $app) {
   $registry->register('com.atproto.sync.getRepoStatus', sub ($c, $endpoint) {
     my $account = resolve_did_account($c, $c->param('did') // q());
     xrpc_error(404, 'RepoNotFound', 'Repository was not found') unless $account;
+    assert_repo_readable($c, $account, message => 'Could not find repo for DID: ' . ($c->param('did') // q()));
     return {
       did    => $account->{did},
       active => defined($account->{deactivated_at}) ? JSON::PP::false : JSON::PP::true,
@@ -55,6 +59,7 @@ sub register_sync_handlers ($registry, $app) {
   $registry->register('com.atproto.sync.getRepo', sub ($c, $endpoint) {
     my $account = resolve_did_account($c, $c->param('did') // q());
     xrpc_error(404, 'RepoNotFound', 'Repository was not found') unless $account;
+    assert_repo_readable($c, $account, message => 'Could not find repo for DID: ' . ($c->param('did') // q()));
     my $car = $c->store->repo_car($account->{did});
     xrpc_error(404, 'RepoNotFound', 'Repository was not found') unless defined $car;
     $c->res->headers->content_type('application/vnd.ipld.car');
@@ -65,6 +70,7 @@ sub register_sync_handlers ($registry, $app) {
   $registry->register('com.atproto.sync.getCheckout', sub ($c, $endpoint) {
     my $account = resolve_did_account($c, $c->param('did') // q());
     xrpc_error(404, 'RepoNotFound', 'Repository was not found') unless $account;
+    assert_repo_readable($c, $account, message => 'Could not find repo for DID: ' . ($c->param('did') // q()));
     my $car = $c->store->repo_car($account->{did});
     xrpc_error(404, 'RepoNotFound', 'Repository was not found') unless defined $car;
     $c->res->headers->content_type('application/vnd.ipld.car');
@@ -75,8 +81,10 @@ sub register_sync_handlers ($registry, $app) {
   $registry->register('com.atproto.sync.getRecord', sub ($c, $endpoint) {
     my $account = resolve_did_account($c, $c->param('did') // q());
     xrpc_error(404, 'RepoNotFound', 'Repository was not found') unless $account;
+    assert_repo_readable($c, $account, message => 'Could not find repo for DID: ' . ($c->param('did') // q()));
     my $record = $c->store->get_record($account->{did}, $c->param('collection'), $c->param('rkey'));
     xrpc_error(404, 'RecordNotFound', 'Record was not found') unless $record;
+    assert_record_readable($c, "at://$account->{did}/$record->{collection}/$record->{rkey}");
     my $car = $c->store->repo_car($account->{did});
     xrpc_error(404, 'RepoNotFound', 'Repository was not found') unless defined $car;
     $c->res->headers->content_type('application/vnd.ipld.car');
@@ -87,6 +95,7 @@ sub register_sync_handlers ($registry, $app) {
   $registry->register('com.atproto.sync.getBlocks', sub ($c, $endpoint) {
     my $account = resolve_did_account($c, $c->param('did') // q());
     xrpc_error(404, 'RepoNotFound', 'Repository was not found') unless $account;
+    assert_repo_readable($c, $account, message => 'Could not find repo for DID: ' . ($c->param('did') // q()));
     my @cids = _flatten_params($c->every_param('cids'));
     xrpc_error(400, 'InvalidRequest', 'At least one CID is required') unless @cids;
     my $rows = $c->store->get_blocks(\@cids);
@@ -112,6 +121,7 @@ sub register_sync_handlers ($registry, $app) {
     my $blob = $c->store->get_blob($c->param('cid') // q());
     xrpc_error(404, 'BlobNotFound', 'Blob was not found')
       unless $blob && ($blob->{did} // q()) eq $account->{did};
+    assert_blob_readable($c, $account, $blob);
     xrpc_error(404, 'BlobNotFound', 'Blob content is not available')
       unless $blob->{storage_path} && -f $blob->{storage_path};
     open(my $fh, '<:raw', $blob->{storage_path}) or xrpc_error(500, 'StorageFailure', 'Unable to read blob');
@@ -149,6 +159,7 @@ sub register_sync_handlers ($registry, $app) {
   $registry->register('com.atproto.sync.listBlobs', sub ($c, $endpoint) {
     my $account = resolve_did_account($c, $c->param('did') // q());
     xrpc_error(404, 'RepoNotFound', 'Repository was not found') unless $account;
+    assert_repo_readable($c, $account, message => 'Could not find repo for DID: ' . ($c->param('did') // q()));
     my $page = $c->store->list_blobs_by_did(
       $account->{did},
       limit  => $c->param('limit') // 500,

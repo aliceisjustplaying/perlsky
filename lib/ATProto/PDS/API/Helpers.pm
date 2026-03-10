@@ -11,6 +11,7 @@ use MIME::Base64 qw(decode_base64);
 
 use ATProto::PDS::API::Util qw(iso8601 xrpc_error);
 use ATProto::PDS::Auth::Password qw(verify_password);
+use ATProto::PDS::Moderation qw(subject_key);
 
 our @EXPORT_OK = qw(
   account_view
@@ -100,16 +101,6 @@ sub invite_code_view ($store, $row) {
       } @$uses
     ],
   };
-}
-
-sub subject_key ($subject) {
-  return 'repo:' . ($subject->{did} // q())
-    if ref($subject) eq 'HASH' && exists $subject->{did} && !exists $subject->{uri} && !exists $subject->{cid};
-  return 'record:' . ($subject->{uri} // q()) . ':' . ($subject->{cid} // q())
-    if ref($subject) eq 'HASH' && exists $subject->{uri};
-  return 'blob:' . ($subject->{did} // q()) . ':' . ($subject->{cid} // q())
-    if ref($subject) eq 'HASH' && exists $subject->{did} && exists $subject->{cid};
-  xrpc_error(400, 'InvalidRequest', 'Unsupported subject payload');
 }
 
 1;

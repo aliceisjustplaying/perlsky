@@ -13,6 +13,7 @@ use ATProto::PDS::API::Server qw(require_auth);
 use ATProto::PDS::API::Util qw(iso8601 xrpc_error);
 use ATProto::PDS::Auth::Password qw(hash_password random_hex);
 use ATProto::PDS::Identity qw(account_did_doc normalize_handle service_did service_did_doc);
+use ATProto::PDS::Moderation qw(assert_report_allowed);
 use ATProto::PDS::PLC qw(create_signed_plc_operation is_plc_did plc_rotation_did plc_update_handle recommended_did_credentials refresh_plc_did_doc submit_plc_operation);
 use ATProto::PDS::Repo::CID;
 use ATProto::PDS::Repo::DagCbor qw(encode_dag_cbor);
@@ -183,6 +184,7 @@ sub register_misc_handlers ($registry, $app) {
   $registry->register('com.atproto.moderation.createReport', sub ($c, $endpoint) {
     my (undef, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
     my $body = $c->req->json || {};
+    assert_report_allowed($c, $account, $body->{reasonType});
     my $row = $c->store->create_report(
       reason_type => $body->{reasonType},
       reason      => $body->{reason},

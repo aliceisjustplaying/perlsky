@@ -9,6 +9,7 @@ use JSON::PP qw(decode_json);
 use Scalar::Util qw(blessed);
 
 use ATProto::PDS::Crypto::Secp256k1 qw(generate_keypair sign_compact_low_s);
+use ATProto::PDS::API::Util qw(xrpc_error);
 use ATProto::PDS::Repo::Bytes;
 use ATProto::PDS::Repo::CAR qw(read_car write_car);
 use ATProto::PDS::Repo::CID;
@@ -81,6 +82,20 @@ sub apply_writes ($self, $account, $writes, %opts) {
     my $collection = $write->{collection};
     my $rkey = $write->{rkey} // next_tid();
     my $value = $write->{value} // $write->{record};
+    my @blob_cids = _blob_cids($value);
+    for my $blob_cid (@blob_cids) {
+      my $blob = $store->get_blob($blob_cid);
+      die {
+        status  => 400,
+        error   => 'InvalidBlob',
+        message => "Could not find blob: $blob_cid",
+      } unless $blob && ($blob->{did} // q()) eq $did;
+      die {
+        status  => 400,
+        error   => 'BlobTakenDown',
+        message => "Blob has been taken down: $blob_cid",
+      } if defined $blob->{quarantined_at};
+    }
     my $bytes = encode_dag_cbor($value);
     my $cid = ATProto::PDS::Repo::CID->for_dag_cbor($bytes);
     my $path = $collection . '/' . $rkey;
@@ -145,6 +160,9 @@ sub apply_writes ($self, $account, $writes, %opts) {
       );
     }
     $store->replace_records_for_did($did, [ values %$records ]);
+    for my $record (values %$records) {
+      $store->mark_blobs_referenced(_blob_cids($record->{value}));
+    }
     $store->put_commit(
       did         => $did,
       rev         => $rev,
@@ -175,6 +193,28 @@ sub apply_writes ($self, $account, $writes, %opts) {
     car_bytes => $car_bytes,
     results  => \@results,
   };
+}
+
+sub _blob_cids ($value) {
+  return () unless defined $value;
+  if (ref($value) eq 'HASH') {
+    if (($value->{'$type'} // q()) eq 'blob' && ref($value->{ref}) eq 'HASH' && defined($value->{ref}{'$link'})) {
+      return ($value->{ref}{'$link'});
+    }
+    my @found;
+    for my $child (values %$value) {
+      push @found, _blob_cids($child);
+    }
+    return @found;
+  }
+  if (ref($value) eq 'ARRAY') {
+    my @found;
+    for my $child (@$value) {
+      push @found, _blob_cids($child);
+    }
+    return @found;
+  }
+  return ();
 }
 
 sub import_repo_car ($self, $account, $car_bytes) {

@@ -13,6 +13,7 @@ use ATProto::PDS::API::Util qw(iso8601 xrpc_error);
 use ATProto::PDS::Auth::JWT qw(decode_jwt encode_jwt);
 use ATProto::PDS::Auth::Password qw(hash_password random_hex);
 use ATProto::PDS::Identity qw(account_did account_did_doc normalize_handle service_did);
+use ATProto::PDS::Moderation qw(assert_login_allowed);
 use ATProto::PDS::PLC qw(account_did_method create_plc_account is_plc_did refresh_plc_did_doc);
 use ATProto::PDS::Repo::CAR qw(read_car);
 
@@ -121,9 +122,9 @@ sub register_server_handlers ($registry, $app) {
     my $body = $c->req->json || {};
     my $account = find_account($c, $body->{identifier} // q());
     xrpc_error(401, 'AuthRequired', 'Invalid identifier or password') unless $account;
-    xrpc_error(403, 'AccountDeleted', 'Account has been deleted') if defined $account->{deleted_at};
     xrpc_error(401, 'AuthRequired', 'Invalid identifier or password')
       unless verify_account_password($c, $account, $body->{password} // q());
+    assert_login_allowed($c, $account, allow_takedown => $body->{allowTakendown});
     return _issue_session($c, $account);
   });
 
@@ -137,6 +138,7 @@ sub register_server_handlers ($registry, $app) {
     my $session = $c->store->get_session($claims->{jti});
     xrpc_error(401, 'InvalidToken', 'Refresh session was not found') unless $session;
     xrpc_error(401, 'ExpiredToken', 'Refresh session has already been revoked') if defined $session->{revoked_at};
+    assert_login_allowed($c, $account);
     $c->store->revoke_session($session->{id});
     return _issue_session($c, $account);
   });
