@@ -97,6 +97,21 @@ sub register_builtin_handlers ($registry, $app) {
     return {
       handle    => $handle // ($c->param('handle') // ''),
       available => $available ? true : false,
+      result    => $available ? {} : {
+        suggestions => [
+          map {
+            +{
+              handle => $_,
+              method => 'suffix',
+            }
+          } grep {
+            !$c->store->get_account_by_handle($_) && !$c->store->get_reserved_handle($_)
+          } map {
+            my ($left, $rest) = split /\./, ($handle // q()), 2;
+            $left . '-' . $_ . ($rest ? ".$rest" : q())
+          } qw(perl perl5 pds)
+        ],
+      },
     };
   });
 }
