@@ -13,6 +13,7 @@ use ATProto::PDS::API::Util qw(iso8601 xrpc_error);
 use ATProto::PDS::Auth::JWT qw(decode_jwt encode_jwt);
 use ATProto::PDS::Auth::Password qw(hash_password random_hex);
 use ATProto::PDS::Identity qw(account_did account_did_doc normalize_handle service_did);
+use ATProto::PDS::Repo::CAR qw(read_car);
 
 our @EXPORT_OK = qw(register_server_handlers require_auth session_view);
 
@@ -85,6 +86,14 @@ sub register_server_handlers ($registry, $app) {
       used_by => $account->{did},
     ) if $invite;
     $c->store->claim_reserved_signing_key($did) if $reserved && !defined $reserved->{claimed_at};
+    $c->store->append_event(
+      did     => $account->{did},
+      type    => 'account',
+      rev     => $account->{repo_rev},
+      payload => {
+        active => JSON::PP::true,
+      },
+    );
 
     return _issue_session($c, $account);
   });
@@ -122,12 +131,21 @@ sub register_server_handlers ($registry, $app) {
 
   $registry->register('com.atproto.server.checkAccountStatus', sub ($c, $endpoint) {
     my (undef, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
+    my $car = $c->store->repo_car($account->{did});
+    my $block_count = 0;
+    $block_count = scalar @{ read_car($car)->{blocks} } if defined $car && length $car;
     return {
-      active => (!defined($account->{deactivated_at}) && !defined($account->{deleted_at}))
+      activated          => (!defined($account->{deactivated_at}) && !defined($account->{deleted_at}))
         ? JSON::PP::true
         : JSON::PP::false,
-      (defined($account->{deleted_at}) ? (status => 'deleted') : ()),
-      (defined($account->{deactivated_at}) && !defined($account->{deleted_at}) ? (status => 'deactivated') : ()),
+      validDid           => ($account->{did} // q()) =~ /^did:/ ? JSON::PP::true : JSON::PP::false,
+      repoCommit         => $account->{repo_commit_cid} // q(),
+      repoRev            => $account->{repo_rev} // q(),
+      repoBlocks         => 0 + $block_count,
+      indexedRecords     => 0 + $c->store->count_records_by_did($account->{did}),
+      privateStateValues => 0,
+      expectedBlobs      => 0 + $c->store->count_blobs_by_did($account->{did}),
+      importedBlobs      => 0 + $c->store->count_blobs_by_did($account->{did}),
     };
   });
 
@@ -183,12 +201,29 @@ sub register_server_handlers ($registry, $app) {
   $registry->register('com.atproto.server.deactivateAccount', sub ($c, $endpoint) {
     my (undef, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
     $c->store->update_account($account->{did}, deactivated_at => time);
+    $c->store->append_event(
+      did     => $account->{did},
+      type    => 'account',
+      rev     => $account->{repo_rev},
+      payload => {
+        active => JSON::PP::false,
+        status => 'deactivated',
+      },
+    );
     return {};
   });
 
   $registry->register('com.atproto.server.activateAccount', sub ($c, $endpoint) {
     my (undef, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
     $c->store->update_account($account->{did}, deactivated_at => undef);
+    $c->store->append_event(
+      did     => $account->{did},
+      type    => 'account',
+      rev     => $account->{repo_rev},
+      payload => {
+        active => JSON::PP::true,
+      },
+    );
     return {};
   });
 
@@ -352,6 +387,15 @@ sub register_server_handlers ($registry, $app) {
       $c->store->revoke_sessions_by_did($account->{did});
       $c->store->revoke_app_passwords_by_did($account->{did});
       $c->store->consume_action_token($token->{token});
+      $c->store->append_event(
+        did     => $account->{did},
+        type    => 'account',
+        rev     => $account->{repo_rev},
+        payload => {
+          active => JSON::PP::false,
+          status => 'deleted',
+        },
+      );
     });
     return {};
   });

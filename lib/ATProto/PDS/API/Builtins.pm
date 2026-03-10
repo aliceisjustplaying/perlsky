@@ -87,12 +87,16 @@ sub register_builtin_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.temp.checkHandleAvailability', sub ($c, $endpoint) {
-    my $payload = $c->req->json || {};
-    my $handle = normalize_handle($payload->{handle} // '', $c->config_value('service_handle_domain', 'localhost'));
+    my $handle = normalize_handle($c->param('handle') // '', $c->config_value('service_handle_domain', 'localhost'));
     my $service_handle = lc($c->config_value('service_handle_domain', 'localhost'));
+    my $available = defined $handle
+      && $handle ne ''
+      && $handle ne $service_handle
+      && !$c->store->get_account_by_handle($handle)
+      && !$c->store->get_reserved_handle($handle);
     return {
-      handle    => $handle // ($payload->{handle} // ''),
-      available => (defined $handle && $handle ne '' && $handle ne $service_handle && !$c->store->get_account_by_handle($handle) ? true : false),
+      handle    => $handle // ($c->param('handle') // ''),
+      available => $available ? true : false,
     };
   });
 }

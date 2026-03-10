@@ -8,7 +8,7 @@ no warnings 'experimental::signatures';
 use Exporter 'import';
 use JSON::PP ();
 
-use ATProto::PDS::API::Helpers qw(find_account subject_key);
+use ATProto::PDS::API::Helpers qw(find_account require_admin subject_key);
 use ATProto::PDS::API::Server qw(require_auth);
 use ATProto::PDS::API::Util qw(iso8601 xrpc_error);
 use ATProto::PDS::Auth::Password qw(hash_password random_hex);
@@ -148,7 +148,7 @@ sub register_misc_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.lexicon.resolveLexicon', sub ($c, $endpoint) {
-    my $nsid = $c->param('nsid') // q();
+    my $nsid = $c->req->url->query->param('nsid') // q();
     my $schema = $c->lexicons->get($nsid);
     xrpc_error(404, 'LexiconNotFound', "No lexicon found for $nsid") unless $schema;
     my $bytes = encode_dag_cbor($schema);
@@ -181,7 +181,7 @@ sub register_misc_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.label.queryLabels', sub ($c, $endpoint) {
-    my $patterns = [ $c->every_param('uriPatterns') ];
+    my $patterns = [ _flatten_params($c->every_param('uriPatterns')) ];
     xrpc_error(400, 'InvalidRequest', 'uriPatterns is required') unless @$patterns;
     my @labels = grep { _matches_patterns($_->{uri}, $patterns) } @{ _current_labels($c) };
     my $limit = $c->param('limit') // 50;
@@ -217,6 +217,7 @@ sub register_misc_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.temp.addReservedHandle', sub ($c, $endpoint) {
+    require_admin($c);
     my $body   = $c->req->json || {};
     my $domain = $c->config_value('service_handle_domain', 'localhost');
     my $handle = normalize_handle($body->{handle}, $domain);
@@ -261,6 +262,14 @@ sub register_misc_handlers ($registry, $app) {
     });
     return {};
   });
+}
+
+sub _flatten_params (@values) {
+  my @flat;
+  for my $value (@values) {
+    push @flat, ref($value) eq 'ARRAY' ? @$value : $value;
+  }
+  return @flat;
 }
 
 sub _current_labels ($c) {

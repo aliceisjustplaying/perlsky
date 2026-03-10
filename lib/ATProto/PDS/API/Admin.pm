@@ -25,7 +25,7 @@ sub register_admin_handlers ($registry, $app) {
 
   $registry->register('com.atproto.admin.getAccountInfos', sub ($c, $endpoint) {
     require_admin($c);
-    my @dids = $c->every_param('dids');
+    my @dids = _flatten_params($c->every_param('dids'));
     return {
       infos => [
         map { account_view($_) }
@@ -229,6 +229,14 @@ sub register_admin_handlers ($registry, $app) {
     );
     return {};
   });
+}
+
+sub _flatten_params (@values) {
+  my @flat;
+  for my $value (@values) {
+    push @flat, ref($value) eq 'ARRAY' ? @$value : $value;
+  }
+  return @flat;
 }
 
 sub _subject_from_params ($c) {

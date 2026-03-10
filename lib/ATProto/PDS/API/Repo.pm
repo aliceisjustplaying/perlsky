@@ -6,9 +6,13 @@ use feature 'signatures';
 no warnings 'experimental::signatures';
 
 use Exporter 'import';
+use File::Path qw(make_path);
+use File::Spec;
 use JSON::PP ();
 
 use ATProto::PDS::API::Server qw(require_auth);
+use ATProto::PDS::API::Util qw(blob_ref);
+use ATProto::PDS::Repo::CID;
 
 our @EXPORT_OK = qw(register_repo_handlers);
 
@@ -131,6 +135,49 @@ sub register_repo_handlers ($registry, $app) {
         } @{ $page->{items} }
       ],
     };
+  });
+
+  $registry->register('com.atproto.repo.uploadBlob', sub ($c, $endpoint) {
+    my (undef, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
+    my $bytes = $c->req->body // q();
+    my $cid = ATProto::PDS::Repo::CID->for_raw($bytes)->to_string;
+    my $data_dir = $c->config_value('data_dir', File::Spec->catdir($c->app->project_root, 'data', 'runtime'));
+    my $blob_dir = File::Spec->catdir($data_dir, 'blobs');
+    make_path($blob_dir);
+    my $path = File::Spec->catfile($blob_dir, $cid);
+    open(my $fh, '>:raw', $path) or _xrpc_error(500, 'StorageFailure', "Unable to write blob $cid");
+    print {$fh} $bytes;
+    close($fh);
+
+    my $mime_type = $c->req->headers->content_type || 'application/octet-stream';
+    $c->store->put_blob(
+      cid          => $cid,
+      did          => $account->{did},
+      mime_type    => $mime_type,
+      byte_size    => length($bytes),
+      storage_path => $path,
+      temporary    => 1,
+    );
+
+    return {
+      blob => blob_ref($cid, $mime_type, length($bytes)),
+    };
+  });
+
+  $registry->register('com.atproto.repo.listMissingBlobs', sub ($c, $endpoint) {
+    my (undef, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
+    my $page = {
+      items  => [],
+      cursor => undef,
+    };
+    return {
+      blobs => $page->{items},
+    };
+  });
+
+  $registry->register('com.atproto.repo.importRepo', sub ($c, $endpoint) {
+    my (undef, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
+    _xrpc_error(400, 'UnsupportedRepoImport', "Repo import is not yet supported for $account->{did}");
   });
 }
 
