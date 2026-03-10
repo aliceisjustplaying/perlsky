@@ -67,14 +67,23 @@ sub apply_writes ($self, $account, $writes, %opts) {
       }
     } @{ $store->all_records_for_did($did) }
   };
+  my %previous_records = map { $_ => { %{ $records->{$_} } } } keys %$records;
 
   my @results;
+  my @ops;
   for my $write (@$writes) {
     my $action = $write->{action} // '';
     if ($action eq 'delete') {
-      my $path = $write->{collection} . '/' . $write->{rkey};
+      my $path = join('/', grep { defined && length } $write->{collection}, $write->{rkey});
+      my $previous = $previous_records{$path};
       delete $records->{$path};
       push @results, {};
+      push @ops, {
+        action => 'delete',
+        path   => $path,
+        cid    => undef,
+        ($previous ? (prev => $previous->{cid}) : ()),
+      };
       next;
     }
 
@@ -84,6 +93,7 @@ sub apply_writes ($self, $account, $writes, %opts) {
     my $bytes = encode_dag_cbor($value);
     my $cid = ATProto::PDS::Repo::CID->for_dag_cbor($bytes);
     my $path = $collection . '/' . $rkey;
+    my $previous = $previous_records{$path};
     $records->{$path} = {
       collection   => $collection,
       rkey         => $rkey,
@@ -95,6 +105,12 @@ sub apply_writes ($self, $account, $writes, %opts) {
       uri              => "at://$did/$collection/$rkey",
       cid              => $cid->to_string,
       validationStatus => 'unknown',
+    };
+    push @ops, {
+      action => $previous ? 'update' : 'create',
+      path   => $path,
+      cid    => $cid->to_string,
+      ($previous ? (prev => $previous->{cid}) : ()),
     };
   }
 
@@ -154,7 +170,11 @@ sub apply_writes ($self, $account, $writes, %opts) {
       type       => 'commit',
       rev        => $rev,
       commit_cid => $commit_cid->to_string,
-      payload    => { writes => $writes, results => \@results },
+      payload    => {
+        ops      => \@ops,
+        since    => undef,
+        prevData => $latest ? $latest->{root_cid} : undef,
+      },
       car_bytes  => $car_bytes,
     );
   });

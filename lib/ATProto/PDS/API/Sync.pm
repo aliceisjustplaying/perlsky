@@ -7,11 +7,14 @@ no warnings 'experimental::signatures';
 
 use Exporter 'import';
 use JSON::PP ();
+use Mojo::IOLoop;
 
+use ATProto::PDS::EventStream qw(encode_error_frame encode_info_frame encode_message_frame);
 use ATProto::PDS::API::Util qw(iso8601 resolve_did_account xrpc_error);
 use ATProto::PDS::Identity qw(service_host);
 use ATProto::PDS::Repo::CAR qw(write_car);
 use ATProto::PDS::Repo::CID;
+use ATProto::PDS::Repo::Bytes;
 
 our @EXPORT_OK = qw(register_sync_handlers);
 
@@ -213,25 +216,44 @@ sub register_sync_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.sync.subscribeRepos', sub ($c, $endpoint) {
-    my $cursor = int($c->param('cursor') // 0);
+    my $cursor_param = $c->param('cursor');
     my $latest = $c->store->latest_event_seq;
-    if ($cursor > $latest) {
-      $c->send({ json => {
-        name    => 'OutdatedCursor',
-        message => 'Cursor is ahead of the local event stream',
-      }});
-      $c->finish(1000);
-      return;
+    my $oldest = $c->store->oldest_event_seq;
+
+    my $next_seq;
+    if (!defined $cursor_param || $cursor_param eq q()) {
+      $next_seq = $latest + 1;
+    } else {
+      my $cursor = int($cursor_param);
+      if ($cursor > $latest + 1) {
+        $c->send({ binary => encode_error_frame('FutureCursor', 'Cursor is ahead of the local event stream') });
+        $c->finish(1008);
+        return;
+      }
+      if ($oldest && $cursor && $cursor < $oldest) {
+        $c->send({ binary => encode_info_frame('OutdatedCursor', 'Cursor predates the oldest locally retained event') });
+        $next_seq = $oldest;
+      } else {
+        $next_seq = $cursor || ($oldest || ($latest + 1));
+      }
     }
 
-    my $events = $c->store->list_events_after($cursor, limit => 100);
-    for my $event (@$events) {
-      my $message = _event_message($event);
-      next unless $message;
-      $c->send({ json => $message });
-    }
+    my $drain;
+    $drain = sub {
+      my $events = $c->store->list_events_from($next_seq, limit => 100);
+      for my $event (@$events) {
+        my $frame = _event_frame($event);
+        next unless $frame;
+        $next_seq = $event->{seq} + 1;
+        $c->send({ binary => $frame });
+      }
+    };
 
-    $c->finish(1000);
+    $drain->();
+    my $timer_id = Mojo::IOLoop->recurring(0.25 => sub { $drain->() });
+    $c->on(finish => sub ($c, $code, $reason = undef) {
+      Mojo::IOLoop->remove($timer_id) if defined $timer_id;
+    });
     return;
   });
 }
@@ -253,52 +275,50 @@ sub _host_view ($c, $row) {
   };
 }
 
-sub _event_message ($event) {
+sub _event_frame ($event) {
   if (($event->{type} // q()) eq 'commit') {
-    my @ops;
-    my $writes = $event->{payload}{writes} || [];
-    my $results = $event->{payload}{results} || [];
-    for my $idx (0 .. $#$writes) {
-      my $write = $writes->[$idx];
-      my $result = $results->[$idx] || {};
-      push @ops, {
-        action => $write->{action},
-        path   => join('/', grep { defined && length } $write->{collection}, $write->{rkey}),
-        cid    => ($write->{action} eq 'delete' ? undef : $result->{cid}),
-      };
-    }
-    return {
+    return encode_message_frame('#commit', {
       seq    => 0 + $event->{seq},
       rebase => JSON::PP::false,
       tooBig => JSON::PP::false,
       repo   => $event->{did},
-      commit => { '$link' => $event->{commit_cid} },
+      commit => ATProto::PDS::Repo::CID->from_string($event->{commit_cid}),
       rev    => $event->{rev},
-      since  => undef,
-      blocks => unpack('H*', $event->{car_bytes} // q()),
-      ops    => \@ops,
+      since  => $event->{payload}{since},
+      blocks => ATProto::PDS::Repo::Bytes->new($event->{car_bytes} // q()),
+      ops    => [
+        map {
+          +{
+            action => $_->{action},
+            path   => $_->{path},
+            cid    => defined($_->{cid}) ? ATProto::PDS::Repo::CID->from_string($_->{cid}) : undef,
+            (defined($_->{prev}) ? (prev => ATProto::PDS::Repo::CID->from_string($_->{prev})) : ()),
+          }
+        } @{ $event->{payload}{ops} || [] }
+      ],
       blobs  => [],
+      (defined($event->{payload}{prevData}) ? (prevData => ATProto::PDS::Repo::CID->from_string($event->{payload}{prevData})) : ()),
       time   => iso8601($event->{created_at}),
-    };
+    });
   }
 
   if (($event->{type} // q()) eq 'identity') {
-    return {
+    return encode_message_frame('#identity', {
       seq    => 0 + $event->{seq},
       did    => $event->{did},
       handle => $event->{payload}{handle},
       time   => iso8601($event->{created_at}),
-    };
+    });
   }
 
   if (($event->{type} // q()) eq 'account') {
-    return {
+    return encode_message_frame('#account', {
       seq    => 0 + $event->{seq},
       did    => $event->{did},
       active => $event->{payload}{active} ? JSON::PP::true : JSON::PP::false,
       ($event->{payload}{status} ? (status => $event->{payload}{status}) : ()),
       time   => iso8601($event->{created_at}),
-    };
+    });
   }
 
   return undef;

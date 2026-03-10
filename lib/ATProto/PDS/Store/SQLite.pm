@@ -730,10 +730,24 @@ sub list_events_after ($self, $cursor, %args) {
   return [ map { _row_from_json_columns($_, qw(payload_json)) } @$rows ];
 }
 
+sub list_events_from ($self, $cursor, %args) {
+  my $limit = $args{limit} // 100;
+  my $sql = q{SELECT * FROM events WHERE seq >= ? ORDER BY seq LIMIT ?};
+  my $rows = $self->dbh->selectall_arrayref($sql, { Slice => {} }, $cursor // 0, $limit);
+  return [ map { _row_from_json_columns($_, qw(payload_json)) } @$rows ];
+}
+
 sub latest_event_seq ($self) {
   return $self->dbh->selectrow_array(
     q{SELECT COALESCE(MAX(seq), 0) FROM events},
   ) // 0;
+}
+
+sub oldest_event_seq ($self) {
+  my $value = $self->dbh->selectrow_array(
+    q{SELECT MIN(seq) FROM events},
+  );
+  return defined $value ? $value : 0;
 }
 
 sub create_action_token ($self, %args) {

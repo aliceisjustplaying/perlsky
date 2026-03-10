@@ -1,0 +1,62 @@
+#!/usr/bin/env perl
+use v5.34;
+use warnings;
+use feature 'signatures';
+no warnings 'experimental::signatures';
+
+use FindBin qw($Bin);
+use File::Spec;
+use lib File::Spec->catdir($Bin, '..', 'lib');
+use lib File::Spec->catdir($Bin, '..', 'local', 'lib', 'perl5');
+
+BEGIN {
+  require Config;
+  require lib;
+  lib->import(File::Spec->catdir($Bin, '..', 'local', 'lib', 'perl5', $Config::Config{archname}));
+}
+
+use Mojo::IOLoop;
+use Mojo::URL;
+use Mojo::UserAgent;
+use ATProto::PDS::EventStream qw(decode_frame);
+
+my $url     = shift(@ARGV) // 'wss://bsky.network/xrpc/com.atproto.sync.subscribeRepos';
+my $max     = shift(@ARGV) // 3;
+my $timeout = shift(@ARGV) // 10;
+
+my $ua    = Mojo::UserAgent->new;
+my $count = 0;
+my $done  = 0;
+
+my $timer = Mojo::IOLoop->timer($timeout => sub {
+  die "timed out after ${timeout}s waiting for firehose frames\n";
+});
+
+$ua->websocket(
+  Mojo::URL->new($url) => sub ($ua, $tx) {
+    die "websocket handshake failed: " . ($tx->res->error->{message} // 'unknown error') . "\n"
+      unless $tx->is_websocket;
+
+    $tx->on(binary => sub ($tx, $bytes) {
+      my $frame = decode_frame($bytes);
+      my $header = $frame->{header} || {};
+      my $body   = $frame->{body}   || {};
+      my $type   = defined($header->{t}) ? $header->{t} : '<error>';
+      my $seq    = defined($body->{seq}) ? $body->{seq} : '-';
+      my $repo   = $body->{repo} // $body->{did} // '-';
+      print "frame $count: op=$header->{op} type=$type seq=$seq repo=$repo\n";
+      $count++;
+      if ($count >= $max) {
+        $done = 1;
+        Mojo::IOLoop->remove($timer);
+        $tx->finish(1000);
+      }
+    });
+
+    $tx->on(finish => sub ($tx, $code, $reason = undef) {
+      Mojo::IOLoop->stop if $done || $count;
+    });
+  }
+);
+
+Mojo::IOLoop->start unless Mojo::IOLoop->is_running;
