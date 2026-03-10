@@ -170,6 +170,17 @@ sub post_empty ($origin, $nsid, $headers = {}) {
   return $tx->result;
 }
 
+sub post_bytes ($origin, $nsid, $bytes, $content_type, $headers = {}) {
+  my $ua = Mojo::UserAgent->new(max_redirects => 0);
+  my $tx = $ua->post(
+    "$origin/xrpc/$nsid" => {
+      'Content-Type' => $content_type,
+      %{$headers},
+    } => $bytes,
+  );
+  return $tx->result;
+}
+
 sub get_form ($origin, $nsid, $query, $headers = {}) {
   my $ua  = Mojo::UserAgent->new(max_redirects => 0);
   my $url = Mojo::URL->new("$origin/xrpc/$nsid")->query($query);
@@ -696,7 +707,50 @@ for my $name (sort keys %server) {
   my $ctype = $res->headers->content_type // q();
   check($ctype =~ m{application/vnd\.ipld\.car}, "$name getRepo returns CAR bytes");
   check(length($res->body // q()) > 0, "$name getRepo CAR payload is non-empty");
+  $server{$name}{repo_snapshot_car} = $res->body;
 }
+
+note('Comparing importRepo snapshot restore');
+for my $name (sort keys %server) {
+  my $res = post_json($server{$name}{origin}, 'com.atproto.repo.createRecord', {
+    repo       => $server{$name}{did},
+    collection => 'app.bsky.feed.post',
+    rkey       => 'import-diff',
+    record     => {
+      %{$record},
+      text => "import validation for $name",
+    },
+  }, auth_header($server{$name}{access}));
+  check($res->is_success, "$name creates an extra record before importRepo");
+  next unless $res->is_success;
+
+  $res = post_bytes(
+    $server{$name}{origin},
+    'com.atproto.repo.importRepo',
+    $server{$name}{repo_snapshot_car},
+    'application/vnd.ipld.car',
+    auth_header($server{$name}{access}),
+  );
+  check($res->is_success, "$name importRepo succeeds");
+  next unless $res->is_success;
+
+  $res = get_form($server{$name}{origin}, 'com.atproto.repo.listRecords', {
+    repo       => $server{$name}{did},
+    collection => 'app.bsky.feed.post',
+  });
+  check($res->is_success, "$name listRecords succeeds after importRepo");
+  next unless $res->is_success;
+  my $records = $res->json->{records} || [];
+  $server{$name}{import_repo_state} = {
+    record_count => 0 + @$records,
+    texts        => [ map { $_->{value}{text} } @$records ],
+  };
+}
+
+check(
+  same_hash($server{reference}{import_repo_state}, $server{perlds}{import_repo_state}),
+  'importRepo restores the same normalized repo state as the official reference PDS',
+);
 
 note('Comparing firehose live follow behavior');
 for my $name (sort keys %server) {

@@ -177,7 +177,13 @@ sub register_repo_handlers ($registry, $app) {
 
   $registry->register('com.atproto.repo.importRepo', sub ($c, $endpoint) {
     my (undef, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
-    _xrpc_error(400, 'UnsupportedRepoImport', "Repo import is not yet supported for $account->{did}");
+    _xrpc_error(400, 'InvalidRequest', 'Service is not accepting repo imports')
+      unless $c->config_value('accepting_imports', 1);
+    my $car_bytes = $c->req->body // q();
+    _xrpc_error(400, 'InvalidRequest', 'Repo import requires a CAR payload')
+      unless length $car_bytes;
+    $c->repo_manager->import_repo_car($account, $car_bytes);
+    return {};
   });
 }
 

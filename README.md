@@ -13,7 +13,7 @@ The immediate goal is a PDS that is pleasant to hack on and interoperable enough
 
 Reference differential validation:
 
-- Run `script/differential-validate` to compare `perlds` against the official published `@atproto/pds` on a focused set of account, repo, sync, and firehose behaviors.
+- Run `script/differential-validate` to compare `perlds` against the official published `@atproto/pds` on a focused set of account, repo, sync, firehose, and `importRepo` snapshot-restore behaviors.
 - Run `PERLDS_DIFF_ACCOUNT_DID_METHOD=did:plc script/differential-validate` to exercise the same harness in PLC-account mode, including recommended DID credentials, PLC signature requests, PLC handle updates, and token-gated PLC signing behavior.
 - The helper installs the reference runtime into `.tools/reference-runtime` with Node 20 via `fnm`.
 - Run `PERLDS_RUN_REFERENCE_DIFF=1 prove -lv t/reference-differential.t` to exercise the same harness from the test suite.
