@@ -7,11 +7,13 @@ no warnings 'experimental::signatures';
 
 use Exporter 'import';
 use JSON::PP ();
+use Mojo::IOLoop;
 
 use ATProto::PDS::API::Helpers qw(find_account require_admin subject_key);
 use ATProto::PDS::API::Server qw(require_auth);
 use ATProto::PDS::API::Util qw(iso8601 xrpc_error);
 use ATProto::PDS::Auth::Password qw(hash_password random_hex);
+use ATProto::PDS::EventStream qw(encode_error_frame encode_info_frame encode_message_frame);
 use ATProto::PDS::Identity qw(account_did_doc normalize_handle service_did service_did_doc);
 use ATProto::PDS::Moderation qw(assert_report_allowed);
 use ATProto::PDS::PLC qw(create_signed_plc_operation is_plc_did plc_rotation_did plc_update_handle recommended_did_credentials refresh_plc_did_doc submit_plc_operation);
@@ -204,37 +206,74 @@ sub register_misc_handlers ($registry, $app) {
 
   $registry->register('com.atproto.label.queryLabels', sub ($c, $endpoint) {
     my $patterns = [ _flatten_params($c->every_param('uriPatterns')) ];
+    my @sources  = _flatten_params($c->every_param('sources'));
     xrpc_error(400, 'InvalidRequest', 'uriPatterns is required') unless @$patterns;
-    my @labels = grep { _matches_patterns($_->{uri}, $patterns) } @{ _current_labels($c) };
-    my $limit = $c->param('limit') // 50;
-    $limit = 250 if $limit > 250;
-    my @slice = @labels[0 .. (@labels < $limit ? $#labels : $limit - 1)];
+    my $page = $c->store->list_labels(
+      uri_patterns => $patterns,
+      (@sources ? (sources => \@sources) : ()),
+      limit        => $c->param('limit') // 50,
+      cursor       => $c->param('cursor'),
+    );
     return {
-      labels => \@slice,
+      (defined $page->{cursor} ? (cursor => $page->{cursor}) : ()),
+      labels => [ map { _label_view($_) } @{ $page->{items} } ],
     };
   });
 
   $registry->register('com.atproto.temp.fetchLabels', sub ($c, $endpoint) {
-    my @labels = @{ _current_labels($c) };
-    my $limit = $c->param('limit') // 50;
-    $limit = 250 if $limit > 250;
-    my @slice = @labels[0 .. (@labels < $limit ? $#labels : $limit - 1)];
+    my $page = $c->store->list_labels(
+      limit  => $c->param('limit') // 50,
+      cursor => $c->param('cursor'),
+    );
     return {
-      labels => \@slice,
+      (defined $page->{cursor} ? (cursor => $page->{cursor}) : ()),
+      labels => [ map { _label_view($_) } @{ $page->{items} } ],
     };
   });
 
   $registry->register('com.atproto.label.subscribeLabels', sub ($c, $endpoint) {
-    my $cursor = int($c->param('cursor') // 0);
-    my @labels = @{ _current_labels($c) };
-    my $seq = $cursor + 1;
-    if (@labels) {
-      $c->send({ json => {
-        seq    => $seq,
-        labels => \@labels,
-      }});
+    my $cursor_param = $c->param('cursor');
+    my $latest = $c->store->latest_event_seq;
+    my $oldest = $c->store->oldest_event_seq;
+
+    my $next_seq;
+    if (!defined $cursor_param || $cursor_param eq q()) {
+      $next_seq = $latest + 1;
+    } else {
+      my $cursor = int($cursor_param);
+      if ($cursor > $latest + 1) {
+        $c->send({ binary => encode_error_frame('FutureCursor', 'Cursor is ahead of the local label stream') });
+        $c->finish(1008);
+        return;
+      }
+      if ($oldest && $cursor && $cursor < $oldest) {
+        $c->send({ binary => encode_info_frame('OutdatedCursor', 'Cursor predates the oldest locally retained event') });
+        $next_seq = $oldest;
+      } else {
+        $next_seq = $cursor || ($oldest || ($latest + 1));
+      }
     }
-    $c->finish(1000);
+
+    my $drain;
+    $drain = sub {
+      my $events = $c->store->list_events_from($next_seq, limit => 100);
+      for my $event (@$events) {
+        next unless ($event->{type} // q()) eq 'label';
+        my $labels = $event->{payload}{labels} || [];
+        next unless @$labels;
+        $next_seq = $event->{seq} + 1;
+        $c->send({ binary => encode_message_frame('#labels', {
+          seq    => 0 + $event->{seq},
+          labels => $labels,
+        })});
+      }
+    };
+
+    $drain->();
+    my $timer_id = Mojo::IOLoop->recurring(0.25 => sub { $drain->() });
+    $c->on(finish => sub ($c, $code, $reason = undef) {
+      Mojo::IOLoop->remove($timer_id) if defined $timer_id;
+    });
     return;
   });
 
@@ -294,42 +333,17 @@ sub _flatten_params (@values) {
   return @flat;
 }
 
-sub _current_labels ($c) {
-  my $src = service_did($c->app->settings);
-  my @labels;
-  for my $status (@{ $c->store->list_subject_statuses }) {
-    next unless $status->{takedown} && $status->{takedown}{applied};
-    my ($uri, $cid) = _subject_uri_and_cid($status->{subject});
-    push @labels, {
-      ver => 1,
-      src => $src,
-      uri => $uri,
-      (defined $cid ? (cid => $cid) : ()),
-      val => '!hide',
-      cts => iso8601($status->{updated_at}),
-    };
-  }
-  return \@labels;
-}
-
-sub _subject_uri_and_cid ($subject) {
-  if (exists $subject->{uri}) {
-    return ($subject->{uri}, $subject->{cid});
-  }
-  if (exists $subject->{did} && exists $subject->{cid}) {
-    return ($subject->{recordUri} || ('at://' . $subject->{did}), $subject->{cid});
-  }
-  return ('at://' . ($subject->{did} // q()), undef);
-}
-
-sub _matches_patterns ($uri, $patterns) {
-  for my $pattern (@$patterns) {
-    return 1 if $pattern eq $uri;
-    if ($pattern =~ /\A(.+)\*\z/ && index($uri, $1) == 0) {
-      return 1;
-    }
-  }
-  return 0;
+sub _label_view ($row) {
+  return {
+    ver => 1,
+    src => $row->{src},
+    uri => $row->{uri},
+    (defined($row->{cid}) ? (cid => $row->{cid}) : ()),
+    val => $row->{val},
+    cts => iso8601($row->{created_at}),
+    (defined($row->{exp}) ? (exp => iso8601($row->{exp})) : ()),
+    (defined($row->{sig}) ? (sig => $row->{sig}) : ()),
+  };
 }
 
 1;

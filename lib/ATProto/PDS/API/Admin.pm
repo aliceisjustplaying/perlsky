@@ -12,7 +12,7 @@ use ATProto::PDS::API::Helpers qw(account_view find_account invite_code_view req
 use ATProto::PDS::API::Util qw(xrpc_error);
 use ATProto::PDS::Auth::Password qw(hash_password);
 use ATProto::PDS::Crypto::Secp256k1 qw(signing_did_to_public_key_multibase);
-use ATProto::PDS::Identity qw(account_did_doc normalize_handle);
+use ATProto::PDS::Identity qw(account_did_doc normalize_handle service_did);
 use ATProto::PDS::Moderation qw(current_record_subject current_subject_status parse_at_uri);
 
 our @EXPORT_OK = qw(register_admin_handlers);
@@ -73,6 +73,7 @@ sub register_admin_handlers ($registry, $app) {
       takedown     => exists($body->{takedown}) ? $body->{takedown} : ($existing ? $existing->{takedown} : undef),
       deactivated  => exists($body->{deactivated}) ? $body->{deactivated} : ($existing ? $existing->{deactivated} : undef),
     );
+    _sync_hide_label($c, $subject, $existing, $status);
     if (exists($subject->{did}) && !exists($subject->{uri}) && !exists($subject->{cid}) && exists($body->{deactivated})) {
       $c->store->update_account(
         $subject->{did},
@@ -299,6 +300,58 @@ sub _validated_subject ($c, $subject) {
     };
   }
   xrpc_error(400, 'InvalidRequest', 'Invalid subject');
+}
+
+sub _sync_hide_label ($c, $subject, $before, $after) {
+  my $was = ($before && $before->{takedown} && $before->{takedown}{applied}) ? 1 : 0;
+  my $now = ($after && $after->{takedown} && $after->{takedown}{applied}) ? 1 : 0;
+  return if $was == $now;
+
+  my $src = service_did($c->app->settings);
+  my ($uri, $cid) = _label_uri_and_cid($subject);
+  my $label = {
+    ver => 1,
+    src => $src,
+    uri => $uri,
+    (defined $cid ? (cid => $cid) : ()),
+    val => '!hide',
+    cts => ATProto::PDS::API::Util::iso8601(time),
+    ($now ? () : (neg => JSON::PP::true)),
+  };
+
+  if ($now) {
+    $c->store->put_label(
+      subject_key => subject_key($subject),
+      src         => $src,
+      uri         => $uri,
+      cid         => $cid,
+      val         => '!hide',
+    );
+  } else {
+    $c->store->delete_label(
+      subject_key => subject_key($subject),
+      src         => $src,
+      val         => '!hide',
+    );
+  }
+
+  $c->store->append_event(
+    did     => $src,
+    type    => 'label',
+    payload => {
+      labels => [ $label ],
+    },
+  );
+}
+
+sub _label_uri_and_cid ($subject) {
+  if (exists $subject->{uri}) {
+    return ($subject->{uri}, $subject->{cid});
+  }
+  if (exists($subject->{did}) && exists($subject->{cid})) {
+    return ('at://' . $subject->{did}, $subject->{cid});
+  }
+  return ('at://' . ($subject->{did} // q()), undef);
 }
 
 1;

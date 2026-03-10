@@ -1039,6 +1039,103 @@ sub list_subject_statuses ($self) {
   return [ map { _row_from_json_columns($_, qw(subject_json takedown_json deactivated_json)) } @$rows ];
 }
 
+sub put_label ($self, %args) {
+  my $subject_key = $args{subject_key} // die 'subject_key is required';
+  my $src         = $args{src}         // die 'src is required';
+  my $uri         = $args{uri}         // die 'uri is required';
+  my $val         = $args{val}         // die 'val is required';
+  my $now         = $args{created_at}  // time;
+  $self->dbh->do(
+    q{
+      INSERT INTO labels (
+        subject_key, src, uri, cid, val, exp, sig, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(subject_key, src, val) DO UPDATE SET
+        uri = excluded.uri,
+        cid = excluded.cid,
+        exp = excluded.exp,
+        sig = excluded.sig,
+        updated_at = excluded.updated_at
+    },
+    undef,
+    $subject_key,
+    $src,
+    $uri,
+    $args{cid},
+    $val,
+    $args{exp},
+    $args{sig},
+    $now,
+    $args{updated_at} // $now,
+  );
+  return $self->get_label(
+    subject_key => $subject_key,
+    src         => $src,
+    val         => $val,
+  );
+}
+
+sub get_label ($self, %args) {
+  return $self->dbh->selectrow_hashref(
+    q{
+      SELECT * FROM labels
+      WHERE subject_key = ? AND src = ? AND val = ?
+    },
+    undef,
+    $args{subject_key},
+    $args{src},
+    $args{val},
+  );
+}
+
+sub delete_label ($self, %args) {
+  $self->dbh->do(
+    q{
+      DELETE FROM labels
+      WHERE subject_key = ? AND src = ? AND val = ?
+    },
+    undef,
+    $args{subject_key},
+    $args{src},
+    $args{val},
+  );
+  return 1;
+}
+
+sub list_labels ($self, %args) {
+  my $limit = $args{limit} // 50;
+  $limit = 250 if $limit > 250;
+  my $cursor = $args{cursor};
+  my @where;
+  my @bind;
+  if (my $sources = $args{sources}) {
+    if (@$sources) {
+      my $placeholders = join(', ', ('?') x @$sources);
+      push @where, "src IN ($placeholders)";
+      push @bind, @$sources;
+    }
+  }
+  if (defined $cursor && length $cursor) {
+    push @where, q{id > ?};
+    push @bind, int($cursor);
+  }
+  my $sql = q{SELECT * FROM labels};
+  $sql .= q{ WHERE } . join(q{ AND }, @where) if @where;
+  $sql .= q{ ORDER BY id ASC};
+  my $rows = $self->dbh->selectall_arrayref($sql, { Slice => {} }, @bind);
+  my @filtered = grep { _matches_uri_patterns($_->{uri}, $args{uri_patterns}) } @$rows;
+  my @items = @filtered;
+  my $next_cursor;
+  if (@items > $limit) {
+    @items = @items[0 .. $limit - 1];
+    $next_cursor = $items[-1]{id};
+  }
+  return {
+    items  => \@items,
+    cursor => $next_cursor,
+  };
+}
+
 sub reserve_signing_key ($self, %args) {
   my $did = $args{did} // die 'did is required';
   my $now = $args{created_at} // time;
@@ -1481,6 +1578,27 @@ sub default_migrations {
         q{ALTER TABLE reserved_signing_keys ADD COLUMN signing_key_did TEXT},
       ],
     },
+    {
+      version => 5,
+      statements => [
+        q{
+          CREATE TABLE IF NOT EXISTS labels (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            subject_key TEXT NOT NULL,
+            src TEXT NOT NULL,
+            uri TEXT NOT NULL,
+            cid TEXT,
+            val TEXT NOT NULL,
+            exp INTEGER,
+            sig BLOB,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            UNIQUE(subject_key, src, val)
+          )
+        },
+        q{CREATE INDEX IF NOT EXISTS labels_lookup_idx ON labels (src, uri, id)},
+      ],
+    },
   );
 }
 
@@ -1547,6 +1665,17 @@ sub _paginate ($rows, $limit, $cursor_key) {
 sub _maybe_json ($value) {
   return undef unless defined $value;
   return ref($value) ? encode_json($value) : $value;
+}
+
+sub _matches_uri_patterns ($uri, $patterns = undef) {
+  return 1 unless $patterns && @$patterns;
+  for my $pattern (@$patterns) {
+    return 1 if $pattern eq $uri;
+    if ($pattern =~ /\A(.+)\*\z/ && index($uri, $1) == 0) {
+      return 1;
+    }
+  }
+  return 0;
 }
 
 sub _random_id {

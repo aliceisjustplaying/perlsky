@@ -1,0 +1,159 @@
+use v5.34;
+use warnings;
+
+use Config ();
+use File::Spec;
+use File::Temp qw(tempdir);
+use FindBin qw($Bin);
+use JSON::PP ();
+use Test::More;
+
+BEGIN {
+  require lib;
+  my $root = File::Spec->rel2abs(File::Spec->catdir($Bin, '..'));
+  lib->import(
+    File::Spec->catdir($root, 'lib'),
+    File::Spec->catdir($root, 'local', 'lib', 'perl5'),
+    File::Spec->catdir($root, 'local', 'lib', 'perl5', $Config::Config{archname}),
+  );
+}
+
+use Test::Mojo;
+use Mojo::URL;
+use ATProto::PDS;
+use ATProto::PDS::EventStream qw(decode_frame);
+use ATProto::PDS::Identity qw(service_did);
+
+my $root = File::Spec->rel2abs(File::Spec->catdir($Bin, '..'));
+my $tmp  = tempdir(CLEANUP => 1);
+
+my $app = ATProto::PDS->new(
+  project_root => $root,
+  settings => {
+    base_url              => 'http://127.0.0.1:7755',
+    service_handle_domain => 'example.test',
+    service_did_method    => 'did:web',
+    jwt_secret            => 'labels-secret',
+    admin_password        => 'admin-secret',
+    data_dir              => File::Spec->catdir($tmp, 'data'),
+    db_path               => File::Spec->catfile($tmp, 'perlds.sqlite'),
+  },
+);
+
+my $service_did = service_did($app->settings);
+my $t = Test::Mojo->new($app);
+my $ws = Test::Mojo->new($app);
+
+$t->post_ok('/xrpc/com.atproto.server.createAccount' => json => {
+  handle   => 'alice.example.test',
+  email    => 'alice@example.test',
+  password => 'hunter22',
+})->status_is(200);
+
+my $did = $t->tx->res->json->{did};
+
+$ws->websocket_ok('/xrpc/com.atproto.label.subscribeLabels');
+is($ws->message, undef, 'label stream is quiet without a backlog');
+
+$t->post_ok('/xrpc/com.atproto.admin.updateSubjectStatus' => {
+  Authorization => 'Bearer admin-secret',
+} => json => {
+  subject  => { did => $did },
+  takedown => { applied => JSON::PP::true },
+})->status_is(200);
+
+$ws->message_ok('received a label frame')
+  ->message_like({binary => qr/.+/}, 'label frame is binary');
+
+my $frame = decode_frame($ws->message->[1]);
+is($frame->{header}{t}, '#labels', 'frame type is labels');
+is($frame->{body}{labels}[0]{src}, $service_did, 'label source is the local service DID');
+is($frame->{body}{labels}[0]{uri}, "at://$did", 'repo labels target the repo URI');
+is($frame->{body}{labels}[0]{val}, '!hide', 'repo takedown emits !hide');
+ok(!$frame->{body}{labels}[0]{neg}, 'takedown frame is a positive label');
+
+$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.label.queryLabels')->query(
+  uriPatterns => "at://$did*",
+  sources     => $service_did,
+))->status_is(200)
+  ->json_is('/labels/0/src', $service_did)
+  ->json_is('/labels/0/uri', "at://$did")
+  ->json_is('/labels/0/val', '!hide');
+
+$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.label.queryLabels')->query(
+  uriPatterns => "at://$did*",
+  sources     => 'did:web:other.example',
+))->status_is(200)
+  ->json_is('/labels', []);
+
+$t->post_ok('/xrpc/com.atproto.server.createAccount' => json => {
+  handle   => 'bob.example.test',
+  email    => 'bob@example.test',
+  password => 'hunter22',
+})->status_is(200);
+
+my $bob_did = $t->tx->res->json->{did};
+
+$t->post_ok('/xrpc/com.atproto.admin.updateSubjectStatus' => {
+  Authorization => 'Bearer admin-secret',
+} => json => {
+  subject  => { did => $bob_did },
+  takedown => { applied => JSON::PP::true },
+})->status_is(200);
+
+$ws->message_ok('received bob label frame')
+  ->message_like({binary => qr/.+/}, 'bob label frame is binary');
+
+my $bob_frame = decode_frame($ws->message->[1]);
+is($bob_frame->{body}{labels}[0]{uri}, "at://$bob_did", 'second repo takedown streams immediately');
+
+$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.label.queryLabels')->query(
+  uriPatterns => 'at://*',
+  limit       => 1,
+))->status_is(200)
+  ->json_has('/cursor')
+  ->json_is('/labels/0/src', $service_did);
+
+my $cursor = $t->tx->res->json->{cursor};
+
+$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.label.queryLabels')->query(
+  uriPatterns => 'at://*',
+  cursor      => $cursor,
+  limit       => 1,
+))->status_is(200)
+  ->json_has('/labels/0');
+
+$t->post_ok('/xrpc/com.atproto.admin.updateSubjectStatus' => {
+  Authorization => 'Bearer admin-secret',
+} => json => {
+  subject  => { did => $did },
+  takedown => { applied => JSON::PP::false },
+})->status_is(200);
+
+$ws->message_ok('received a label negation frame')
+  ->message_like({binary => qr/.+/}, 'negation frame is binary');
+
+my $neg = decode_frame($ws->message->[1]);
+is($neg->{header}{t}, '#labels', 'negation frame type is labels');
+is($neg->{body}{labels}[0]{uri}, "at://$did", 'negation targets the same repo URI');
+is($neg->{body}{labels}[0]{val}, '!hide', 'negation is for !hide');
+ok($neg->{body}{labels}[0]{neg}, 'restore emits a negation label');
+
+$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.label.queryLabels')->query(
+  uriPatterns => "at://$did*",
+  sources     => $service_did,
+))->status_is(200)
+  ->json_is('/labels', []);
+
+$ws->finish_ok;
+
+my $future = Test::Mojo->new($app);
+$future->websocket_ok('/xrpc/com.atproto.label.subscribeLabels?cursor=999999999')
+  ->message_ok('future label cursor returns an error frame');
+
+my $error = decode_frame($future->message->[1]);
+is($error->{header}{op}, -1, 'future cursor frame is an error');
+is($error->{body}{error}, 'FutureCursor', 'error type is FutureCursor');
+$future->finish_ok;
+
+done_testing;
