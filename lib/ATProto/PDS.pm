@@ -6,11 +6,14 @@ use warnings;
 use Mojo::Base 'Mojolicious', -signatures;
 use Mojo::JSON ();
 use ATProto::PDS::API::Builtins qw(register_builtin_handlers);
+use ATProto::PDS::API::Repo qw(register_repo_handlers);
 use ATProto::PDS::API::Registry;
 use ATProto::PDS::API::Server qw(register_server_handlers);
-use ATProto::PDS::Identity qw(service_did);
+use ATProto::PDS::API::Sync qw(register_sync_handlers);
+use ATProto::PDS::Identity qw(account_did_doc service_did);
 use ATProto::PDS::LexiconCatalog qw(endpoint_catalog);
 use ATProto::PDS::LexiconRegistry;
+use ATProto::PDS::Repo::Manager;
 use ATProto::PDS::Store::SQLite;
 use ATProto::PDS::XRPC::Dispatcher;
 use File::Spec;
@@ -31,6 +34,9 @@ sub startup ($self) {
     state $store = ATProto::PDS::Store::SQLite->new(
       path => $c->app->settings->{db_path} || File::Spec->catfile($root, 'data', 'runtime', 'perlds.sqlite'),
     )->bootstrap;
+  });
+  $self->helper(repo_manager => sub ($c) {
+    state $manager = ATProto::PDS::Repo::Manager->new(store => $c->store);
   });
 
   my $routes = $self->routes;
@@ -66,11 +72,13 @@ sub startup ($self) {
   $routes->get('/users/:account_id/did.json')->to(cb => sub ($c) {
     my $match = $c->store->get_account_by_id($c->stash('account_id'));
     return $c->render(status => 404, json => { error => 'DidNotFound' }) unless $match;
-    $c->render(json => $match->{did_doc});
+    $c->render(json => account_did_doc($c->app->settings, $match));
   });
 
   register_builtin_handlers($self->api_registry, $self);
   register_server_handlers($self->api_registry, $self);
+  register_repo_handlers($self->api_registry, $self);
+  register_sync_handlers($self->api_registry, $self);
   ATProto::PDS::XRPC::Dispatcher->new(
     app     => $self,
     routes  => $routes,

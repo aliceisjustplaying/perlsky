@@ -49,7 +49,7 @@ sub account_did ($config_or_url, $account_id) {
 sub account_did_doc ($config_or_url, $account) {
   my $config   = _coerce_config($config_or_url);
   my $base_url = $config->{base_url} // 'http://127.0.0.1:7755';
-  my $did      = $account->{did} // account_did($config, $account->{id});
+  my $did      = $account->{did} // account_did($config, $account->{account_id} // $account->{id});
   my $handle   = $account->{handle};
 
   my %doc = (
@@ -62,6 +62,15 @@ sub account_did_doc ($config_or_url, $account) {
     }],
   );
   $doc{alsoKnownAs} = ["at://$handle"] if defined $handle && length $handle;
+  if (my $multibase = $account->{public_key_multibase}) {
+    $doc{verificationMethod} = [{
+      id                 => "$did#atproto",
+      type               => 'Multikey',
+      controller         => $did,
+      publicKeyMultibase => $multibase,
+    }];
+    $doc{assertionMethod} = ["$did#atproto"];
+  }
   return \%doc;
 }
 

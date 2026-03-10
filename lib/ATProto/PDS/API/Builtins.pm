@@ -8,7 +8,7 @@ no warnings 'experimental::signatures';
 use Exporter 'import';
 use Mojo::JSON qw(false true);
 
-use ATProto::PDS::Identity qw(account_did_doc service_did service_did_doc);
+use ATProto::PDS::Identity qw(account_did_doc normalize_handle service_did service_did_doc);
 
 our @EXPORT_OK = qw(register_builtin_handlers);
 
@@ -31,7 +31,7 @@ sub register_builtin_handlers ($registry, $app) {
       };
     }
 
-    my $account = $c->store->get_account_by_did($did);
+    my $account = $c->store->get_account_by_did(_canonical_did($did));
     die {
       status  => 404,
       error   => 'DidNotFound',
@@ -65,7 +65,7 @@ sub register_builtin_handlers ($registry, $app) {
     my $identifier = lc($c->param('identifier') // '');
     my $service_did = lc(service_did($c->app->settings));
     my $service_handle = lc($c->config_value('service_handle_domain', 'localhost'));
-    if (my $account = $identifier =~ /^did:/ ? $c->store->get_account_by_did($identifier) : $c->store->get_account_by_handle($identifier)) {
+    if (my $account = $identifier =~ /^did:/ ? $c->store->get_account_by_did(_canonical_did($identifier)) : $c->store->get_account_by_handle($identifier)) {
       return {
         did    => $account->{did},
         handle => $account->{handle},
@@ -88,11 +88,11 @@ sub register_builtin_handlers ($registry, $app) {
 
   $registry->register('com.atproto.temp.checkHandleAvailability', sub ($c, $endpoint) {
     my $payload = $c->req->json || {};
-    my $handle = lc($payload->{handle} // '');
+    my $handle = normalize_handle($payload->{handle} // '', $c->config_value('service_handle_domain', 'localhost'));
     my $service_handle = lc($c->config_value('service_handle_domain', 'localhost'));
     return {
-      handle    => $handle,
-      available => ($handle ne '' && $handle ne $service_handle && !$c->store->get_account_by_handle($handle) ? true : false),
+      handle    => $handle // ($payload->{handle} // ''),
+      available => (defined $handle && $handle ne '' && $handle ne $service_handle && !$c->store->get_account_by_handle($handle) ? true : false),
     };
   });
 }
@@ -104,6 +104,12 @@ sub _same_did ($left, $right) {
 sub _relaxed_did ($did) {
   $did //= '';
   $did =~ s/%3a/:/ig;
+  return $did;
+}
+
+sub _canonical_did ($did) {
+  $did = _relaxed_did($did);
+  $did =~ s/^(did:web:[^:]+):(\d+)$/$1%3A$2/i;
   return $did;
 }
 

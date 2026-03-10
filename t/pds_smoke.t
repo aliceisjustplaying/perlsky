@@ -1,0 +1,91 @@
+use v5.34;
+use warnings;
+
+use Config ();
+use FindBin qw($Bin);
+use File::Spec;
+use File::Temp qw(tempdir);
+use Test2::V0;
+
+BEGIN {
+  require lib;
+  my $root = File::Spec->rel2abs(File::Spec->catdir($Bin, '..'));
+  lib->import(
+    File::Spec->catdir($root, 'lib'),
+    File::Spec->catdir($root, 'local', 'lib', 'perl5'),
+    File::Spec->catdir($root, 'local', 'lib', 'perl5', $Config::Config{archname}),
+  );
+}
+
+use Test::Mojo;
+use ATProto::PDS;
+
+my $root = File::Spec->rel2abs(File::Spec->catdir($Bin, '..'));
+my $tmp  = tempdir(CLEANUP => 1);
+
+my $app = ATProto::PDS->new(
+  project_root => $root,
+  settings => {
+    base_url              => 'http://127.0.0.1:7755',
+    service_handle_domain => 'example.test',
+    service_did_method    => 'did:web',
+    jwt_secret            => 'smoke-secret',
+    admin_password        => 'admin-secret',
+    db_path               => File::Spec->catfile($tmp, 'perlds.sqlite'),
+  },
+);
+
+my $t = Test::Mojo->new($app);
+
+$t->post_ok('/xrpc/com.atproto.server.createAccount' => json => {
+  handle   => 'alice.example.test',
+  email    => 'alice@example.test',
+  password => 'hunter22',
+})->status_is(200);
+
+my $created = $t->tx->res->json;
+ok($created->{accessJwt}, 'account creation returns access token');
+ok($created->{refreshJwt}, 'account creation returns refresh token');
+is($created->{handle}, 'alice.example.test', 'account creation returns normalized handle');
+
+my $access = $created->{accessJwt};
+my $did    = $created->{did};
+
+$t->get_ok('/xrpc/com.atproto.server.getSession' => {
+  Authorization => "Bearer $access",
+})->status_is(200)
+  ->json_is('/did', $did);
+
+$t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
+  Authorization => "Bearer $access",
+} => json => {
+  repo       => $did,
+  collection => 'app.bsky.feed.post',
+  record     => {
+    '$type' => 'app.bsky.feed.post',
+    text    => 'hello from perl',
+  },
+})->status_is(200)
+  ->json_has('/uri')
+  ->json_has('/cid');
+
+$t->get_ok('/xrpc/com.atproto.repo.listRecords' => form => {
+  repo       => $did,
+  collection => 'app.bsky.feed.post',
+})->status_is(200)
+  ->json_is('/records/0/value/text', 'hello from perl');
+
+$t->get_ok('/xrpc/com.atproto.sync.getLatestCommit' => form => {
+  did => $did,
+})->status_is(200)
+  ->json_has('/cid')
+  ->json_has('/rev');
+
+$t->get_ok('/xrpc/com.atproto.sync.getRepo' => form => {
+  did => $did,
+})->status_is(200);
+
+like($t->tx->res->headers->content_type // '', qr{application/vnd\.ipld\.car}, 'repo export is served as CAR');
+ok(length($t->tx->res->body) > 0, 'repo export is non-empty');
+
+done_testing;

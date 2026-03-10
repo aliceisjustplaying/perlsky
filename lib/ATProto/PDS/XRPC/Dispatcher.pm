@@ -4,53 +4,84 @@ use v5.34;
 use warnings;
 
 use Mojo::Base -base, -signatures;
-use Mojo::JSON ();
 
 has app     => undef;
 has routes  => undef;
 has catalog => sub { [] };
 
 sub register_routes ($self) {
-  for my $endpoint (@{ $self->catalog }) {
-    if ($endpoint->{type} eq 'subscription') {
-      $self->routes->websocket($endpoint->{path})->to(cb => sub ($c) {
-        my $handler = $c->app->api_registry->handler_for($endpoint->{id});
-        return $handler->($c, $endpoint) if $handler;
+  my %by_id = map { $_->{id} => $_ } @{ $self->catalog };
 
-        $c->send({ json => {
-          error   => 'NotImplemented',
-          message => "No subscription handler registered for $endpoint->{id}",
-          nsid    => $endpoint->{id},
-        }});
-        $c->finish(1000);
-      });
-      next;
+  $self->routes->websocket('/xrpc/*nsid')->to(cb => sub ($c) {
+    my $endpoint = $by_id{ $c->stash('nsid') // q() };
+    return $c->finish(1008) unless $endpoint;
+
+    if ($endpoint->{type} ne 'subscription') {
+      $c->send({ json => {
+        error   => 'MethodNotAllowed',
+        message => "$endpoint->{id} is not a subscription endpoint",
+      }});
+      return $c->finish(1008);
     }
 
-    my $route = $endpoint->{type} eq 'query'
-      ? $self->routes->get($endpoint->{path})
-      : $self->routes->post($endpoint->{path});
+    my $handler = $c->app->api_registry->handler_for($endpoint->{id});
+    if ($handler) {
+      return $handler->($c, $endpoint);
+    }
 
-    $route->to(cb => sub ($c) {
-      my $handler = $c->app->api_registry->handler_for($endpoint->{id});
-      if ($handler) {
-        my $result = eval { $handler->($c, $endpoint) };
-        if (my $err = $@) {
-          if (ref($err) eq 'HASH' && $err->{error}) {
-            return $c->render(
-              status => $err->{status} // 400,
-              json   => {
-                error   => $err->{error},
-                message => $err->{message} // $err->{error},
-              },
-            );
-          }
-          die $err;
-        }
-        return $c->render(json => $result);
-      }
+    $c->send({ json => {
+      error   => 'NotImplemented',
+      message => "No subscription handler registered for $endpoint->{id}",
+      nsid    => $endpoint->{id},
+    }});
+    $c->finish(1000);
+  });
 
-      $c->render(
+  $self->routes->any('/xrpc/*nsid')->to(cb => sub ($c) {
+    my $endpoint = $by_id{ $c->stash('nsid') // q() };
+    unless ($endpoint) {
+      return $c->render(
+        status => 404,
+        json   => {
+          error   => 'UnknownMethod',
+          message => 'Unknown XRPC method',
+        },
+      );
+    }
+
+    if ($endpoint->{type} eq 'subscription') {
+      return $c->render(
+        status => 426,
+        json   => {
+          error   => 'UpgradeRequired',
+          message => "$endpoint->{id} requires a websocket upgrade",
+        },
+      );
+    }
+
+    if ($endpoint->{type} eq 'query' && $c->req->method ne 'GET') {
+      return $c->render(
+        status => 405,
+        json   => {
+          error   => 'MethodNotAllowed',
+          message => "$endpoint->{id} expects GET",
+        },
+      );
+    }
+
+    if ($endpoint->{type} eq 'procedure' && $c->req->method ne 'POST') {
+      return $c->render(
+        status => 405,
+        json   => {
+          error   => 'MethodNotAllowed',
+          message => "$endpoint->{id} expects POST",
+        },
+      );
+    }
+
+    my $handler = $c->app->api_registry->handler_for($endpoint->{id});
+    unless ($handler) {
+      return $c->render(
         status => 501,
         json   => {
           error   => 'NotImplemented',
@@ -59,8 +90,25 @@ sub register_routes ($self) {
           type    => $endpoint->{type},
         },
       );
-    });
-  }
+    }
+
+    my $result = eval { $handler->($c, $endpoint) };
+    if (my $err = $@) {
+      if (ref($err) eq 'HASH' && $err->{error}) {
+        return $c->render(
+          status => $err->{status} // 400,
+          json   => {
+            error   => $err->{error},
+            message => $err->{message} // $err->{error},
+          },
+        );
+      }
+      die $err;
+    }
+
+    return unless defined $result;
+    return $c->render(json => $result);
+  });
 }
 
 1;

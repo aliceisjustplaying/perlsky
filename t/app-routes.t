@@ -40,9 +40,8 @@ $t->get_ok('/xrpc/com.atproto.server.describeServer')
   ->json_like('/did' => qr/\Adid:web:/);
 
 $t->post_ok('/xrpc/com.atproto.repo.createRecord' => json => {})
-  ->status_is(501)
-  ->json_is('/error' => 'NotImplemented')
-  ->json_is('/nsid'  => 'com.atproto.repo.createRecord');
+  ->status_is(404)
+  ->json_is('/error' => 'RepoNotFound');
 
 $t->websocket_ok('/xrpc/com.atproto.sync.subscribeRepos')
   ->finish_ok;
