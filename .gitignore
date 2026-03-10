@@ -24,3 +24,5 @@ MYMETA.yml
 .DS_Store
 .tools/
 .vendor/
+.cache/
+tools/browser-automation/node_modules/

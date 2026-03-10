@@ -580,6 +580,15 @@ sub count_records_by_did ($self, $did) {
   ) // 0;
 }
 
+sub count_records_by_collection ($self, $did, $collection) {
+  return $self->dbh->selectrow_array(
+    q{SELECT COUNT(*) FROM records WHERE did = ? AND collection = ?},
+    undef,
+    $did,
+    $collection,
+  ) // 0;
+}
+
 sub put_block ($self, %args) {
   my $cid = $args{cid} // die 'cid is required';
   my $now = $args{created_at} // time;

@@ -149,7 +149,41 @@ $t->get_ok("/xrpc/app.bsky.actor.getProfile?actor=$did" => {
   Authorization => "Bearer $access",
 })->status_is(200)
   ->json_is('/did' => $did)
-  ->json_is('/handle' => $created->{handle});
+  ->json_is('/handle' => $created->{handle})
+  ->json_is('/postsCount' => 0);
+
+$t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
+  Authorization => "Bearer $access",
+} => json => {
+  repo       => $did,
+  collection => 'app.bsky.feed.post',
+  rkey       => 'browser-smoke',
+  record     => {
+    '$type'   => 'app.bsky.feed.post',
+    text      => 'browser smoke post',
+    createdAt => '2026-03-10T18:00:00Z',
+  },
+})->status_is(200)
+  ->json_is('/uri' => "at://$did/app.bsky.feed.post/browser-smoke");
+
+my $post_uri = "at://$did/app.bsky.feed.post/browser-smoke";
+
+$t->get_ok("/xrpc/app.bsky.actor.getProfile?actor=$did" => {
+  Authorization => "Bearer $access",
+})->status_is(200)
+  ->json_is('/postsCount' => 1);
+
+$t->get_ok("/xrpc/app.bsky.feed.getAuthorFeed?actor=$did&limit=10" => {
+  Authorization => "Bearer $access",
+})->status_is(200)
+  ->json_is('/feed/0/post/uri' => $post_uri)
+  ->json_is('/feed/0/post/record/text' => 'browser smoke post');
+
+$t->get_ok('/xrpc/app.bsky.feed.getPostThread?uri=' . _uri_escape($post_uri) => {
+  Authorization => "Bearer $access",
+})->status_is(200)
+  ->json_is('/thread/post/uri' => $post_uri)
+  ->json_is('/thread/post/record/text' => 'browser smoke post');
 
 $t->get_ok('/xrpc/app.bsky.notification.listNotifications?limit=40' => {
   Authorization => "Bearer $access",
@@ -197,6 +231,12 @@ sub _decode_bearer {
     signature     => _b64url_decode($sig_b64),
     signing_input => "$header_b64.$claims_b64",
   };
+}
+
+sub _uri_escape {
+  my ($value) = @_;
+  $value =~ s/([^A-Za-z0-9\-._~])/sprintf('%%%02X', ord($1))/ge;
+  return $value;
 }
 
 sub _b64url_decode {

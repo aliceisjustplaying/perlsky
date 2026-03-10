@@ -1,0 +1,151 @@
+#!/usr/bin/env perl
+use v5.34;
+use warnings;
+
+use Cwd qw(abs_path);
+use File::Path qw(make_path);
+use File::Spec;
+use FindBin qw($Bin);
+use Getopt::Long qw(GetOptionsFromArray);
+use JSON::PP qw(encode_json);
+use POSIX qw(strftime);
+
+my $root = abs_path(File::Spec->catdir($Bin, '..'));
+my $tools_dir = File::Spec->catdir($root, 'tools', 'browser-automation');
+my $cache_dir = File::Spec->catdir($root, '.cache', 'ms-playwright');
+my $default_artifacts = File::Spec->catdir($root, 'data', 'browser-smoke', 'latest');
+
+my %opt = (
+  app_url       => $ENV{PERLSKY_BROWSER_APP_URL}    || 'https://bsky.app',
+  pds_url       => $ENV{PERLSKY_BROWSER_PDS_URL}    || 'https://perlsky.mosphere.at',
+  handle        => $ENV{PERLSKY_BROWSER_HANDLE},
+  password      => $ENV{PERLSKY_BROWSER_PASSWORD},
+  target_handle => $ENV{PERLSKY_BROWSER_TARGET_HANDLE} || 'alice.mosphere.at',
+  artifacts_dir => $ENV{PERLSKY_BROWSER_ARTIFACTS} || $default_artifacts,
+  birthdate     => $ENV{PERLSKY_BROWSER_BIRTHDATE} || '1990-01-01',
+  post_text     => $ENV{PERLSKY_BROWSER_POST_TEXT},
+  quote_text    => $ENV{PERLSKY_BROWSER_QUOTE_TEXT},
+  reply_text    => $ENV{PERLSKY_BROWSER_REPLY_TEXT},
+  profile_note  => $ENV{PERLSKY_BROWSER_PROFILE_NOTE},
+  headful       => $ENV{PERLSKY_BROWSER_HEADFUL} ? 1 : 0,
+  edit_profile  => $ENV{PERLSKY_BROWSER_EDIT_PROFILE} ? 1 : 0,
+);
+
+my $cmd = shift(@ARGV) // 'run';
+
+if ($cmd eq 'help' || $cmd eq '--help' || $cmd eq '-h') {
+  print <<'USAGE';
+Usage:
+  script/perlsky-browser-smoke install
+  script/perlsky-browser-smoke run [options]
+
+Options:
+  --handle HANDLE
+  --password PASSWORD
+  --target-handle HANDLE
+  --app-url URL
+  --pds-url URL
+  --artifacts-dir DIR
+  --birthdate YYYY-MM-DD
+  --post-text TEXT
+  --quote-text TEXT
+  --reply-text TEXT
+  --profile-note TEXT
+  --headful
+  --edit-profile
+
+Environment:
+  PERLSKY_BROWSER_HANDLE
+  PERLSKY_BROWSER_PASSWORD
+  PERLSKY_BROWSER_TARGET_HANDLE
+  PERLSKY_BROWSER_APP_URL
+  PERLSKY_BROWSER_PDS_URL
+  PERLSKY_BROWSER_ARTIFACTS
+  PERLSKY_BROWSER_BIRTHDATE
+  PERLSKY_BROWSER_POST_TEXT
+  PERLSKY_BROWSER_QUOTE_TEXT
+  PERLSKY_BROWSER_REPLY_TEXT
+  PERLSKY_BROWSER_PROFILE_NOTE
+  PERLSKY_BROWSER_HEADFUL=1
+  PERLSKY_BROWSER_EDIT_PROFILE=1
+USAGE
+  exit 0;
+}
+
+GetOptionsFromArray(
+  \@ARGV,
+  'handle=s'        => \$opt{handle},
+  'password=s'      => \$opt{password},
+  'target-handle=s' => \$opt{target_handle},
+  'app-url=s'       => \$opt{app_url},
+  'pds-url=s'       => \$opt{pds_url},
+  'artifacts-dir=s' => \$opt{artifacts_dir},
+  'birthdate=s'     => \$opt{birthdate},
+  'post-text=s'     => \$opt{post_text},
+  'quote-text=s'    => \$opt{quote_text},
+  'reply-text=s'    => \$opt{reply_text},
+  'profile-note=s'  => \$opt{profile_note},
+  'headful!'        => \$opt{headful},
+  'edit-profile!'   => \$opt{edit_profile},
+) or die "invalid options\n";
+
+if ($cmd eq 'install') {
+  install_runtime();
+  exit 0;
+}
+
+die "--handle is required\n"   unless defined $opt{handle}   && length $opt{handle};
+die "--password is required\n" unless defined $opt{password} && length $opt{password};
+
+install_runtime();
+
+my $run_id = strftime('%Y%m%d-%H%M%S', gmtime);
+my $artifacts_dir = $opt{artifacts_dir};
+make_path($artifacts_dir);
+
+$opt{post_text}    //= "perlsky browser smoke post $run_id";
+$opt{quote_text}   //= "perlsky browser smoke quote $run_id";
+$opt{reply_text}   //= "perlsky browser smoke reply $run_id";
+$opt{profile_note} //= "perlsky browser smoke profile edit $run_id";
+
+my ($pds_host) = $opt{pds_url} =~ m{\Ahttps?://([^/]+)};
+$pds_host //= $opt{pds_url};
+
+my $config = {
+  appUrl       => $opt{app_url},
+  pdsUrl       => $opt{pds_url},
+  pdsHost      => $pds_host,
+  handle       => $opt{handle},
+  password     => $opt{password},
+  targetHandle => $opt{target_handle},
+  artifactsDir => $artifacts_dir,
+  birthdate    => $opt{birthdate},
+  postText     => $opt{post_text},
+  quoteText    => $opt{quote_text},
+  replyText    => $opt{reply_text},
+  profileNote  => $opt{profile_note},
+  headless     => $opt{headful} ? JSON::PP::false : JSON::PP::true,
+  editProfile  => $opt{edit_profile} ? JSON::PP::true : JSON::PP::false,
+};
+
+my $config_path = File::Spec->catfile($artifacts_dir, 'config.json');
+open(my $cfg, '>:raw', $config_path) or die "unable to write $config_path: $!";
+print {$cfg} encode_json($config);
+close $cfg;
+
+local $ENV{PLAYWRIGHT_BROWSERS_PATH} = $cache_dir;
+my $script = File::Spec->catfile($tools_dir, 'smoke.mjs');
+my @cmdline = ('node', $script, $config_path);
+system(@cmdline) == 0 or die "browser smoke failed\n";
+
+sub install_runtime {
+  make_path($cache_dir);
+  run_or_die('npm', 'install', '--prefix', $tools_dir);
+  local $ENV{PLAYWRIGHT_BROWSERS_PATH} = $cache_dir;
+  run_or_die('npm', 'exec', '--prefix', $tools_dir, 'playwright', '--', 'install', 'chromium');
+}
+
+sub run_or_die {
+  my @cmdline = @_;
+  system(@cmdline) == 0 or die "command failed: @cmdline\n";
+}

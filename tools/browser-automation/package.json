@@ -1,0 +1,8 @@
+{
+  "name": "perlsky-browser-automation",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "playwright": "1.58.2"
+  }
+}
