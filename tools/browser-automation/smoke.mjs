@@ -19,8 +19,10 @@ const summary = {
   targetHandle: config.targetHandle,
   steps: [],
   console: [],
+  pageErrors: [],
   requestFailures: [],
   httpFailures: [],
+  xrpc: [],
   notes: [],
 };
 
@@ -37,6 +39,13 @@ page.on('console', (msg) => {
   });
 });
 
+page.on('pageerror', (error) => {
+  summary.pageErrors.push({
+    message: String(error?.message ?? error),
+    stack: error?.stack,
+  });
+});
+
 page.on('requestfailed', (req) => {
   summary.requestFailures.push({
     url: req.url(),
@@ -47,6 +56,16 @@ page.on('requestfailed', (req) => {
 
 page.on('response', (res) => {
   const status = res.status();
+  if (res.url().includes('/xrpc/')) {
+    summary.xrpc.push({
+      url: res.url(),
+      status,
+      method: res.request().method(),
+    });
+    if (summary.xrpc.length > 200) {
+      summary.xrpc.shift();
+    }
+  }
   if (status >= 400) {
     summary.httpFailures.push({
       url: res.url(),
@@ -139,9 +158,19 @@ const gotoProfile = async (handle) => {
 };
 
 const maybeFollowTarget = async () => {
-  const follow = page.getByTestId('followBtn');
+  const follow = page.getByTestId('followBtn').first();
   if (!(await follow.count())) {
-    return { note: 'follow button unavailable' };
+    const roleFollow = page.getByRole('button', { name: /follow/i }).first();
+    if (!(await roleFollow.count())) {
+      return { note: 'follow button unavailable' };
+    }
+    const label = (await roleFollow.getAttribute('aria-label')) ?? '';
+    if (/following/i.test(label) || /^Following$/i.test((await roleFollow.innerText()).trim())) {
+      return { note: 'already following target' };
+    }
+    await roleFollow.click({ noWaitAfter: true });
+    await wait(2000);
+    return { note: 'follow attempted via role button' };
   }
   const label = (await follow.getAttribute('aria-label')) ?? '';
   if (/following/i.test(label) || /^Following$/i.test((await follow.innerText()).trim())) {
@@ -167,20 +196,32 @@ const openOwnProfile = async () => {
   await gotoProfile(config.handle);
 };
 
-const findOwnPostArticle = async (needle, timeout = 60000) => {
-  const article = page.locator('article').filter({ hasText: needle }).first();
-  await article.waitFor({ state: 'visible', timeout });
-  return article;
+const waitForProfileHandle = async (handle, timeout = 20000) => {
+  const shortHandle = handle.replace(/^@/, '');
+  const handleText = shortHandle.startsWith('@') ? shortHandle : `@${shortHandle}`;
+  await page.getByText(handleText).first().waitFor({ state: 'visible', timeout });
 };
 
-const likeOwnPost = async (article) => {
-  const btn = article.getByTestId('likeBtn').first();
+const findFeedItemByText = async (needle, timeout = 60000) => {
+  const row = page.locator('[data-testid^="feedItem-by-"]').filter({ hasText: needle }).first();
+  await row.waitFor({ state: 'visible', timeout });
+  return row;
+};
+
+const findFirstFeedItem = async (timeout = 60000) => {
+  const row = page.locator('[data-testid^="feedItem-by-"]').first();
+  await row.waitFor({ state: 'visible', timeout });
+  return row;
+};
+
+const likeOwnPost = async (row) => {
+  const btn = row.getByTestId('likeBtn').first();
   await btn.click({ noWaitAfter: true });
   await wait(1500);
 };
 
-const repostOwnPost = async (article) => {
-  const btn = article.getByTestId('repostBtn').first();
+const repostOwnPost = async (row) => {
+  const btn = row.getByTestId('repostBtn').first();
   await btn.click({ noWaitAfter: true });
   await wait(500);
   const repost = page.getByText(/^Repost$/).last();
@@ -190,8 +231,8 @@ const repostOwnPost = async (article) => {
   }
 };
 
-const quoteOwnPost = async (article, text) => {
-  const btn = article.getByTestId('repostBtn').first();
+const quoteOwnPost = async (row, text) => {
+  const btn = row.getByTestId('repostBtn').first();
   await btn.click({ noWaitAfter: true });
   await wait(500);
   const quote = page.getByText(/^Quote post$/).last();
@@ -207,8 +248,8 @@ const quoteOwnPost = async (article, text) => {
   await wait(4000);
 };
 
-const replyToOwnPost = async (article, text) => {
-  const btn = article.getByTestId('replyBtn').first();
+const replyToOwnPost = async (row, text) => {
+  const btn = row.getByTestId('replyBtn').first();
   await btn.click({ noWaitAfter: true });
   await wait(1000);
   const editor = page.locator('[aria-label="Rich-Text Editor"]').last();
@@ -245,23 +286,41 @@ try {
 
   const ownPost = await step('find-own-post', async () => {
     await openOwnProfile();
-    const article = await findOwnPostArticle(config.postText, 60000);
-    return { note: 'found own post', articleFound: true };
+    await page.getByTestId('postsFeed').first().waitFor({ state: 'visible', timeout: 60000 });
+    const row = await findFeedItemByText(config.postText, 60000);
+    const rowTestId = await row.getAttribute('data-testid');
+    return { note: 'found own post', rowFound: true, rowTestId };
   });
 
   if (ownPost) {
-    const article = await findOwnPostArticle(config.postText);
-    await step('like-own-post', () => likeOwnPost(article), { optional: true });
-    await step('repost-own-post', () => repostOwnPost(article), { optional: true });
-    await step('quote-own-post', () => quoteOwnPost(article, config.quoteText), { optional: true });
-    await step('reply-own-post', () => replyToOwnPost(article, config.replyText), { optional: true });
+    const row = await findFeedItemByText(config.postText);
+    await step('like-own-post', () => likeOwnPost(row), { optional: true });
+    await step('repost-own-post', () => repostOwnPost(row), { optional: true });
+    await step('quote-own-post', () => quoteOwnPost(row, config.quoteText), { optional: true });
+    await step('reply-own-post', async () => {
+      await openOwnProfile();
+      const refreshed = await findFeedItemByText(config.postText, 60000);
+      await replyToOwnPost(refreshed, config.replyText);
+    }, { optional: true });
   }
 
-  await step('target-profile', () => gotoProfile(config.targetHandle));
+  await step('target-profile', async () => {
+    await gotoProfile(config.targetHandle);
+    await waitForProfileHandle(config.targetHandle, 20000);
+  });
   await step('follow-target', maybeFollowTarget, { optional: true });
 
+  await step('inspect-target-post', async () => {
+    const row = await findFirstFeedItem(20000);
+    const preview = ((await row.textContent()) || '').replace(/\s+/g, ' ').slice(0, 160);
+    return { note: preview };
+  }, { optional: true });
+
   if (config.editProfile) {
-    await step('edit-profile', editProfile, { optional: true });
+    await step('edit-profile', async () => {
+      await openOwnProfile();
+      await editProfile();
+    }, { optional: true });
   }
 } catch (error) {
   summary.fatal = String(error?.message ?? error);
