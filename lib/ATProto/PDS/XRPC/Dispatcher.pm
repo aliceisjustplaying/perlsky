@@ -63,6 +63,7 @@ sub register_routes ($self) {
   $self->routes->any('/xrpc/*nsid')->to(cb => sub ($c) {
     my $started = time;
     my $method  = $c->req->method;
+    my $nsid    = $c->stash('nsid') // q();
     my $finish_metrics = sub ($status, $endpoint_type = 'unknown', $nsid = $c->stash('nsid') // 'unknown') {
       my $labels = {
         method       => $method,
@@ -78,8 +79,28 @@ sub register_routes ($self) {
       );
     };
 
-    my $endpoint = $by_id{ $c->stash('nsid') // q() };
+    my $endpoint = $by_id{$nsid};
     unless ($endpoint) {
+      my $proxied_status = eval { $c->service_proxy->proxy_xrpc_request($c, $nsid) };
+      if (my $err = $@) {
+        if (ref($err) eq 'HASH' && $err->{error}) {
+          $finish_metrics->($err->{status} // 400, 'proxy', $nsid);
+          return $c->render(
+            status => $err->{status} // 400,
+            json   => {
+              error   => $err->{error},
+              message => $err->{message} // $err->{error},
+            },
+          );
+        }
+        die $err;
+      }
+
+      if (defined $proxied_status) {
+        $finish_metrics->($proxied_status, 'proxy', $nsid);
+        return;
+      }
+
       $finish_metrics->(404);
       return $c->render(
         status => 404,

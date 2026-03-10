@@ -36,6 +36,8 @@ Deployment and first-account setup:
 - `script/perlsky-admin create-invite` can mint invite codes locally on the server without needing an existing user session.
 - The invite-only bootstrap flow is documented with copy-pasteable commands in `docs/DEPLOYMENT.md`.
 - Browser clients such as `bsky.app` can talk to `perlsky` directly because XRPC and DID-document responses include CORS headers and answer OPTIONS preflight requests.
+- Unknown `app.bsky.*` requests are proxied to `https://api.bsky.app` by default, and unknown `chat.bsky.*` requests are proxied to `https://api.bsky.chat` by default using per-account service-auth JWTs.
+- Set `bsky_appview_url` / `bsky_appview_did` or `chat_service_url` / `chat_service_did` in your config if you want different upstream services.
 
 Relay / crawler discovery:
 

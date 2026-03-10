@@ -9,8 +9,10 @@ use Exporter 'import';
 use Digest::SHA qw(hmac_sha256);
 use JSON::PP qw(decode_json encode_json);
 use MIME::Base64 qw(decode_base64 encode_base64);
+use ATProto::PDS::Auth::Password qw(random_hex);
+use ATProto::PDS::Crypto::Secp256k1 qw(sign_compact_low_s);
 
-our @EXPORT_OK = qw(decode_jwt encode_jwt);
+our @EXPORT_OK = qw(decode_jwt encode_jwt encode_service_jwt);
 
 sub encode_jwt ($claims, $secret, $header = undef) {
   die 'claims must be a hashref' unless ref($claims) eq 'HASH';
@@ -63,6 +65,31 @@ sub decode_jwt ($token, $secret, %opts) {
     header => $header,
     claims => $claims,
   };
+}
+
+sub encode_service_jwt ($claims, $private_key, $header = undef) {
+  die 'claims must be a hashref' unless ref($claims) eq 'HASH';
+  die 'private key is required' unless defined $private_key && length $private_key;
+
+  my %jwt_claims = %$claims;
+  my $now = time;
+  $jwt_claims{iat} //= $now;
+  $jwt_claims{exp} //= $jwt_claims{iat} + 60;
+  $jwt_claims{jti} //= random_hex(16);
+  delete @jwt_claims{grep { !defined $jwt_claims{$_} } keys %jwt_claims};
+
+  my $jwt_header = {
+    alg => 'ES256K',
+    typ => 'JWT',
+    %{ $header // {} },
+  };
+
+  my $header_b64  = _b64url_encode(encode_json($jwt_header));
+  my $claims_b64  = _b64url_encode(encode_json(\%jwt_claims));
+  my $signing_str = join('.', $header_b64, $claims_b64);
+  my $sig         = _b64url_encode(sign_compact_low_s($private_key, $signing_str));
+
+  return join('.', $signing_str, $sig);
 }
 
 sub _b64url_encode ($bytes) {

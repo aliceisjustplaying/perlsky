@@ -63,6 +63,10 @@ Create `/etc/perlsky/perlsky.json`:
   "jwt_secret": "REPLACE_WITH_A_RANDOM_SECRET",
   "admin_password": "REPLACE_WITH_A_RANDOM_SECRET",
   "metrics_token": "REPLACE_WITH_A_RANDOM_SECRET",
+  "bsky_appview_url": "https://api.bsky.app",
+  "bsky_appview_did": "did:web:api.bsky.app",
+  "chat_service_url": "https://api.bsky.chat",
+  "chat_service_did": "did:web:api.bsky.chat",
   "crawlers": ["https://bsky.network"],
   "crawler_notify_interval": 1200,
   "data_dir": "/var/lib/perlsky/data",
@@ -79,6 +83,7 @@ Important fields:
 - `invite_code_required`: if true, `createAccount` requires a valid invite code
 - `account_did_method`: set to `did:plc` if you want PLC-backed user DIDs
 - `plc_rotation_private_key_hex`: required for `did:plc` account creation
+- `bsky_appview_*` / `chat_service_*`: upstream AppView and chat services for unknown `app.bsky.*` and `chat.bsky.*` calls. The public Bluesky services are the normal defaults.
 - `crawlers`: relay/crawler origins to notify after repo activity
 
 ## Launcher

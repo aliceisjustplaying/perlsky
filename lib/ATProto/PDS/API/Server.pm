@@ -10,7 +10,7 @@ use JSON::PP ();
 
 use ATProto::PDS::API::Helpers qw(find_account invite_code_view verify_account_password);
 use ATProto::PDS::API::Util qw(iso8601 xrpc_error);
-use ATProto::PDS::Auth::JWT qw(decode_jwt encode_jwt);
+use ATProto::PDS::Auth::JWT qw(decode_jwt encode_jwt encode_service_jwt);
 use ATProto::PDS::Auth::Password qw(hash_password random_hex);
 use ATProto::PDS::Identity qw(account_did account_did_doc normalize_handle service_did);
 use ATProto::PDS::Moderation qw(assert_login_allowed);
@@ -425,19 +425,22 @@ sub register_server_handlers ($registry, $app) {
 
   $registry->register('com.atproto.server.getServiceAuth', sub ($c, $endpoint) {
     my (undef, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
+    my $aud = $c->param('aud') // q();
+    xrpc_error(400, 'InvalidRequest', 'aud is required') unless length $aud;
     my $requested_exp = $c->param('exp');
     my $now = time;
     my $exp = defined($requested_exp) ? int($requested_exp) : ($now + 60);
     xrpc_error(400, 'BadExpiration', 'Requested expiration is out of bounds')
       if $exp <= $now || $exp > ($now + 3600);
-    my $token = encode_jwt({
-      iss => service_did($c->app->settings),
-      sub => $account->{did},
-      aud => $c->param('aud'),
+    xrpc_error(500, 'SigningKeyUnavailable', 'Account signing key is unavailable')
+      unless defined($account->{private_key}) && length($account->{private_key});
+    my $token = encode_service_jwt({
+      iss => $account->{did},
+      iat => $now,
+      aud => $aud,
       exp => $exp,
-      typ => 'service',
       ($c->param('lxm') ? (lxm => $c->param('lxm')) : ()),
-    }, $c->config_value('jwt_secret', 'perlsky-dev-secret'));
+    }, $account->{private_key});
     return { token => $token };
   });
 

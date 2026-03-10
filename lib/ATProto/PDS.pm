@@ -20,6 +20,7 @@ use ATProto::PDS::LexiconCatalog qw(endpoint_catalog);
 use ATProto::PDS::LexiconRegistry;
 use ATProto::PDS::Metrics;
 use ATProto::PDS::Repo::Manager;
+use ATProto::PDS::ServiceProxy;
 use ATProto::PDS::Store::SQLite;
 use ATProto::PDS::XRPC::Dispatcher;
 use File::Spec;
@@ -109,6 +110,11 @@ sub startup ($self) {
     state $manager = ATProto::PDS::Repo::Manager->new(
       store            => $c->store,
       crawler_notifier => $c->crawler_notifier,
+    );
+  });
+  $self->helper(service_proxy => sub ($c) {
+    state $proxy = ATProto::PDS::ServiceProxy->new(
+      settings => $c->app->settings,
     );
   });
 
