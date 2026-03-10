@@ -6,49 +6,70 @@ use feature 'signatures';
 no warnings 'experimental::signatures';
 
 use Exporter 'import';
-use Mojo::JSON qw(false true);
+use JSON::PP ();
 
+use ATProto::PDS::API::Helpers qw(find_account invite_code_view verify_account_password);
+use ATProto::PDS::API::Util qw(iso8601 xrpc_error);
 use ATProto::PDS::Auth::JWT qw(decode_jwt encode_jwt);
-use ATProto::PDS::Auth::Password qw(hash_password random_hex verify_password);
+use ATProto::PDS::Auth::Password qw(hash_password random_hex);
 use ATProto::PDS::Identity qw(account_did account_did_doc normalize_handle service_did);
 
-our @EXPORT_OK = qw(register_server_handlers require_auth session_view issue_session);
+our @EXPORT_OK = qw(register_server_handlers require_auth session_view);
 
 sub register_server_handlers ($registry, $app) {
   $registry->register('com.atproto.server.createAccount', sub ($c, $endpoint) {
     my $body   = $c->req->json || {};
     my $domain = $c->config_value('service_handle_domain', 'localhost');
     my $handle = normalize_handle($body->{handle}, $domain);
-    _xrpc_error(400, 'InvalidHandle', 'Requested handle is invalid') unless defined $handle;
-    _xrpc_error(400, 'HandleNotAvailable', 'That handle is already registered')
+    xrpc_error(400, 'InvalidHandle', 'Requested handle is invalid') unless defined $handle;
+    xrpc_error(400, 'HandleNotAvailable', 'That handle is already registered')
       if $c->store->get_account_by_handle($handle);
+    xrpc_error(400, 'HandleNotAvailable', 'That handle is reserved')
+      if $c->store->get_reserved_handle($handle);
 
-    my $password = $body->{password} // '';
-    _xrpc_error(400, 'InvalidPassword', 'Passwords must be at least 8 characters long')
+    my $password = $body->{password} // q();
+    xrpc_error(400, 'InvalidPassword', 'Passwords must be at least 8 characters long')
       if length($password) < 8;
+
+    my $invite;
+    if (defined($body->{inviteCode}) && length($body->{inviteCode})) {
+      $invite = $c->store->get_invite_code($body->{inviteCode});
+      xrpc_error(400, 'InvalidInviteCode', 'Invite code is not valid') unless $invite;
+      my $available = ($invite->{use_count} // 0) - ($invite->{use_count_consumed} // 0);
+      xrpc_error(400, 'InvalidInviteCode', 'Invite code has been exhausted')
+        if $invite->{disabled} || $available <= 0;
+    }
 
     my $account_id = random_hex(8);
     my $did        = $body->{did} || account_did($c->app->settings, $account_id);
-    my $keys       = $c->repo_manager->generate_signing_key;
+    my $reserved   = $body->{did} ? $c->store->get_reserved_signing_key($did) : undef;
+    my $keys       = ($reserved && !defined $reserved->{claimed_at})
+      ? {
+          private_key          => $reserved->{private_key},
+          public_key           => $reserved->{public_key},
+          public_key_multibase => $reserved->{public_key_multibase},
+        }
+      : $c->repo_manager->generate_signing_key;
     my $password_record = hash_password($password);
     my $did_doc = account_did_doc($c->app->settings, {
-      account_id          => $account_id,
-      did                 => $did,
-      handle              => $handle,
-      public_key_multibase => $keys->{public_key_multibase},
+      account_id            => $account_id,
+      did                   => $did,
+      handle                => $handle,
+      public_key_multibase  => $keys->{public_key_multibase},
     });
 
     my $account = $c->store->create_account(
-      account_id          => $account_id,
-      did                 => $did,
-      handle              => $handle,
-      email               => $body->{email},
-      password_hash       => $password_record->{hash},
-      password_salt       => $password_record->{salt},
-      did_doc             => $did_doc,
-      private_key         => $keys->{private_key},
-      public_key          => $keys->{public_key},
-      public_key_multibase => $keys->{public_key_multibase},
+      account_id            => $account_id,
+      did                   => $did,
+      handle                => $handle,
+      email                 => $body->{email},
+      email_confirmed_at    => $body->{email} ? time : undef,
+      password_hash         => $password_record->{hash},
+      password_salt         => $password_record->{salt},
+      did_doc               => $did_doc,
+      private_key           => $keys->{private_key},
+      public_key            => $keys->{public_key},
+      public_key_multibase  => $keys->{public_key_multibase},
     );
 
     my $repo = $c->repo_manager->initialize_repo($account);
@@ -59,67 +80,62 @@ sub register_server_handlers ($registry, $app) {
       did_doc         => account_did_doc($c->app->settings, $account),
     );
 
-    return issue_session($c, $account);
+    $c->store->record_invite_code_use(
+      code    => $invite->{code},
+      used_by => $account->{did},
+    ) if $invite;
+    $c->store->claim_reserved_signing_key($did) if $reserved && !defined $reserved->{claimed_at};
+
+    return _issue_session($c, $account);
   });
 
   $registry->register('com.atproto.server.createSession', sub ($c, $endpoint) {
     my $body = $c->req->json || {};
-    my $account = _find_account($c, $body->{identifier} // '');
-    _xrpc_error(401, 'AuthRequired', 'Invalid identifier or password') unless $account;
-
-    my $password = $body->{password} // '';
-    my $valid = verify_password($password, $account->{password_salt}, $account->{password_hash});
-    unless ($valid) {
-      for my $app_password (@{ $c->store->list_app_passwords_by_did($account->{did}) }) {
-        next if defined $app_password->{revoked_at};
-        my ($salt_hex, $hash) = split /:/, ($app_password->{password_hash} // q()), 2;
-        next unless defined $salt_hex && defined $hash;
-        my $salt = pack('H*', $salt_hex);
-        if (verify_password($password, $salt, $hash)) {
-          $valid = 1;
-          last;
-        }
-      }
-    }
-
-    _xrpc_error(401, 'AuthRequired', 'Invalid identifier or password') unless $valid;
-    return issue_session($c, $account);
+    my $account = find_account($c, $body->{identifier} // q());
+    xrpc_error(401, 'AuthRequired', 'Invalid identifier or password') unless $account;
+    xrpc_error(403, 'AccountDeleted', 'Account has been deleted') if defined $account->{deleted_at};
+    xrpc_error(401, 'AuthRequired', 'Invalid identifier or password')
+      unless verify_account_password($c, $account, $body->{password} // q());
+    return _issue_session($c, $account);
   });
 
   $registry->register('com.atproto.server.getSession', sub ($c, $endpoint) {
-    my ($claims, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
+    my (undef, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
     return session_view($account);
   });
 
   $registry->register('com.atproto.server.refreshSession', sub ($c, $endpoint) {
     my ($claims, $account) = require_auth($c, audience => 'refresh');
     my $session = $c->store->get_session($claims->{jti});
-    _xrpc_error(401, 'InvalidToken', 'Refresh session was not found') unless $session;
-    _xrpc_error(401, 'ExpiredToken', 'Refresh session has already been revoked') if defined $session->{revoked_at};
+    xrpc_error(401, 'InvalidToken', 'Refresh session was not found') unless $session;
+    xrpc_error(401, 'ExpiredToken', 'Refresh session has already been revoked') if defined $session->{revoked_at};
     $c->store->revoke_session($session->{id});
-    return issue_session($c, $account);
+    return _issue_session($c, $account);
   });
 
   $registry->register('com.atproto.server.deleteSession', sub ($c, $endpoint) {
-    my ($claims, $account) = require_auth($c, audience => 'refresh', allow_refresh => 1);
+    my ($claims) = require_auth($c, audience => 'refresh', allow_refresh => 1);
     my $session = $c->store->get_session($claims->{jti});
     $c->store->revoke_session($session->{id}) if $session;
     return {};
   });
 
   $registry->register('com.atproto.server.checkAccountStatus', sub ($c, $endpoint) {
-    my ($claims, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
+    my (undef, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
     return {
-      active => !defined($account->{deactivated_at}) ? true : false,
-      status => defined($account->{deactivated_at}) ? 'deactivated' : undef,
+      active => (!defined($account->{deactivated_at}) && !defined($account->{deleted_at}))
+        ? JSON::PP::true
+        : JSON::PP::false,
+      (defined($account->{deleted_at}) ? (status => 'deleted') : ()),
+      (defined($account->{deactivated_at}) && !defined($account->{deleted_at}) ? (status => 'deactivated') : ()),
     };
   });
 
   $registry->register('com.atproto.server.createAppPassword', sub ($c, $endpoint) {
-    my ($claims, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
+    my (undef, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
     my $body = $c->req->json || {};
-    my $name = $body->{name} // '';
-    _xrpc_error(400, 'InvalidRequest', 'App password name is required') unless length $name;
+    my $name = $body->{name} // q();
+    xrpc_error(400, 'InvalidRequest', 'App password name is required') unless length $name;
 
     my $password = _new_app_password();
     my $password_record = hash_password($password);
@@ -132,21 +148,21 @@ sub register_server_handlers ($registry, $app) {
     return {
       name       => $row->{name},
       password   => $password,
-      createdAt  => _iso8601($row->{created_at}),
-      privileged => $body->{privileged} ? true : false,
+      createdAt  => iso8601($row->{created_at}),
+      privileged => $body->{privileged} ? JSON::PP::true : JSON::PP::false,
     };
   });
 
   $registry->register('com.atproto.server.listAppPasswords', sub ($c, $endpoint) {
-    my ($claims, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
+    my (undef, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
     my $rows = $c->store->list_app_passwords_by_did($account->{did});
     return {
       passwords => [
         map {
           +{
             name       => $_->{name},
-            createdAt  => _iso8601($_->{created_at}),
-            privileged => false,
+            createdAt  => iso8601($_->{created_at}),
+            privileged => JSON::PP::false,
           }
         } grep { !defined $_->{revoked_at} } @$rows
       ],
@@ -154,18 +170,316 @@ sub register_server_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.server.revokeAppPassword', sub ($c, $endpoint) {
-    my ($claims, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
+    my (undef, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
     my $body = $c->req->json || {};
-    my $name = $body->{name} // '';
-    _xrpc_error(400, 'InvalidRequest', 'App password name is required') unless length $name;
+    my $name = $body->{name} // q();
+    xrpc_error(400, 'InvalidRequest', 'App password name is required') unless length $name;
     my $row = $c->store->get_app_password_by_name($account->{did}, $name);
-    _xrpc_error(404, 'AppPasswordNotFound', 'No app password exists with that name') unless $row;
+    xrpc_error(404, 'AppPasswordNotFound', 'No app password exists with that name') unless $row;
     $c->store->revoke_app_password($row->{id});
     return {};
   });
+
+  $registry->register('com.atproto.server.deactivateAccount', sub ($c, $endpoint) {
+    my (undef, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
+    $c->store->update_account($account->{did}, deactivated_at => time);
+    return {};
+  });
+
+  $registry->register('com.atproto.server.activateAccount', sub ($c, $endpoint) {
+    my (undef, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
+    $c->store->update_account($account->{did}, deactivated_at => undef);
+    return {};
+  });
+
+  $registry->register('com.atproto.server.requestPasswordReset', sub ($c, $endpoint) {
+    my $body = $c->req->json || {};
+    my $account = $c->store->get_account_by_email($body->{email} // q());
+    if ($account) {
+      my $token = $c->store->create_action_token(
+        did        => $account->{did},
+        email      => $account->{email},
+        purpose    => 'password_reset',
+        expires_at => time + 3600,
+      );
+      $c->store->log_outbound_email(
+        recipient_did   => $account->{did},
+        recipient_email => $account->{email},
+        subject         => 'perlds password reset',
+        content         => "Use token $token->{token} to reset your password.",
+      );
+    }
+    return {};
+  });
+
+  $registry->register('com.atproto.server.resetPassword', sub ($c, $endpoint) {
+    my $body = $c->req->json || {};
+    xrpc_error(400, 'InvalidPassword', 'Passwords must be at least 8 characters long')
+      if length($body->{password} // q()) < 8;
+    my $token = _require_action_token($c,
+      token   => $body->{token},
+      purpose => 'password_reset',
+    );
+    my $account = $c->store->get_account_by_did($token->{did});
+    xrpc_error(404, 'AccountNotFound', 'Account was not found') unless $account;
+    my $password_record = hash_password($body->{password});
+    $c->store->txn(sub ($dbh) {
+      $c->store->update_account(
+        $account->{did},
+        password_hash => $password_record->{hash},
+        password_salt => $password_record->{salt},
+      );
+      $c->store->revoke_sessions_by_did($account->{did});
+      $c->store->revoke_app_passwords_by_did($account->{did});
+      $c->store->consume_action_token($token->{token});
+    });
+    return {};
+  });
+
+  $registry->register('com.atproto.server.requestEmailConfirmation', sub ($c, $endpoint) {
+    my (undef, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
+    return {} unless $account->{email};
+    my $token = $c->store->create_action_token(
+      did        => $account->{did},
+      email      => $account->{email},
+      purpose    => 'email_confirm',
+      expires_at => time + 3600,
+    );
+    $c->store->log_outbound_email(
+      recipient_did   => $account->{did},
+      recipient_email => $account->{email},
+      subject         => 'perlds email confirmation',
+      content         => "Use token $token->{token} to confirm your email address.",
+    );
+    return {};
+  });
+
+  $registry->register('com.atproto.server.confirmEmail', sub ($c, $endpoint) {
+    my $body = $c->req->json || {};
+    my $account = $c->store->get_account_by_email($body->{email} // q());
+    xrpc_error(404, 'AccountNotFound', 'Account was not found') unless $account;
+    my $token = _require_action_token($c,
+      token   => $body->{token},
+      purpose => 'email_confirm',
+    );
+    xrpc_error(400, 'InvalidEmail', 'Token was not issued for that email')
+      unless ($token->{email} // q()) eq ($body->{email} // q());
+    $c->store->update_account($account->{did}, email_confirmed_at => time);
+    $c->store->consume_action_token($token->{token});
+    return {};
+  });
+
+  $registry->register('com.atproto.server.requestEmailUpdate', sub ($c, $endpoint) {
+    my (undef, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
+    my $token_required = defined $account->{email_confirmed_at} ? 1 : 0;
+    if ($token_required) {
+      my $token = $c->store->create_action_token(
+        did        => $account->{did},
+        email      => $account->{email},
+        purpose    => 'email_update',
+        expires_at => time + 3600,
+      );
+      $c->store->log_outbound_email(
+        recipient_did   => $account->{did},
+        recipient_email => $account->{email},
+        subject         => 'perlds email change authorization',
+        content         => "Use token $token->{token} to update your email address.",
+      );
+    }
+    return {
+      tokenRequired => $token_required ? JSON::PP::true : JSON::PP::false,
+    };
+  });
+
+  $registry->register('com.atproto.server.updateEmail', sub ($c, $endpoint) {
+    my (undef, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
+    my $body = $c->req->json || {};
+    if (defined $account->{email_confirmed_at}) {
+      xrpc_error(400, 'TokenRequired', 'A confirmation token is required to update email')
+        unless defined($body->{token}) && length($body->{token});
+      my $token = _require_action_token($c,
+        token   => $body->{token},
+        purpose => 'email_update',
+      );
+      xrpc_error(400, 'InvalidToken', 'Token was not issued for this account')
+        unless ($token->{did} // q()) eq $account->{did};
+      $c->store->consume_action_token($token->{token});
+    }
+    $c->store->update_account(
+      $account->{did},
+      email              => $body->{email},
+      email_confirmed_at => undef,
+    );
+    return {};
+  });
+
+  $registry->register('com.atproto.server.requestAccountDelete', sub ($c, $endpoint) {
+    my (undef, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
+    my $token = $c->store->create_action_token(
+      did        => $account->{did},
+      email      => $account->{email},
+      purpose    => 'account_delete',
+      expires_at => time + 3600,
+    );
+    $c->store->log_outbound_email(
+      recipient_did   => $account->{did},
+      recipient_email => $account->{email},
+      subject         => 'perlds account deletion',
+      content         => "Use token $token->{token} to delete your account.",
+    ) if $account->{email};
+    return {};
+  });
+
+  $registry->register('com.atproto.server.deleteAccount', sub ($c, $endpoint) {
+    my ($claims, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
+    my $body = $c->req->json || {};
+    xrpc_error(401, 'AuthRequired', 'Token is not authorized for that repo')
+      unless ($claims->{sub} // q()) eq ($body->{did} // q()) && ($account->{did} // q()) eq ($body->{did} // q());
+    xrpc_error(401, 'AuthRequired', 'Invalid identifier or password')
+      unless verify_account_password($c, $account, $body->{password} // q());
+    my $token = _require_action_token($c,
+      token   => $body->{token},
+      purpose => 'account_delete',
+    );
+    xrpc_error(400, 'InvalidToken', 'Token was not issued for this account')
+      unless ($token->{did} // q()) eq $account->{did};
+    $c->store->txn(sub ($dbh) {
+      $c->store->update_account(
+        $account->{did},
+        deactivated_at => time,
+        deleted_at     => time,
+      );
+      $c->store->revoke_sessions_by_did($account->{did});
+      $c->store->revoke_app_passwords_by_did($account->{did});
+      $c->store->consume_action_token($token->{token});
+    });
+    return {};
+  });
+
+  $registry->register('com.atproto.server.getServiceAuth', sub ($c, $endpoint) {
+    my (undef, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
+    my $requested_exp = $c->param('exp');
+    my $now = time;
+    my $exp = defined($requested_exp) ? int($requested_exp) : ($now + 60);
+    xrpc_error(400, 'BadExpiration', 'Requested expiration is out of bounds')
+      if $exp <= $now || $exp > ($now + 3600);
+    my $token = encode_jwt({
+      iss => service_did($c->app->settings),
+      sub => $account->{did},
+      aud => $c->param('aud'),
+      exp => $exp,
+      typ => 'service',
+      ($c->param('lxm') ? (lxm => $c->param('lxm')) : ()),
+    }, $c->config_value('jwt_secret', 'perlds-dev-secret'));
+    return { token => $token };
+  });
+
+  $registry->register('com.atproto.server.reserveSigningKey', sub ($c, $endpoint) {
+    my $body = $c->req->json || {};
+    my $keys = $c->repo_manager->generate_signing_key;
+    if ($body->{did}) {
+      $c->store->reserve_signing_key(
+        did                  => $body->{did},
+        private_key          => $keys->{private_key},
+        public_key           => $keys->{public_key},
+        public_key_multibase => $keys->{public_key_multibase},
+      );
+    }
+    return {
+      signingKey => 'did:key:' . $keys->{public_key_multibase},
+    };
+  });
+
+  $registry->register('com.atproto.server.createInviteCode', sub ($c, $endpoint) {
+    my (undef, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
+    my $body = $c->req->json || {};
+    my $code = _new_invite_code();
+    $c->store->create_invite_code(
+      code        => $code,
+      for_account => $body->{forAccount} || $account->{did},
+      created_by  => $account->{did},
+      use_count   => $body->{useCount} // 1,
+    );
+    return { code => $code };
+  });
+
+  $registry->register('com.atproto.server.createInviteCodes', sub ($c, $endpoint) {
+    my (undef, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
+    my $body = $c->req->json || {};
+    my @accounts = @{ $body->{forAccounts} || [ $account->{did} ] };
+    my $count = $body->{codeCount} // 1;
+    my @result;
+    for my $target (@accounts) {
+      my @codes;
+      for (1 .. $count) {
+        my $code = _new_invite_code();
+        $c->store->create_invite_code(
+          code        => $code,
+          for_account => $target,
+          created_by  => $account->{did},
+          use_count   => $body->{useCount} // 1,
+        );
+        push @codes, $code;
+      }
+      push @result, {
+        account => $target,
+        codes   => \@codes,
+      };
+    }
+    return { codes => \@result };
+  });
+
+  $registry->register('com.atproto.server.getAccountInviteCodes', sub ($c, $endpoint) {
+    my (undef, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
+    my $rows = $c->store->list_invite_codes_for_account($account->{did});
+    return {
+      codes => [ map { invite_code_view($c->store, $_) } @$rows ],
+    };
+  });
 }
 
-sub issue_session ($c, $account) {
+sub session_view ($account) {
+  return {
+    handle          => $account->{handle},
+    did             => $account->{did},
+    didDoc          => $account->{did_doc} || account_did_doc({}, $account),
+    email           => $account->{email},
+    emailConfirmed  => defined($account->{email_confirmed_at}) ? JSON::PP::true : JSON::PP::false,
+    emailAuthFactor => JSON::PP::false,
+    active          => (!defined($account->{deactivated_at}) && !defined($account->{deleted_at}))
+      ? JSON::PP::true
+      : JSON::PP::false,
+    (defined($account->{deleted_at}) ? (status => 'deleted') : ()),
+    (defined($account->{deactivated_at}) && !defined($account->{deleted_at}) ? (status => 'deactivated') : ()),
+  };
+}
+
+sub require_auth ($c, %opts) {
+  my $auth = $c->req->headers->authorization // q();
+  xrpc_error(401, 'AuthRequired', 'Authorization header is required')
+    unless $auth =~ /\ABearer\s+(.+)\z/i;
+  my $token = $1;
+
+  my $decoded = eval { decode_jwt($token, $c->config_value('jwt_secret', 'perlds-dev-secret')) };
+  if (my $err = $@) {
+    my $message = "$err";
+    my $code = $message =~ /expired/i ? 'ExpiredToken' : 'InvalidToken';
+    xrpc_error(401, $code, $message);
+  }
+
+  my $claims = $decoded->{claims};
+  my $aud = $claims->{aud} // q();
+  my $ok = $aud eq ($opts{audience} // 'access')
+    || ($opts{allow_refresh} && $aud eq 'refresh');
+  xrpc_error(401, 'InvalidToken', 'Unexpected token audience') unless $ok;
+
+  my $account = $c->store->get_account_by_did($claims->{sub});
+  xrpc_error(401, 'InvalidToken', 'Token subject no longer exists') unless $account;
+  xrpc_error(401, 'InvalidToken', 'Token subject has been deleted') if defined $account->{deleted_at};
+  return ($claims, $account);
+}
+
+sub _issue_session ($c, $account) {
   my $session = $c->store->create_session(
     did        => $account->{did},
     expires_at => time + (30 * 24 * 60 * 60),
@@ -200,72 +514,25 @@ sub issue_session ($c, $account) {
   };
 }
 
-sub session_view ($account) {
-  return {
-    handle          => $account->{handle},
-    did             => $account->{did},
-    didDoc          => $account->{did_doc} || account_did_doc({}, $account),
-    email           => $account->{email},
-    emailConfirmed  => $account->{email} ? true : false,
-    emailAuthFactor => false,
-    active          => !defined($account->{deactivated_at}) ? true : false,
-    (defined($account->{deactivated_at}) ? (status => 'deactivated') : ()),
-  };
-}
-
-sub require_auth ($c, %opts) {
-  my $auth = $c->req->headers->authorization // '';
-  _xrpc_error(401, 'AuthRequired', 'Authorization header is required') unless $auth =~ /\ABearer\s+(.+)\z/i;
-  my $token = $1;
-
-  my $decoded = eval { decode_jwt($token, $c->config_value('jwt_secret', 'perlds-dev-secret')) };
-  if (my $err = $@) {
-    my $message = "$err";
-    my $code = $message =~ /expired/i ? 'ExpiredToken' : 'InvalidToken';
-    _xrpc_error(401, $code, $message);
-  }
-
-  my $claims = $decoded->{claims};
-  my $aud = $claims->{aud} // q();
-  my $ok = $aud eq ($opts{audience} // 'access')
-    || ($opts{allow_refresh} && $aud eq 'refresh');
-  _xrpc_error(401, 'InvalidToken', 'Unexpected token audience') unless $ok;
-
-  my $account = $c->store->get_account_by_did($claims->{sub});
-  _xrpc_error(401, 'InvalidToken', 'Token subject no longer exists') unless $account;
-  return ($claims, $account);
-}
-
-sub _find_account ($c, $identifier) {
-  return undef unless defined $identifier && length $identifier;
-  my $account = $c->store->get_account_by_identifier($identifier);
-  return $account if $account;
-  return $c->store->get_account_by_email($identifier);
-}
-
-sub _xrpc_error ($status, $error, $message) {
-  die {
-    status  => $status,
-    error   => $error,
-    message => $message,
-  };
+sub _require_action_token ($c, %args) {
+  xrpc_error(400, 'InvalidToken', 'Token is required')
+    unless defined($args{token}) && length($args{token});
+  my $token = $c->store->get_action_token($args{token});
+  xrpc_error(400, 'InvalidToken', 'Token was not found') unless $token;
+  xrpc_error(400, 'InvalidToken', 'Token purpose did not match')
+    unless ($token->{purpose} // q()) eq ($args{purpose} // q());
+  xrpc_error(400, 'InvalidToken', 'Token has already been used') if defined $token->{consumed_at};
+  xrpc_error(400, 'ExpiredToken', 'Token has expired')
+    if defined($token->{expires_at}) && $token->{expires_at} < time;
+  return $token;
 }
 
 sub _new_app_password {
   return join('-', map { substr(random_hex(4), 0, 4) } 1 .. 4);
 }
 
-sub _iso8601 ($epoch) {
-  my @gmt = gmtime($epoch // time);
-  return sprintf(
-    '%04d-%02d-%02dT%02d:%02d:%02dZ',
-    $gmt[5] + 1900,
-    $gmt[4] + 1,
-    $gmt[3],
-    $gmt[2],
-    $gmt[1],
-    $gmt[0],
-  );
+sub _new_invite_code {
+  return 'perlds-' . substr(random_hex(8), 0, 12);
 }
 
 1;

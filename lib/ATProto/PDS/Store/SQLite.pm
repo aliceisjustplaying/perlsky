@@ -105,10 +105,10 @@ sub create_account ($self, %args) {
     q{
       INSERT INTO accounts (
         id, account_id, did, handle, email, password_hash, password_salt,
-        created_at, updated_at, deactivated_at, deleted_at,
+        created_at, updated_at, deactivated_at, deleted_at, email_confirmed_at,
         did_doc_json, private_key, public_key, public_key_multibase,
-        repo_commit_cid, repo_root_cid, repo_rev
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        repo_commit_cid, repo_root_cid, repo_rev, invites_disabled, invite_note
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     },
     undef,
     $account_id,
@@ -122,6 +122,7 @@ sub create_account ($self, %args) {
     $now,
     $args{deactivated_at},
     $args{deleted_at},
+    $args{email_confirmed_at},
     _maybe_json($args{did_doc}),
     $args{private_key},
     $args{public_key},
@@ -129,6 +130,8 @@ sub create_account ($self, %args) {
     $args{repo_commit_cid},
     $args{repo_root_cid},
     $args{repo_rev},
+    $args{invites_disabled} ? 1 : 0,
+    $args{invite_note},
   );
 
   return $self->get_account_by_did($did);
@@ -137,6 +140,7 @@ sub create_account ($self, %args) {
 sub update_account ($self, $did, %changes) {
   my %allowed = map { $_ => 1 } qw(
     handle email password_hash password_salt updated_at deactivated_at deleted_at
+    email_confirmed_at invites_disabled invite_note
     did_doc private_key public_key public_key_multibase
     repo_commit_cid repo_root_cid repo_rev
   );
@@ -329,6 +333,16 @@ sub list_app_passwords_by_did ($self, $did) {
   );
 }
 
+sub revoke_app_passwords_by_did ($self, $did, %args) {
+  $self->dbh->do(
+    q{UPDATE app_passwords SET revoked_at = ? WHERE did = ? AND revoked_at IS NULL},
+    undef,
+    $args{revoked_at} // time,
+    $did,
+  );
+  return $self->list_app_passwords_by_did($did);
+}
+
 sub put_blob ($self, %args) {
   my $cid = $args{cid} // die 'cid is required';
   my $now = $args{created_at} // time;
@@ -382,6 +396,14 @@ sub list_blobs_by_did ($self, $did, %args) {
   push @bind, $limit + 1;
   my $rows = $self->dbh->selectall_arrayref($sql, { Slice => {} }, @bind);
   return _paginate($rows, $limit, 'cid');
+}
+
+sub count_blobs_by_did ($self, $did) {
+  return $self->dbh->selectrow_array(
+    q{SELECT COUNT(*) FROM blobs WHERE did = ?},
+    undef,
+    $did,
+  ) // 0;
 }
 
 sub put_record ($self, %args) {
@@ -506,6 +528,14 @@ sub list_collections_for_did ($self, $did) {
   return [ map { $_->{collection} } @$rows ];
 }
 
+sub count_records_by_did ($self, $did) {
+  return $self->dbh->selectrow_array(
+    q{SELECT COUNT(*) FROM records WHERE did = ?},
+    undef,
+    $did,
+  ) // 0;
+}
+
 sub put_block ($self, %args) {
   my $cid = $args{cid} // die 'cid is required';
   my $now = $args{created_at} // time;
@@ -628,6 +658,51 @@ sub list_repos ($self, %args) {
   return $page;
 }
 
+sub list_repos_by_collection ($self, $collection, %args) {
+  my $limit = $args{limit} // 500;
+  $limit = 2000 if $limit > 2000;
+  my $cursor = $args{cursor};
+  my @bind = ($collection);
+  my $sql = q{
+    SELECT DISTINCT did
+    FROM records
+    WHERE collection = ?
+  };
+  if (defined $cursor && length $cursor) {
+    $sql .= q{ AND did > ?};
+    push @bind, $cursor;
+  }
+  $sql .= q{ ORDER BY did LIMIT ?};
+  push @bind, $limit + 1;
+  my $rows = $self->dbh->selectall_arrayref($sql, { Slice => {} }, @bind);
+  return _paginate($rows, $limit, 'did');
+}
+
+sub search_accounts ($self, %args) {
+  my $limit  = $args{limit} // 50;
+  $limit = 100 if $limit > 100;
+  my $cursor = $args{cursor};
+  my $email  = $args{email};
+  my @bind;
+  my @where;
+  if (defined $email && length $email) {
+    push @where, q{email LIKE ?};
+    push @bind, '%' . $email . '%';
+  }
+  if (defined $cursor && length $cursor) {
+    push @where, q{did > ?};
+    push @bind, $cursor;
+  }
+  my $sql = q{SELECT * FROM accounts};
+  $sql .= q{ WHERE } . join(q{ AND }, @where) if @where;
+  $sql .= q{ ORDER BY did LIMIT ?};
+  push @bind, $limit + 1;
+  my $rows = $self->dbh->selectall_arrayref($sql, { Slice => {} }, @bind);
+  my $page = _paginate($rows, $limit, 'did');
+  $page->{items} = [ map { $self->_row_to_account($_) } @{ $page->{items} } ];
+  return $page;
+}
+
 sub append_event ($self, %args) {
   my $now = $args{created_at} // time;
   $self->dbh->do(
@@ -652,6 +727,411 @@ sub list_events_after ($self, $cursor, %args) {
   my $limit = $args{limit} // 100;
   my $sql = q{SELECT * FROM events WHERE seq > ? ORDER BY seq LIMIT ?};
   return $self->dbh->selectall_arrayref($sql, { Slice => {} }, $cursor // 0, $limit);
+}
+
+sub create_action_token ($self, %args) {
+  my $token   = $args{token}   // _random_id();
+  my $purpose = $args{purpose} // die 'purpose is required';
+  my $now     = $args{created_at} // time;
+  $self->dbh->do(
+    q{
+      INSERT INTO action_tokens (
+        token, did, email, purpose, payload_json, created_at, expires_at, consumed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    },
+    undef,
+    $token,
+    $args{did},
+    $args{email},
+    $purpose,
+    _maybe_json($args{payload}),
+    $now,
+    $args{expires_at},
+    $args{consumed_at},
+  );
+  return $self->get_action_token($token);
+}
+
+sub get_action_token ($self, $token) {
+  my $row = $self->dbh->selectrow_hashref(
+    q{SELECT * FROM action_tokens WHERE token = ?},
+    undef,
+    $token,
+  );
+  return _row_from_json_columns($row, qw(payload_json));
+}
+
+sub consume_action_token ($self, $token, %args) {
+  $self->dbh->do(
+    q{UPDATE action_tokens SET consumed_at = ? WHERE token = ?},
+    undef,
+    $args{consumed_at} // time,
+    $token,
+  );
+  return $self->get_action_token($token);
+}
+
+sub latest_action_token ($self, %args) {
+  my @where;
+  my @bind;
+  for my $pair (
+    [ purpose => 'purpose' ],
+    [ did     => 'did' ],
+    [ email   => 'email' ],
+  ) {
+    my ($arg, $column) = @$pair;
+    next unless defined $args{$arg};
+    push @where, "$column = ?";
+    push @bind, $args{$arg};
+  }
+  my $sql = q{SELECT * FROM action_tokens};
+  $sql .= q{ WHERE } . join(q{ AND }, @where) if @where;
+  $sql .= q{ ORDER BY created_at DESC, token DESC LIMIT 1};
+  my $row = $self->dbh->selectrow_hashref($sql, undef, @bind);
+  return _row_from_json_columns($row, qw(payload_json));
+}
+
+sub create_invite_code ($self, %args) {
+  my $code = $args{code} // die 'code is required';
+  my $now  = $args{created_at} // time;
+  $self->dbh->do(
+    q{
+      INSERT INTO invite_codes (
+        code, for_account, created_by, use_count, disabled, note, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    },
+    undef,
+    $code,
+    $args{for_account},
+    $args{created_by},
+    $args{use_count} // 1,
+    $args{disabled} ? 1 : 0,
+    $args{note},
+    $now,
+  );
+  return $self->get_invite_code($code);
+}
+
+sub get_invite_code ($self, $code) {
+  my $row = $self->dbh->selectrow_hashref(
+    q{SELECT * FROM invite_codes WHERE code = ?},
+    undef,
+    $code,
+  );
+  return undef unless $row;
+  my $uses = $self->dbh->selectrow_array(
+    q{SELECT COUNT(*) FROM invite_code_uses WHERE code = ?},
+    undef,
+    $code,
+  ) // 0;
+  $row->{use_count_consumed} = $uses;
+  return $row;
+}
+
+sub list_invite_codes ($self, %args) {
+  my $limit = $args{limit} // 100;
+  $limit = 500 if $limit > 500;
+  my $cursor = $args{cursor};
+  my @bind;
+  my $sql = q{SELECT * FROM invite_codes};
+  if (defined $cursor && length $cursor) {
+    $sql .= q{ WHERE code > ?};
+    push @bind, $cursor;
+  }
+  if (($args{sort} // 'recent') eq 'usage') {
+    $sql .= defined($cursor) && length($cursor)
+      ? q{ ORDER BY use_count DESC, code ASC}
+      : q{ ORDER BY use_count DESC, code ASC};
+  } else {
+    $sql .= q{ ORDER BY created_at DESC, code DESC};
+  }
+  $sql .= q{ LIMIT ?};
+  push @bind, $limit + 1;
+  my $rows = $self->dbh->selectall_arrayref($sql, { Slice => {} }, @bind);
+  my $page = _paginate($rows, $limit, 'code');
+  $page->{items} = [ map { $self->get_invite_code($_->{code}) } @{ $page->{items} } ];
+  return $page;
+}
+
+sub list_invite_codes_for_account ($self, $did) {
+  my $rows = $self->dbh->selectall_arrayref(
+    q{SELECT * FROM invite_codes WHERE for_account = ? ORDER BY created_at DESC, code DESC},
+    { Slice => {} },
+    $did,
+  );
+  return [ map { $self->get_invite_code($_->{code}) } @$rows ];
+}
+
+sub record_invite_code_use ($self, %args) {
+  my $code    = $args{code}    // die 'code is required';
+  my $used_by = $args{used_by} // die 'used_by is required';
+  my $used_at = $args{used_at} // time;
+  $self->dbh->do(
+    q{
+      INSERT INTO invite_code_uses (code, used_by, used_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(code, used_by) DO UPDATE SET
+        used_at = excluded.used_at
+    },
+    undef,
+    $code,
+    $used_by,
+    $used_at,
+  );
+  return $self->list_invite_code_uses($code);
+}
+
+sub list_invite_code_uses ($self, $code) {
+  return $self->dbh->selectall_arrayref(
+    q{SELECT * FROM invite_code_uses WHERE code = ? ORDER BY used_at ASC, used_by ASC},
+    { Slice => {} },
+    $code,
+  );
+}
+
+sub disable_invite_codes ($self, %args) {
+  my $now = $args{updated_at} // time;
+  if (my $codes = $args{codes}) {
+    return [] unless @$codes;
+    my $placeholders = join(', ', ('?') x @$codes);
+    $self->dbh->do(
+      "UPDATE invite_codes SET disabled = 1, note = COALESCE(?, note) WHERE code IN ($placeholders)",
+      undef,
+      $args{note},
+      @$codes,
+    );
+  }
+  if (my $accounts = $args{accounts}) {
+    return [] unless @$accounts;
+    my $placeholders = join(', ', ('?') x @$accounts);
+    $self->dbh->do(
+      "UPDATE invite_codes SET disabled = 1, note = COALESCE(?, note) WHERE for_account IN ($placeholders)",
+      undef,
+      $args{note},
+      @$accounts,
+    );
+  }
+  return $now;
+}
+
+sub create_report ($self, %args) {
+  my $now = $args{created_at} // time;
+  $self->dbh->do(
+    q{
+      INSERT INTO moderation_reports (
+        reason_type, reason, subject_json, reported_by, mod_tool_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?)
+    },
+    undef,
+    $args{reason_type},
+    $args{reason},
+    _maybe_json($args{subject}),
+    $args{reported_by},
+    _maybe_json($args{mod_tool}),
+    $now,
+  );
+  my $id = $self->dbh->sqlite_last_insert_rowid;
+  return $self->get_report($id);
+}
+
+sub get_report ($self, $id) {
+  my $row = $self->dbh->selectrow_hashref(
+    q{SELECT * FROM moderation_reports WHERE id = ?},
+    undef,
+    $id,
+  );
+  return _row_from_json_columns($row, qw(subject_json mod_tool_json));
+}
+
+sub put_subject_status ($self, %args) {
+  my $subject_key = $args{subject_key} // die 'subject_key is required';
+  my $now         = $args{updated_at} // time;
+  $self->dbh->do(
+    q{
+      INSERT INTO subject_statuses (
+        subject_key, subject_json, takedown_json, deactivated_json, updated_at
+      ) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(subject_key) DO UPDATE SET
+        subject_json = excluded.subject_json,
+        takedown_json = excluded.takedown_json,
+        deactivated_json = excluded.deactivated_json,
+        updated_at = excluded.updated_at
+    },
+    undef,
+    $subject_key,
+    _maybe_json($args{subject}),
+    _maybe_json($args{takedown}),
+    _maybe_json($args{deactivated}),
+    $now,
+  );
+  return $self->get_subject_status($subject_key);
+}
+
+sub get_subject_status ($self, $subject_key) {
+  my $row = $self->dbh->selectrow_hashref(
+    q{SELECT * FROM subject_statuses WHERE subject_key = ?},
+    undef,
+    $subject_key,
+  );
+  return _row_from_json_columns($row, qw(subject_json takedown_json deactivated_json));
+}
+
+sub list_subject_statuses ($self) {
+  my $rows = $self->dbh->selectall_arrayref(
+    q{SELECT * FROM subject_statuses ORDER BY updated_at DESC, subject_key ASC},
+    { Slice => {} },
+  );
+  return [ map { _row_from_json_columns($_, qw(subject_json takedown_json deactivated_json)) } @$rows ];
+}
+
+sub reserve_signing_key ($self, %args) {
+  my $did = $args{did} // die 'did is required';
+  my $now = $args{created_at} // time;
+  $self->dbh->do(
+    q{
+      INSERT INTO reserved_signing_keys (
+        did, private_key, public_key, public_key_multibase, created_at, claimed_at
+      ) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(did) DO UPDATE SET
+        private_key = excluded.private_key,
+        public_key = excluded.public_key,
+        public_key_multibase = excluded.public_key_multibase,
+        created_at = excluded.created_at,
+        claimed_at = excluded.claimed_at
+    },
+    undef,
+    $did,
+    $args{private_key},
+    $args{public_key},
+    $args{public_key_multibase},
+    $now,
+    $args{claimed_at},
+  );
+  return $self->get_reserved_signing_key($did);
+}
+
+sub get_reserved_signing_key ($self, $did) {
+  return $self->dbh->selectrow_hashref(
+    q{SELECT * FROM reserved_signing_keys WHERE did = ?},
+    undef,
+    $did,
+  );
+}
+
+sub claim_reserved_signing_key ($self, $did, %args) {
+  $self->dbh->do(
+    q{UPDATE reserved_signing_keys SET claimed_at = ? WHERE did = ?},
+    undef,
+    $args{claimed_at} // time,
+    $did,
+  );
+  return $self->get_reserved_signing_key($did);
+}
+
+sub reserve_handle ($self, $handle, %args) {
+  my $now = $args{created_at} // time;
+  $self->dbh->do(
+    q{
+      INSERT INTO reserved_handles (handle, note, created_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(handle) DO UPDATE SET
+        note = excluded.note
+    },
+    undef,
+    $handle,
+    $args{note},
+    $now,
+  );
+  return $self->get_reserved_handle($handle);
+}
+
+sub get_reserved_handle ($self, $handle) {
+  return $self->dbh->selectrow_hashref(
+    q{SELECT * FROM reserved_handles WHERE handle = ?},
+    undef,
+    $handle,
+  );
+}
+
+sub list_reserved_handles ($self) {
+  return $self->dbh->selectall_arrayref(
+    q{SELECT * FROM reserved_handles ORDER BY handle},
+    { Slice => {} },
+  );
+}
+
+sub log_outbound_email ($self, %args) {
+  my $now = $args{created_at} // time;
+  $self->dbh->do(
+    q{
+      INSERT INTO outbound_emails (
+        recipient_did, recipient_email, sender_did, subject, content, comment, sent, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    },
+    undef,
+    $args{recipient_did},
+    $args{recipient_email},
+    $args{sender_did},
+    $args{subject},
+    $args{content},
+    $args{comment},
+    $args{sent} ? 1 : 0,
+    $now,
+  );
+  return $self->dbh->sqlite_last_insert_rowid;
+}
+
+sub touch_host_notice ($self, %args) {
+  my $hostname = $args{hostname} // die 'hostname is required';
+  my $now      = time;
+  my $requested_at = $args{requested_at};
+  my $notified_at  = $args{notified_at};
+  $self->dbh->do(
+    q{
+      INSERT INTO crawl_hosts (
+        hostname, requested_at, notified_at, last_seq, status_json
+      ) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(hostname) DO UPDATE SET
+        requested_at = COALESCE(excluded.requested_at, crawl_hosts.requested_at),
+        notified_at = COALESCE(excluded.notified_at, crawl_hosts.notified_at),
+        last_seq = COALESCE(excluded.last_seq, crawl_hosts.last_seq),
+        status_json = COALESCE(excluded.status_json, crawl_hosts.status_json)
+    },
+    undef,
+    $hostname,
+    $requested_at,
+    $notified_at,
+    $args{last_seq},
+    _maybe_json($args{status}),
+  );
+  return $now && $self->get_host_notice($hostname);
+}
+
+sub get_host_notice ($self, $hostname) {
+  my $row = $self->dbh->selectrow_hashref(
+    q{SELECT * FROM crawl_hosts WHERE hostname = ?},
+    undef,
+    $hostname,
+  );
+  return _row_from_json_columns($row, qw(status_json));
+}
+
+sub list_host_notices ($self, %args) {
+  my $limit = $args{limit} // 200;
+  $limit = 1000 if $limit > 1000;
+  my $cursor = $args{cursor};
+  my @bind;
+  my $sql = q{SELECT * FROM crawl_hosts};
+  if (defined $cursor && length $cursor) {
+    $sql .= q{ WHERE hostname > ?};
+    push @bind, $cursor;
+  }
+  $sql .= q{ ORDER BY hostname LIMIT ?};
+  push @bind, $limit + 1;
+  my $rows = $self->dbh->selectall_arrayref($sql, { Slice => {} }, @bind);
+  my $page = _paginate($rows, $limit, 'hostname');
+  $page->{items} = [ map { _row_from_json_columns($_, qw(status_json)) } @{ $page->{items} } ];
+  return $page;
 }
 
 sub set_repo_head ($self, %args) {
@@ -837,6 +1317,106 @@ sub default_migrations {
         q{CREATE INDEX IF NOT EXISTS events_seq_idx ON events(seq)},
       ],
     },
+    {
+      version => 3,
+      statements => [
+        q{ALTER TABLE accounts ADD COLUMN email_confirmed_at INTEGER},
+        q{ALTER TABLE accounts ADD COLUMN invites_disabled INTEGER NOT NULL DEFAULT 0},
+        q{ALTER TABLE accounts ADD COLUMN invite_note TEXT},
+        q{
+          CREATE TABLE IF NOT EXISTS action_tokens (
+            token TEXT PRIMARY KEY,
+            did TEXT,
+            email TEXT,
+            purpose TEXT NOT NULL,
+            payload_json TEXT,
+            created_at INTEGER NOT NULL,
+            expires_at INTEGER,
+            consumed_at INTEGER
+          )
+        },
+        q{CREATE INDEX IF NOT EXISTS action_tokens_lookup_idx ON action_tokens (purpose, did, email, created_at DESC)},
+        q{
+          CREATE TABLE IF NOT EXISTS reserved_signing_keys (
+            did TEXT PRIMARY KEY,
+            private_key BLOB NOT NULL,
+            public_key BLOB NOT NULL,
+            public_key_multibase TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            claimed_at INTEGER
+          )
+        },
+        q{
+          CREATE TABLE IF NOT EXISTS reserved_handles (
+            handle TEXT PRIMARY KEY,
+            note TEXT,
+            created_at INTEGER NOT NULL
+          )
+        },
+        q{
+          CREATE TABLE IF NOT EXISTS invite_codes (
+            code TEXT PRIMARY KEY,
+            for_account TEXT,
+            created_by TEXT,
+            use_count INTEGER NOT NULL DEFAULT 1,
+            disabled INTEGER NOT NULL DEFAULT 0,
+            note TEXT,
+            created_at INTEGER NOT NULL
+          )
+        },
+        q{CREATE INDEX IF NOT EXISTS invite_codes_for_account_idx ON invite_codes (for_account, created_at DESC)},
+        q{
+          CREATE TABLE IF NOT EXISTS invite_code_uses (
+            code TEXT NOT NULL,
+            used_by TEXT NOT NULL,
+            used_at INTEGER NOT NULL,
+            PRIMARY KEY (code, used_by)
+          )
+        },
+        q{
+          CREATE TABLE IF NOT EXISTS moderation_reports (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            reason_type TEXT NOT NULL,
+            reason TEXT,
+            subject_json TEXT NOT NULL,
+            reported_by TEXT NOT NULL,
+            mod_tool_json TEXT,
+            created_at INTEGER NOT NULL
+          )
+        },
+        q{
+          CREATE TABLE IF NOT EXISTS subject_statuses (
+            subject_key TEXT PRIMARY KEY,
+            subject_json TEXT NOT NULL,
+            takedown_json TEXT,
+            deactivated_json TEXT,
+            updated_at INTEGER NOT NULL
+          )
+        },
+        q{
+          CREATE TABLE IF NOT EXISTS outbound_emails (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            recipient_did TEXT,
+            recipient_email TEXT,
+            sender_did TEXT,
+            subject TEXT,
+            content TEXT NOT NULL,
+            comment TEXT,
+            sent INTEGER NOT NULL DEFAULT 1,
+            created_at INTEGER NOT NULL
+          )
+        },
+        q{
+          CREATE TABLE IF NOT EXISTS crawl_hosts (
+            hostname TEXT PRIMARY KEY,
+            requested_at INTEGER,
+            notified_at INTEGER,
+            last_seq INTEGER,
+            status_json TEXT
+          )
+        },
+      ],
+    },
   );
 }
 
@@ -866,6 +1446,17 @@ sub _row_to_account ($self, $row) {
   }
   delete $row->{did_doc_json};
   $row->{account_id} //= $row->{id};
+  return $row;
+}
+
+sub _row_from_json_columns ($row, @columns) {
+  return undef unless $row;
+  for my $column (@columns) {
+    next unless defined $row->{$column} && length $row->{$column};
+    (my $target = $column) =~ s/_json$//;
+    $row->{$target} = decode_json($row->{$column});
+    delete $row->{$column};
+  }
   return $row;
 }
 

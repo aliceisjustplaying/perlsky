@@ -5,7 +5,9 @@ use warnings;
 
 use Mojo::Base 'Mojolicious', -signatures;
 use Mojo::JSON ();
+use ATProto::PDS::API::Admin qw(register_admin_handlers);
 use ATProto::PDS::API::Builtins qw(register_builtin_handlers);
+use ATProto::PDS::API::Misc qw(register_misc_handlers);
 use ATProto::PDS::API::Repo qw(register_repo_handlers);
 use ATProto::PDS::API::Registry;
 use ATProto::PDS::API::Server qw(register_server_handlers);
@@ -77,8 +79,10 @@ sub startup ($self) {
 
   register_builtin_handlers($self->api_registry, $self);
   register_server_handlers($self->api_registry, $self);
+  register_misc_handlers($self->api_registry, $self);
   register_repo_handlers($self->api_registry, $self);
   register_sync_handlers($self->api_registry, $self);
+  register_admin_handlers($self->api_registry, $self);
   ATProto::PDS::XRPC::Dispatcher->new(
     app     => $self,
     routes  => $routes,
