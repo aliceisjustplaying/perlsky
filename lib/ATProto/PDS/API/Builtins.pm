@@ -8,7 +8,7 @@ no warnings 'experimental::signatures';
 use Exporter 'import';
 use Mojo::JSON qw(false true);
 
-use ATProto::PDS::Identity qw(service_did service_did_doc);
+use ATProto::PDS::Identity qw(account_did_doc service_did service_did_doc);
 
 our @EXPORT_OK = qw(register_builtin_handlers);
 
@@ -25,19 +25,30 @@ sub register_builtin_handlers ($registry, $app) {
   $registry->register('com.atproto.identity.resolveDid', sub ($c, $endpoint) {
     my $did = $c->param('did') // '';
     my $service_did = service_did($c->app->settings);
+    if (_same_did($did, $service_did)) {
+      return {
+        didDoc => service_did_doc($c->app->settings),
+      };
+    }
+
+    my $account = $c->store->get_account_by_did($did);
     die {
       status  => 404,
       error   => 'DidNotFound',
       message => "No DID document found for $did",
-    } unless _same_did($did, $service_did);
+    } unless $account;
 
     return {
-      didDoc => service_did_doc($c->app->settings),
+      didDoc => $account->{did_doc} || account_did_doc($c->app->settings, $account),
     };
   });
 
   $registry->register('com.atproto.identity.resolveHandle', sub ($c, $endpoint) {
     my $handle = lc($c->param('handle') // '');
+    if (my $account = $c->store->get_account_by_handle($handle)) {
+      return { did => $account->{did} };
+    }
+
     my $service_handle = lc($c->config_value('service_handle_domain', 'localhost'));
     die {
       status  => 404,
@@ -54,6 +65,14 @@ sub register_builtin_handlers ($registry, $app) {
     my $identifier = lc($c->param('identifier') // '');
     my $service_did = lc(service_did($c->app->settings));
     my $service_handle = lc($c->config_value('service_handle_domain', 'localhost'));
+    if (my $account = $identifier =~ /^did:/ ? $c->store->get_account_by_did($identifier) : $c->store->get_account_by_handle($identifier)) {
+      return {
+        did    => $account->{did},
+        handle => $account->{handle},
+        didDoc => $account->{did_doc} || account_did_doc($c->app->settings, $account),
+      };
+    }
+
     die {
       status  => 404,
       error   => ($identifier =~ /^did:/ ? 'DidNotFound' : 'HandleNotFound'),
@@ -73,7 +92,7 @@ sub register_builtin_handlers ($registry, $app) {
     my $service_handle = lc($c->config_value('service_handle_domain', 'localhost'));
     return {
       handle    => $handle,
-      available => ($handle ne '' && $handle ne $service_handle ? true : false),
+      available => ($handle ne '' && $handle ne $service_handle && !$c->store->get_account_by_handle($handle) ? true : false),
     };
   });
 }

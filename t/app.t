@@ -49,7 +49,7 @@ $t->get_ok('/xrpc/com.atproto.identity.resolveDid?did=did:web:127.0.0.1%3A7755')
   ->json_is('/didDoc/id' => 'did:web:127.0.0.1%3A7755');
 
 $t->post_ok('/xrpc/com.atproto.server.createSession' => json => { identifier => 'alice', password => 'pw' })
-  ->status_is(501)
-  ->json_is('/error' => 'NotImplemented');
+  ->status_is(401)
+  ->json_is('/error' => 'AuthRequired');
 
 done_testing;

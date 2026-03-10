@@ -10,6 +10,7 @@ use Mojo::URL;
 
 our @EXPORT_OK = qw(
   account_did
+  account_did_doc
   did_to_path
   is_valid_handle
   normalize_handle
@@ -43,6 +44,25 @@ sub account_did ($config_or_url, $account_id) {
   die 'account id is required' unless defined $account_id && length $account_id;
   my $did = service_did($config_or_url);
   return "$did:users:$account_id";
+}
+
+sub account_did_doc ($config_or_url, $account) {
+  my $config   = _coerce_config($config_or_url);
+  my $base_url = $config->{base_url} // 'http://127.0.0.1:7755';
+  my $did      = $account->{did} // account_did($config, $account->{id});
+  my $handle   = $account->{handle};
+
+  my %doc = (
+    '@context' => ['https://www.w3.org/ns/did/v1'],
+    id         => $did,
+    service    => [{
+      id              => "$did#atproto_pds",
+      type            => 'AtprotoPersonalDataServer',
+      serviceEndpoint => $base_url,
+    }],
+  );
+  $doc{alsoKnownAs} = ["at://$handle"] if defined $handle && length $handle;
+  return \%doc;
 }
 
 sub did_to_path ($did) {
