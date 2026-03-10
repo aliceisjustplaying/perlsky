@@ -166,6 +166,7 @@ sub register_repo_handlers ($registry, $app) {
     close($fh);
 
     my $mime_type = $c->req->headers->content_type || 'application/octet-stream';
+    $c->observe_blob_ingress($mime_type, length($bytes));
     $c->store->put_blob(
       cid          => $cid,
       did          => $account->{did},

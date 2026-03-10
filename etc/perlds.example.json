@@ -7,6 +7,7 @@
   "service_handle_domain": "localhost",
   "jwt_secret": "change-me",
   "admin_password": "change-me-too",
+  "metrics_token": "change-me-metrics",
   "crawlers": [],
   "crawler_notify_interval": 1200,
   "data_dir": "data/runtime",

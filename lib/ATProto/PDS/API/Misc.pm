@@ -242,12 +242,18 @@ sub register_misc_handlers ($registry, $app) {
     } else {
       my $cursor = int($cursor_param);
       if ($cursor > $latest + 1) {
-        $c->send({ binary => encode_error_frame('FutureCursor', 'Cursor is ahead of the local label stream') });
+        $c->subscription_send(
+          binary     => encode_error_frame('FutureCursor', 'Cursor is ahead of the local label stream'),
+          frame_type => 'error',
+        );
         $c->finish(1008);
         return;
       }
       if ($oldest && $cursor && $cursor < $oldest) {
-        $c->send({ binary => encode_info_frame('OutdatedCursor', 'Cursor predates the oldest locally retained event') });
+        $c->subscription_send(
+          binary     => encode_info_frame('OutdatedCursor', 'Cursor predates the oldest locally retained event'),
+          frame_type => 'info',
+        );
         $next_seq = $oldest;
       } else {
         $next_seq = $cursor || ($oldest || ($latest + 1));
@@ -262,10 +268,10 @@ sub register_misc_handlers ($registry, $app) {
         my $labels = $event->{payload}{labels} || [];
         next unless @$labels;
         $next_seq = $event->{seq} + 1;
-        $c->send({ binary => encode_message_frame('#labels', {
+        $c->subscription_send(binary => encode_message_frame('#labels', {
           seq    => 0 + $event->{seq},
           labels => $labels,
-        })});
+        }), frame_type => 'label');
       }
     };
 

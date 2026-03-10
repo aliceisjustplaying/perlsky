@@ -129,6 +129,7 @@ sub register_sync_handlers ($registry, $app) {
     my $bytes = <$fh>;
     close($fh);
     $c->res->headers->content_type($blob->{mime_type} || 'application/octet-stream');
+    $c->observe_blob_egress($blob->{mime_type}, length($bytes));
     $c->render(data => $bytes);
     return;
   });
@@ -237,12 +238,18 @@ sub register_sync_handlers ($registry, $app) {
     } else {
       my $cursor = int($cursor_param);
       if ($cursor > $latest + 1) {
-        $c->send({ binary => encode_error_frame('FutureCursor', 'Cursor is ahead of the local event stream') });
+        $c->subscription_send(
+          binary     => encode_error_frame('FutureCursor', 'Cursor is ahead of the local event stream'),
+          frame_type => 'error',
+        );
         $c->finish(1008);
         return;
       }
       if ($oldest && $cursor && $cursor < $oldest) {
-        $c->send({ binary => encode_info_frame('OutdatedCursor', 'Cursor predates the oldest locally retained event') });
+        $c->subscription_send(
+          binary     => encode_info_frame('OutdatedCursor', 'Cursor predates the oldest locally retained event'),
+          frame_type => 'info',
+        );
         $next_seq = $oldest;
       } else {
         $next_seq = $cursor || ($oldest || ($latest + 1));
@@ -256,7 +263,10 @@ sub register_sync_handlers ($registry, $app) {
         my $frame = _event_frame($event);
         next unless $frame;
         $next_seq = $event->{seq} + 1;
-        $c->send({ binary => $frame });
+        $c->subscription_send(
+          binary     => $frame,
+          frame_type => $event->{type} // 'message',
+        );
       }
     };
 

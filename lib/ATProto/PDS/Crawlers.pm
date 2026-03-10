@@ -8,12 +8,14 @@ no warnings 'experimental::signatures';
 use Mojo::IOLoop;
 use Mojo::URL;
 use Mojo::UserAgent;
+use Time::HiRes qw(time);
 
 sub new ($class, %args) {
   return bless {
     hostname      => $args{hostname}      // 'localhost',
     crawlers      => $args{crawlers}      // [],
     store         => $args{store},
+    metrics       => $args{metrics},
     min_interval  => $args{min_interval}  // (20 * 60),
     last_notified => $args{last_notified} // 0,
     in_flight     => 0,
@@ -72,6 +74,21 @@ sub notify_of_update ($self, %args) {
       }
 
       for my $result (@{ $results || [] }) {
+        if ($self->{metrics}) {
+          my $result_label = $result->{ok} ? 'ok' : 'error';
+          $self->{metrics}->increment_counter('perlds_crawler_requests_total', 1, {
+            service => $result->{service},
+            result  => $result_label,
+          });
+          $self->{metrics}->observe_histogram(
+            'perlds_crawler_request_duration_seconds',
+            $result->{duration_seconds} // 0,
+            {
+              service => $result->{service},
+              result  => $result_label,
+            },
+          );
+        }
         $self->_touch_status($result->{service},
           notified_at => time,
           last_seq    => $seq,
@@ -105,6 +122,7 @@ sub _request_crawl_batch ($hostname, $services) {
 
   my @results;
   for my $service (@$services) {
+    my $started = time;
     my $result = {
       service => $service,
       ok      => 0,
@@ -126,6 +144,7 @@ sub _request_crawl_batch ($hostname, $services) {
     }
 
     my $res = $tx->result;
+    $result->{duration_seconds} = time - $started;
     $result->{code} = $res->code;
     if ($res->is_success) {
       $result->{ok} = 1;

@@ -20,6 +20,13 @@ Reference differential validation:
 - Run `PERLDS_RUN_REFERENCE_DIFF=1 prove -lv t/reference-differential.t` to exercise the same harness from the test suite.
 - Run `PERLDS_RUN_REFERENCE_DIFF=1 prove -lv t/reference-differential-plc.t` to run the PLC-specific reference comparison from the test suite.
 
+Metrics and observability:
+
+- `perlds` now exposes Prometheus-compatible metrics at `/metrics`.
+- Set `metrics_token` to require `Authorization: Bearer <token>` for scrapes.
+- The main runtime signals cover XRPC request counts/latency, websocket subscriptions and emitted frames, crawler notifications, blob ingress/egress bytes, and key store operation timings.
+- Detailed operator documentation lives in `docs/METRICS.md`.
+
 Relay / crawler discovery:
 
 - Configure `hostname` to the public host name you want relays to crawl, for example `pds.example.com`. This should be the host, not the full URL.
