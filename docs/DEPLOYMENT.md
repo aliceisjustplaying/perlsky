@@ -190,6 +190,14 @@ curl https://pds.example.com/.well-known/did.json
 curl https://pds.example.com/xrpc/com.atproto.server.describeServer
 ```
 
+For browser-hosted clients such as `https://bsky.app`, `perlsky` also answers CORS preflight requests on XRPC routes. A quick manual probe looks like:
+
+```sh
+curl -i -X OPTIONS https://pds.example.com/xrpc/com.atproto.server.describeServer \
+  -H 'Origin: https://bsky.app' \
+  -H 'Access-Control-Request-Method: GET'
+```
+
 You should see:
 
 - a healthy `_health` response

@@ -5,6 +5,7 @@ use warnings;
 
 use Mojo::Base 'Mojolicious', -signatures;
 use Mojo::JSON ();
+use Mojo::Path;
 use Mojo::URL;
 use ATProto::PDS::API::Admin qw(register_admin_handlers);
 use ATProto::PDS::API::Builtins qw(register_builtin_handlers);
@@ -41,6 +42,15 @@ sub startup ($self) {
   );
 
   $self->secrets([$config->{jwt_secret} // 'perlsky-dev-secret']);
+  $self->hook(before_dispatch => sub ($c) {
+    return unless _cors_path($c->req->url->path);
+
+    _apply_cors_headers($c);
+    return unless $c->req->method eq 'OPTIONS';
+
+    $c->res->code(204);
+    $c->rendered(204);
+  });
   $self->helper(metrics => sub { $metrics });
   $self->helper(api_registry => sub { state $registry = ATProto::PDS::API::Registry->new });
   $self->helper(endpoint_catalog => sub ($c) { endpoint_catalog($root) });
@@ -163,6 +173,31 @@ sub startup ($self) {
     routes  => $routes,
     catalog => endpoint_catalog($root),
   )->register_routes;
+}
+
+sub _cors_path ($path) {
+  my $text = ref($path) ? $path->to_string : ($path // q());
+  return 1 if $text =~ m{\A/xrpc(?:/|\z)};
+  return 1 if $text eq '/.well-known/did.json';
+  return 0;
+}
+
+sub _apply_cors_headers ($c) {
+  my $headers = $c->res->headers;
+  my $allow_headers = _allowed_cors_headers($c);
+  $headers->header('Access-Control-Allow-Origin'  => '*');
+  $headers->header('Access-Control-Allow-Methods' => 'GET, POST, OPTIONS');
+  $headers->header('Access-Control-Allow-Headers' => $allow_headers);
+  $headers->header('Access-Control-Expose-Headers' => 'WWW-Authenticate, DPoP-Nonce');
+  $headers->header('Access-Control-Max-Age'       => 86400);
+  $headers->header('Vary'                         => 'Origin, Access-Control-Request-Headers');
+}
+
+sub _allowed_cors_headers ($c) {
+  my @defaults = qw(Authorization Content-Type DPoP Atproto-Accept-Labelers Atproto-Proxy);
+  my @requested = split /\s*,\s*/, ($c->req->headers->header('Access-Control-Request-Headers') // q());
+  my %seen;
+  return join(', ', grep { length && !$seen{lc $_}++ } (@requested, @defaults));
 }
 
 1;

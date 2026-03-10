@@ -35,6 +35,7 @@ Deployment and first-account setup:
 - If `invite_code_required` is enabled, public signup is disabled until a valid invite code is supplied.
 - `script/perlsky-admin create-invite` can mint invite codes locally on the server without needing an existing user session.
 - The invite-only bootstrap flow is documented with copy-pasteable commands in `docs/DEPLOYMENT.md`.
+- Browser clients such as `bsky.app` can talk to `perlsky` directly because XRPC and DID-document responses include CORS headers and answer OPTIONS preflight requests.
 
 Relay / crawler discovery:
 
