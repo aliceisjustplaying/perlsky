@@ -1,0 +1,190 @@
+use v5.34;
+use warnings;
+
+use Config ();
+use File::Spec;
+use File::Temp qw(tempdir);
+use FindBin qw($Bin);
+use JSON::PP ();
+use Mojo::URL;
+use Test2::V0;
+
+BEGIN {
+  require lib;
+  my $root = File::Spec->rel2abs(File::Spec->catdir($Bin, '..'));
+  lib->import(
+    File::Spec->catdir($root, 'lib'),
+    File::Spec->catdir($root, 'local', 'lib', 'perl5'),
+    File::Spec->catdir($root, 'local', 'lib', 'perl5', $Config::Config{archname}),
+  );
+}
+
+use Test::Mojo;
+use ATProto::PDS;
+
+my $root = File::Spec->rel2abs(File::Spec->catdir($Bin, '..'));
+my $tmp  = tempdir(CLEANUP => 1);
+
+my $app = ATProto::PDS->new(
+  project_root => $root,
+  settings => {
+    base_url              => 'http://127.0.0.1:7755',
+    service_handle_domain => 'example.test',
+    service_did_method    => 'did:web',
+    jwt_secret            => 'extended-secret',
+    admin_password        => 'admin-secret',
+    data_dir              => $tmp,
+    db_path               => File::Spec->catfile($tmp, 'perlds.sqlite'),
+  },
+);
+
+my $t = Test::Mojo->new($app);
+
+$t->post_ok('/xrpc/com.atproto.server.createAccount' => json => {
+  handle   => 'alice.example.test',
+  email    => 'alice@example.test',
+  password => 'hunter22',
+})->status_is(200);
+
+my $created = $t->tx->res->json;
+my $access  = $created->{accessJwt};
+my $did     = $created->{did};
+
+$t->post_ok('/xrpc/com.atproto.server.createInviteCode' => {
+  Authorization => "Bearer $access",
+} => json => {
+  useCount => 2,
+})->status_is(200)
+  ->json_has('/code');
+
+my $invite_code = $t->tx->res->json->{code};
+
+$t->get_ok('/xrpc/com.atproto.server.getAccountInviteCodes' => {
+  Authorization => "Bearer $access",
+})->status_is(200)
+  ->json_is('/codes/0/code', $invite_code);
+
+$t->get_ok('/xrpc/com.atproto.admin.getAccountInfo' => {
+  Authorization => 'Bearer admin-secret',
+} => form => {
+  did => $did,
+})->status_is(200)
+  ->json_is('/did', $did)
+  ->json_is('/handle', 'alice.example.test');
+
+$t->post_ok('/xrpc/com.atproto.temp.addReservedHandle' => {
+  Authorization => 'Bearer admin-secret',
+} => json => {
+  handle => 'reserved.example.test',
+})->status_is(200);
+
+$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.temp.checkHandleAvailability')->query(
+  handle => 'reserved.example.test',
+))->status_is(200)
+  ->json_is('/available', JSON::PP::false);
+
+$t->post_ok('/xrpc/com.atproto.identity.updateHandle' => {
+  Authorization => "Bearer $access",
+} => json => {
+  handle => 'alice-renamed.example.test',
+})->status_is(200);
+
+$t->post_ok('/xrpc/com.atproto.identity.refreshIdentity' => json => {
+  identifier => 'alice-renamed.example.test',
+})->status_is(200)
+  ->json_is('/did', $did)
+  ->json_is('/handle', 'alice-renamed.example.test');
+
+$t->post_ok('/xrpc/com.atproto.server.requestEmailUpdate' => {
+  Authorization => "Bearer $access",
+} => json => {})->status_is(200);
+ok($t->tx->res->json->{tokenRequired}, 'confirmed email requires update token');
+
+my $email_update = $app->store->latest_action_token(
+  did     => $did,
+  purpose => 'email_update',
+);
+
+$t->post_ok('/xrpc/com.atproto.server.updateEmail' => {
+  Authorization => "Bearer $access",
+} => json => {
+  email => 'alice+new@example.test',
+  token => $email_update->{token},
+})->status_is(200);
+
+$t->post_ok('/xrpc/com.atproto.server.requestEmailConfirmation' => {
+  Authorization => "Bearer $access",
+} => json => {})->status_is(200);
+
+my $email_confirm = $app->store->latest_action_token(
+  did     => $did,
+  purpose => 'email_confirm',
+);
+
+$t->post_ok('/xrpc/com.atproto.server.confirmEmail' => json => {
+  email => 'alice+new@example.test',
+  token => $email_confirm->{token},
+})->status_is(200);
+
+my $blob_tx = $t->ua->build_tx(
+  POST => '/xrpc/com.atproto.repo.uploadBlob' => {
+    Authorization => "Bearer $access",
+    'Content-Type' => 'image/png',
+  } => 'blob-bytes',
+);
+$t->request_ok($blob_tx)->status_is(200);
+
+my $blob = $t->tx->res->json->{blob};
+my $blob_cid = $blob->{ref}{'$link'};
+
+$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.listBlobs')->query(
+  did => $did,
+))->status_is(200)
+  ->json_is('/cids/0', $blob_cid);
+
+$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.getBlob')->query(
+  did => $did,
+  cid => $blob_cid,
+))->status_is(200);
+is($t->tx->res->body, 'blob-bytes', 'blob bytes are served back');
+like($t->tx->res->headers->content_type // '', qr{image/png}, 'blob content type preserved');
+
+$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.getLatestCommit')->query(
+  did => $did,
+))->status_is(200)
+  ->json_has('/cid');
+
+my $commit_cid = $t->tx->res->json->{cid};
+
+$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.getBlocks')->query(
+  did  => $did,
+  cids => $commit_cid,
+))->status_is(200);
+like($t->tx->res->headers->content_type // '', qr{application/vnd\.ipld\.car}, 'block export is a CAR');
+
+$t->post_ok('/xrpc/com.atproto.admin.updateSubjectStatus' => {
+  Authorization => 'Bearer admin-secret',
+} => json => {
+  subject  => { did => $did },
+  takedown => { applied => JSON::PP::true, ref => 'unit-test' },
+})->status_is(200);
+
+$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.label.queryLabels')->query(
+  uriPatterns => "at://$did*",
+))->status_is(200)
+  ->json_is('/labels/0/val', '!hide');
+
+$t->post_ok('/xrpc/com.atproto.sync.requestCrawl' => json => {
+  hostname => 'relay.example.test',
+})->status_is(200);
+
+$t->get_ok('/xrpc/com.atproto.sync.listHosts')
+  ->status_is(200)
+  ->json_is('/hosts/0/hostname', 'relay.example.test');
+
+$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.getHostStatus')->query(
+  hostname => 'relay.example.test',
+))->status_is(200)
+  ->json_is('/hostname', 'relay.example.test');
+
+done_testing;
