@@ -8,17 +8,26 @@ use File::Spec;
 use Getopt::Long qw(GetOptionsFromArray);
 
 BEGIN {
+  require Cwd;
   require File::Spec;
   require lib;
-  my $root = File::Spec->rel2abs(File::Spec->catdir($FindBin::RealBin, '..'));
-  my $parent = File::Spec->catdir($root, '..');
-  lib->import(
-    File::Spec->catdir($root, 'lib'),
-    File::Spec->catdir($root, 'local', 'lib', 'perl5'),
-    File::Spec->catdir($root, 'local', 'lib', 'perl5', $Config::Config{archname}),
-    File::Spec->catdir($parent, 'local', 'lib', 'perl5'),
-    File::Spec->catdir($parent, 'local', 'lib', 'perl5', $Config::Config{archname}),
-  );
+
+  my @roots = grep { defined && -d $_ }
+    map { Cwd::abs_path($_) }
+    (
+    File::Spec->catdir($FindBin::RealBin, '..'),
+    File::Spec->catdir($FindBin::RealBin, '..', '..'),
+    );
+
+  my @inc;
+  for my $root (@roots) {
+    push @inc,
+      File::Spec->catdir($root, 'lib'),
+      File::Spec->catdir($root, 'local', 'lib', 'perl5'),
+      File::Spec->catdir($root, 'local', 'lib', 'perl5', $Config::Config{archname});
+  }
+
+  lib->import(@inc);
 }
 
 use ATProto::PDS::Config qw(load_config);
