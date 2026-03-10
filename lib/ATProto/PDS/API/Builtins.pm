@@ -7,6 +7,8 @@ no warnings 'experimental::signatures';
 
 use Exporter 'import';
 use Mojo::JSON qw(false true);
+use Mojo::URL;
+use Mojo::UserAgent;
 
 use ATProto::PDS::Identity qw(account_did_doc normalize_handle service_did service_did_doc);
 
@@ -50,14 +52,20 @@ sub register_builtin_handlers ($registry, $app) {
     }
 
     my $service_handle = lc($c->config_value('service_handle_domain', 'localhost'));
+    if ($handle eq $service_handle) {
+      return {
+        did => service_did($c->app->settings),
+      };
+    }
+
+    if (my $did = _resolve_remote_handle_via_appview($c, $handle)) {
+      return { did => $did };
+    }
+
     die {
       status  => 404,
       error   => 'HandleNotFound',
       message => "No DID found for handle $handle",
-    } unless $handle eq $service_handle;
-
-    return {
-      did => service_did($c->app->settings),
     };
   });
 
@@ -114,6 +122,29 @@ sub register_builtin_handlers ($registry, $app) {
       },
     };
   });
+}
+
+sub _resolve_remote_handle_via_appview ($c, $handle) {
+  my $origin = $c->config_value('bsky_appview_url', 'https://api.bsky.app');
+  return undef unless defined $origin && length $origin;
+
+  state %ua_for_origin;
+  my $ua = $ua_for_origin{$origin} //= do {
+    my $client = Mojo::UserAgent->new(max_redirects => 0);
+    $client->request_timeout(15);
+    $client->inactivity_timeout(15);
+    $client;
+  };
+
+  my $url = Mojo::URL->new($origin)->path('/xrpc/com.atproto.identity.resolveHandle')->query(handle => $handle);
+  my $tx = eval { $ua->get($url) };
+  return undef if $@ || !$tx;
+
+  my $res = $tx->result;
+  return undef unless ($res->code // 0) == 200;
+  my $json = $res->json;
+  return undef unless ref($json) eq 'HASH' && defined($json->{did}) && length($json->{did});
+  return $json->{did};
 }
 
 sub _same_did ($left, $right) {
