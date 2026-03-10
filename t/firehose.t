@@ -5,7 +5,7 @@ use Config ();
 use File::Spec;
 use File::Temp qw(tempdir);
 use FindBin qw($Bin);
-use Test2::V0;
+use Test::More;
 
 BEGIN {
   require lib;

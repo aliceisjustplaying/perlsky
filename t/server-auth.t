@@ -5,7 +5,7 @@ use Config ();
 use File::Path qw(remove_tree);
 use File::Spec;
 use FindBin qw($Bin);
-use Test2::V0;
+use Test::More;
 
 BEGIN {
   require lib;

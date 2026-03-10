@@ -4,7 +4,7 @@ use warnings;
 use Config ();
 use File::Spec;
 use FindBin qw($Bin);
-use Test2::V0;
+use Test::More;
 
 BEGIN {
   require lib;

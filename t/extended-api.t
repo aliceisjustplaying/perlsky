@@ -6,8 +6,7 @@ use File::Spec;
 use File::Temp qw(tempdir);
 use FindBin qw($Bin);
 use JSON::PP ();
-use Mojo::URL;
-use Test2::V0;
+use Test::More;
 
 BEGIN {
   require lib;
@@ -20,6 +19,7 @@ BEGIN {
 }
 
 use Test::Mojo;
+use Mojo::URL;
 use ATProto::PDS;
 
 my $root = File::Spec->rel2abs(File::Spec->catdir($Bin, '..'));
