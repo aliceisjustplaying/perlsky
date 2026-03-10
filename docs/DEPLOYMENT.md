@@ -33,7 +33,7 @@ Install the runtime dependencies that are easiest to obtain from the OS:
 
 ```sh
 apt-get update
-apt-get install -y cpanminus libcbor-xs-perl libcryptx-perl libdbd-sqlite3-perl jq
+apt-get install -y cpanminus libcbor-xs-perl libcryptx-perl libdbd-sqlite3-perl libio-socket-ssl-perl jq
 ```
 
 Install Mojolicious into an app-local library so the deployed runtime matches the repo expectation:
@@ -42,6 +42,8 @@ Install Mojolicious into an app-local library so the deployed runtime matches th
 cd /opt/perlsky/app
 cpanm --notest --local-lib-contained /opt/perlsky/local Mojolicious@9.42
 ```
+
+`IO::Socket::SSL` is required for `did:plc` account creation and crawler calls to `https://` endpoints.
 
 ## Config
 

@@ -14,6 +14,7 @@ WriteMakefile(
         'Crypt::PK::Ed25519' => '0',
         'DBD::SQLite' => '1.64',
         'DBI'         => '1.643',
+        'IO::Socket::SSL' => '2.009',
         'Mojolicious' => '9.42',
         'Test::Deep'  => '1.204',
         'Test2::V0'   => '0.000162',
