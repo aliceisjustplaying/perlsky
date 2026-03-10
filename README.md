@@ -34,6 +34,7 @@ Deployment and first-account setup:
 - If `service_handle_domain` is `example.com`, submitting `handle: "alice"` to `com.atproto.server.createAccount` creates `alice.example.com`.
 - If `invite_code_required` is enabled, public signup is disabled until a valid invite code is supplied.
 - `script/perlsky-admin create-invite` can mint invite codes locally on the server without needing an existing user session.
+- The invite-only bootstrap flow is documented with copy-pasteable commands in `docs/DEPLOYMENT.md`.
 
 Relay / crawler discovery:
 

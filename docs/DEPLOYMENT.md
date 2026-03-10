@@ -113,6 +113,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
+Environment=MOJO_MODE=production
 User=perlsky
 Group=perlsky
 WorkingDirectory=/opt/perlsky/app
@@ -135,6 +136,8 @@ Then:
 systemctl daemon-reload
 systemctl enable --now perlsky
 ```
+
+`MOJO_MODE=production` is recommended so unexpected exceptions return ordinary HTTP 500 responses instead of Mojolicious development debug pages.
 
 ## Reverse Proxy
 
@@ -223,7 +226,32 @@ PERLSKY_CONFIG=/etc/perlsky/perlsky.json \
   /opt/perlsky/app/script/perlsky-admin create-invite
 ```
 
-You can then pass that value as `inviteCode` in the `createAccount` request.
+That command prints a single invite code such as `perlsky-0123456789ab`.
+
+You can then pass that value as `inviteCode` in the `createAccount` request:
+
+```sh
+curl -X POST https://pds.example.com/xrpc/com.atproto.server.createAccount \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "handle": "alice",
+    "email": "alice@example.com",
+    "password": "correct horse battery staple",
+    "inviteCode": "perlsky-0123456789ab"
+  }'
+```
+
+If `service_handle_domain` is `pds.example.com`, the short handle `alice` becomes `alice.pds.example.com`.
+
+For a fully local bootstrap flow on the server, you can save the invite code into a shell variable first:
+
+```sh
+INVITE_CODE=$(
+  PERLSKY_CONFIG=/etc/perlsky/perlsky.json \
+    /opt/perlsky/app/script/perlsky-admin create-invite
+)
+printf 'Invite code: %s\n' "$INVITE_CODE"
+```
 
 ## Metrics
 
