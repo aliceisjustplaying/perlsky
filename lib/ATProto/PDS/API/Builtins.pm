@@ -15,7 +15,7 @@ our @EXPORT_OK = qw(register_builtin_handlers);
 sub register_builtin_handlers ($registry, $app) {
   $registry->register('com.atproto.server.describeServer', sub ($c, $endpoint) {
     return {
-      inviteCodeRequired        => false,
+      inviteCodeRequired        => $c->config_value('invite_code_required', 0) ? true : false,
       phoneVerificationRequired => false,
       availableUserDomains      => [ $c->config_value('service_handle_domain', 'localhost') ],
       did                       => service_did($c->app->settings),

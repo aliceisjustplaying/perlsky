@@ -55,6 +55,7 @@ Create `/etc/perlsky/perlsky.json`:
   "hostname": "pds.example.com",
   "service_did_method": "did:web",
   "service_handle_domain": "example.com",
+  "invite_code_required": false,
   "account_did_method": "did:plc",
   "plc_rotation_private_key_hex": "REPLACE_WITH_64_HEX_CHARS",
   "jwt_secret": "REPLACE_WITH_A_RANDOM_SECRET",
@@ -73,6 +74,7 @@ Important fields:
 - `hostname`: the host relays should crawl
 - `service_handle_domain`: the suffix used for local handles
 - If you want users like `alice.pds.example.com`, set `service_handle_domain` to `pds.example.com`, not `example.com`.
+- `invite_code_required`: if true, `createAccount` requires a valid invite code
 - `account_did_method`: set to `did:plc` if you want PLC-backed user DIDs
 - `plc_rotation_private_key_hex`: required for `did:plc` account creation
 - `crawlers`: relay/crawler origins to notify after repo activity
@@ -213,6 +215,15 @@ The response contains:
 - `refreshJwt`
 
 Passwords must be at least 8 characters long.
+
+If you want to disable open signup, enable `invite_code_required` and mint invite codes locally on the server:
+
+```sh
+PERLSKY_CONFIG=/etc/perlsky/perlsky.json \
+  /opt/perlsky/app/script/perlsky-admin create-invite
+```
+
+You can then pass that value as `inviteCode` in the `createAccount` request.
 
 ## Metrics
 

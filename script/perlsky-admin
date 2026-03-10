@@ -1,0 +1,68 @@
+#!/usr/bin/env perl
+use v5.34;
+use warnings;
+
+use Config ();
+use FindBin ();
+use File::Spec;
+use Getopt::Long qw(GetOptionsFromArray);
+
+BEGIN {
+  require File::Spec;
+  require lib;
+  my $root = File::Spec->rel2abs(File::Spec->catdir($FindBin::RealBin, '..'));
+  lib->import(
+    File::Spec->catdir($root, 'lib'),
+    File::Spec->catdir($root, 'local', 'lib', 'perl5'),
+    File::Spec->catdir($root, 'local', 'lib', 'perl5', $Config::Config{archname}),
+  );
+}
+
+use ATProto::PDS::Config qw(load_config);
+use ATProto::PDS::Store::SQLite;
+use ATProto::PDS::Auth::Password qw(random_hex);
+use ATProto::PDS::Identity qw(service_did);
+
+my $root        = File::Spec->rel2abs(File::Spec->catdir($FindBin::RealBin, '..'));
+my $config_path = $ENV{PERLSKY_CONFIG} || File::Spec->catfile($root, 'etc', 'perlsky.example.json');
+my $config      = load_config($config_path);
+my $command     = shift(@ARGV) // q();
+
+if ($command eq 'create-invite') {
+  my $use_count   = 1;
+  my $for_account = service_did($config);
+  my $created_by  = service_did($config);
+  GetOptionsFromArray(
+    \@ARGV,
+    'use-count=i'   => \$use_count,
+    'for-account=s' => \$for_account,
+    'created-by=s'  => \$created_by,
+  ) or die usage();
+
+  my $store = ATProto::PDS::Store::SQLite->new(
+    path => $config->{db_path} || File::Spec->catfile($root, 'data', 'runtime', 'perlsky.sqlite'),
+  )->bootstrap;
+
+  my $code = _new_invite_code();
+  $store->create_invite_code(
+    code        => $code,
+    for_account => $for_account,
+    created_by  => $created_by,
+    use_count   => $use_count,
+  );
+  print "$code\n";
+  exit 0;
+}
+
+die usage();
+
+sub _new_invite_code {
+  return 'perlsky-' . substr(random_hex(8), 0, 12);
+}
+
+sub usage {
+  return <<'EOF';
+usage:
+  perlsky-admin create-invite [--use-count N] [--for-account DID] [--created-by DID]
+EOF
+}

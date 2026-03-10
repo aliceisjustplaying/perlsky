@@ -8,7 +8,7 @@ WriteMakefile(
     VERSION_FROM => 'lib/ATProto/PDS.pm',
     ABSTRACT     => 'Perl 5 implementation of an AT Protocol PDS',
     AUTHOR       => 'aliceisjustplaying',
-    EXE_FILES    => ['script/perlsky'],
+    EXE_FILES    => ['script/perlsky', 'script/perlsky-admin'],
     PREREQ_PM    => {
         'CBOR::XS'    => '1.87',
         'Crypt::PK::Ed25519' => '0',

@@ -5,6 +5,7 @@
   "hostname": "localhost",
   "service_did_method": "did:web",
   "service_handle_domain": "localhost",
+  "invite_code_required": false,
   "jwt_secret": "change-me",
   "admin_password": "change-me-too",
   "metrics_token": "change-me-metrics",

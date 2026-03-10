@@ -32,6 +32,8 @@ Deployment and first-account setup:
 - Generic single-node deployment instructions live in `docs/DEPLOYMENT.md`.
 - The deployment guide includes a reverse-proxy layout, a sample `systemd` unit, validation commands, and a `createAccount` example for bootstrapping the first user.
 - If `service_handle_domain` is `example.com`, submitting `handle: "alice"` to `com.atproto.server.createAccount` creates `alice.example.com`.
+- If `invite_code_required` is enabled, public signup is disabled until a valid invite code is supplied.
+- `script/perlsky-admin create-invite` can mint invite codes locally on the server without needing an existing user session.
 
 Relay / crawler discovery:
 

@@ -41,6 +41,8 @@ sub register_server_handlers ($registry, $app) {
       my $available = ($invite->{use_count} // 0) - ($invite->{use_count_consumed} // 0);
       xrpc_error(400, 'InvalidInviteCode', 'Invite code has been exhausted')
         if $invite->{disabled} || $available <= 0;
+    } elsif ($c->config_value('invite_code_required', 0)) {
+      xrpc_error(400, 'InvalidInviteCode', 'Invite code is required');
     }
 
     my $account_id = random_hex(8);
