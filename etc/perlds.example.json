@@ -2,10 +2,13 @@
   "host": "127.0.0.1",
   "port": 7755,
   "base_url": "http://127.0.0.1:7755",
+  "hostname": "localhost",
   "service_did_method": "did:web",
   "service_handle_domain": "localhost",
   "jwt_secret": "change-me",
   "admin_password": "change-me-too",
+  "crawlers": [],
+  "crawler_notify_interval": 1200,
   "data_dir": "data/runtime",
   "db_path": "data/runtime/perlds.sqlite"
 }

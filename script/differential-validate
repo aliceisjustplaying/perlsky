@@ -194,6 +194,10 @@ sub get_json ($origin, $nsid, $query = undef, $headers = {}) {
   return $res;
 }
 
+sub get_json_url ($url) {
+  return Mojo::UserAgent->new(max_redirects => 0)->get($url)->result;
+}
+
 sub auth_header ($token) {
   return { Authorization => "Bearer $token" };
 }
@@ -419,6 +423,24 @@ sub normalize_xrpc_error ($res) {
   };
 }
 
+sub crawler_requests ($origin) {
+  my $res = get_json_url("$origin/requests");
+  die "crawler request log fetch failed for $origin\n" unless $res->is_success;
+  return $res->json || {};
+}
+
+sub wait_for_crawler_requests ($name, $origin, $minimum = 1, $timeout = 10) {
+  my $deadline = time + $timeout;
+  while (time < $deadline) {
+    my $state = eval { crawler_requests($origin) };
+    if ($state && (($state->{count} // 0) >= $minimum)) {
+      return $state;
+    }
+    sleep 0.1;
+  }
+  die "timed out waiting for $name crawler requests at $origin\n";
+}
+
 note('Preparing official reference runtime');
 setup_reference_runtime();
 
@@ -431,10 +453,14 @@ my $perl_port    = free_port();
 
 my $plc_ready = File::Spec->catfile($tmp, 'plc.ready.json');
 my $ref_ready = File::Spec->catfile($tmp, 'reference.ready.json');
+my $reference_crawler_ready = File::Spec->catfile($tmp, 'reference-crawler.ready.json');
+my $perlds_crawler_ready    = File::Spec->catfile($tmp, 'perlds-crawler.ready.json');
 
 my $plc_log = File::Spec->catfile($tmp, 'plc.log');
 my $ref_log = File::Spec->catfile($tmp, 'reference.log');
 my $perl_log = File::Spec->catfile($tmp, 'perlds.log');
+my $reference_crawler_log = File::Spec->catfile($tmp, 'reference-crawler.log');
+my $perlds_crawler_log    = File::Spec->catfile($tmp, 'perlds-crawler.log');
 
 my $plc = spawn_logged(
   'plc-mock',
@@ -449,6 +475,39 @@ my $plc = spawn_logged(
 
 my $plc_info = wait_for_ready_file('plc mock', $plc_ready);
 pass("started local PLC mock at $plc_info->{origin}");
+
+my $reference_crawler_port = free_port();
+my $perlds_crawler_port    = free_port();
+
+my $reference_crawler = spawn_logged(
+  'reference-crawler',
+  ['fnm', 'exec', '--using=20', '--', 'node', File::Spec->catfile($root, 'tools', 'differential', 'crawler-mock.cjs')],
+  {
+    PERLDS_READY_FILE   => $reference_crawler_ready,
+    PERLDS_CRAWLER_PORT => $reference_crawler_port,
+    PERLDS_CRAWLER_HOST => '127.0.0.1',
+  },
+  $reference_crawler_log,
+);
+
+my $perlds_crawler = spawn_logged(
+  'perlds-crawler',
+  ['fnm', 'exec', '--using=20', '--', 'node', File::Spec->catfile($root, 'tools', 'differential', 'crawler-mock.cjs')],
+  {
+    PERLDS_READY_FILE   => $perlds_crawler_ready,
+    PERLDS_CRAWLER_PORT => $perlds_crawler_port,
+    PERLDS_CRAWLER_HOST => '127.0.0.1',
+  },
+  $perlds_crawler_log,
+);
+
+my $reference_crawler_info = wait_for_ready_file('reference crawler', $reference_crawler_ready);
+wait_for_http_ok('reference crawler', "$reference_crawler_info->{origin}/_health");
+pass("started reference crawler mock at $reference_crawler_info->{origin}");
+
+my $perlds_crawler_info = wait_for_ready_file('perlds crawler', $perlds_crawler_ready);
+wait_for_http_ok('perlds crawler', "$perlds_crawler_info->{origin}/_health");
+pass("started perlds crawler mock at $perlds_crawler_info->{origin}");
 
 my $reference_data = File::Spec->catdir($tmp, 'reference');
 make_path($reference_data);
@@ -470,6 +529,7 @@ my $reference = spawn_logged(
     PDS_INVITE_REQUIRED                      => 0,
     PDS_DID_PLC_URL                          => $plc_info->{origin},
     PDS_CONTACT_EMAIL_ADDRESS                => 'abuse@example.test',
+    PDS_CRAWLERS                             => $reference_crawler_info->{origin},
   },
   $ref_log,
 );
@@ -482,6 +542,7 @@ my $perlds_config = File::Spec->catfile($tmp, 'perlds.json');
 open my $cfg_fh, '>', $perlds_config or die "unable to write $perlds_config: $!";
 print {$cfg_fh} encode_json({
   base_url              => "http://127.0.0.1:$perl_port",
+  hostname              => 'localhost',
   service_handle_domain => 'test',
   service_did_method    => 'did:web',
   account_did_method    => $diff_account_did_method,
@@ -493,6 +554,7 @@ print {$cfg_fh} encode_json({
     : ()),
   jwt_secret            => 'perlds-jwt-secret',
   admin_password        => 'perlds-admin-secret',
+  crawlers              => [$perlds_crawler_info->{origin}],
   data_dir              => File::Spec->catdir($tmp, 'perlds-data'),
   db_path               => File::Spec->catfile($tmp, 'perlds.sqlite'),
 });
@@ -516,12 +578,14 @@ my %server = (
     handle         => 'alice.test',
     email          => 'alice-ref@test.com',
     admin_password => 'reference-admin-secret',
+    crawler_origin => $reference_crawler_info->{origin},
   },
   perlds => {
     origin         => "http://127.0.0.1:$perl_port",
     handle         => 'alice.test',
     email          => 'alice-perl@test.com',
     admin_password => 'perlds-admin-secret',
+    crawler_origin => $perlds_crawler_info->{origin},
   },
 );
 
@@ -577,6 +641,23 @@ for my $name (sort keys %server) {
   next unless $res->is_success;
   check(($res->json->{did} // q()) eq $server{$name}{did}, "$name resolveHandle returns the created DID");
 }
+
+note('Comparing crawler notifications');
+for my $name (sort keys %server) {
+  my $state = wait_for_crawler_requests("$name crawler", $server{$name}{crawler_origin});
+  my $first = $state->{requests}[0]{body} || {};
+  $server{$name}{crawler_notice} = {
+    saw_request      => (($state->{count} // 0) >= 1) ? 1 : 0,
+    hostname_matches => (($first->{hostname} // q()) eq 'localhost') ? 1 : 0,
+  };
+  check($server{$name}{crawler_notice}{saw_request}, "$name requested a relay crawl");
+  check($server{$name}{crawler_notice}{hostname_matches}, "$name requestCrawl uses the configured hostname");
+}
+
+check(
+  same_hash($server{reference}{crawler_notice}, $server{perlds}{crawler_notice}),
+  'outbound crawler notifications match the official reference PDS semantics',
+);
 
 note('Comparing getSession');
 for my $name (sort keys %server) {
@@ -949,6 +1030,10 @@ if ($failed) {
   print slurp_file($perl_log);
   print "\nPLC mock log:\n";
   print slurp_file($plc_log);
+  print "\nReference crawler log:\n";
+  print slurp_file($reference_crawler_log);
+  print "\nperlds crawler log:\n";
+  print slurp_file($perlds_crawler_log);
   die "\ndifferential validation failed with $failed mismatches\n";
 }
 

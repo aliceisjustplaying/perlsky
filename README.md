@@ -14,10 +14,18 @@ The immediate goal is a PDS that is pleasant to hack on and interoperable enough
 Reference differential validation:
 
 - Run `script/differential-validate` to compare `perlds` against the official published `@atproto/pds` on a focused set of account, repo, moderation, sync, firehose, and `importRepo` snapshot-restore behaviors.
+- The differential harness also configures a local relay/crawler mock for both servers and verifies that both emit `com.atproto.sync.requestCrawl` notices with the expected hostname after repo activity, based on the upstream crawler wiring in `packages/pds/src/crawlers.ts`, `context.ts`, and `sequencer.ts`.
 - Run `PERLDS_DIFF_ACCOUNT_DID_METHOD=did:plc script/differential-validate` to exercise the same harness in PLC-account mode, including recommended DID credentials, PLC signature requests, PLC handle updates, token-gated PLC signing behavior, and moderation checks after PLC handle changes.
 - The helper installs the reference runtime into `.tools/reference-runtime` with Node 20 via `fnm`.
 - Run `PERLDS_RUN_REFERENCE_DIFF=1 prove -lv t/reference-differential.t` to exercise the same harness from the test suite.
 - Run `PERLDS_RUN_REFERENCE_DIFF=1 prove -lv t/reference-differential-plc.t` to run the PLC-specific reference comparison from the test suite.
+
+Relay / crawler discovery:
+
+- Configure `hostname` to the public host name you want relays to crawl, for example `pds.example.com`. This should be the host, not the full URL.
+- Configure `crawlers` as a list of relay or crawler service origins, for example `["https://bsky.network"]`.
+- `perlds` will POST `com.atproto.sync.requestCrawl` to each configured crawler after local repo/account/identity activity, while throttling repeat notices with `crawler_notify_interval` (default `1200` seconds).
+- Local regression coverage for this path lives in `t/crawlers.t`.
 
 Moderation and labels:
 
