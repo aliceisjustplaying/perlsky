@@ -13,11 +13,20 @@ The immediate goal is a PDS that is pleasant to hack on and interoperable enough
 
 Reference differential validation:
 
-- Run `script/differential-validate` to compare `perlds` against the official published `@atproto/pds` on a focused set of account, repo, sync, firehose, and `importRepo` snapshot-restore behaviors.
-- Run `PERLDS_DIFF_ACCOUNT_DID_METHOD=did:plc script/differential-validate` to exercise the same harness in PLC-account mode, including recommended DID credentials, PLC signature requests, PLC handle updates, and token-gated PLC signing behavior.
+- Run `script/differential-validate` to compare `perlds` against the official published `@atproto/pds` on a focused set of account, repo, moderation, sync, firehose, and `importRepo` snapshot-restore behaviors.
+- Run `PERLDS_DIFF_ACCOUNT_DID_METHOD=did:plc script/differential-validate` to exercise the same harness in PLC-account mode, including recommended DID credentials, PLC signature requests, PLC handle updates, token-gated PLC signing behavior, and moderation checks after PLC handle changes.
 - The helper installs the reference runtime into `.tools/reference-runtime` with Node 20 via `fnm`.
 - Run `PERLDS_RUN_REFERENCE_DIFF=1 prove -lv t/reference-differential.t` to exercise the same harness from the test suite.
 - Run `PERLDS_RUN_REFERENCE_DIFF=1 prove -lv t/reference-differential-plc.t` to run the PLC-specific reference comparison from the test suite.
+
+Moderation and labels:
+
+- `com.atproto.admin.updateSubjectStatus` now enforces repo, record, and blob takedowns as real behavior instead of passive metadata.
+- Repo takedowns block ordinary login, repo writes, and public repo reads. `allowTakendown` sessions are accepted for parity with the reference PDS, but those sessions still cannot write.
+- Record takedowns hide records from `com.atproto.repo.getRecord` and `com.atproto.repo.listRecords`.
+- Blob takedowns quarantine blob reads for the public while still permitting authenticated self/admin recovery access, and they block both duplicate blob uploads and new record writes that reference quarantined blobs.
+- `com.atproto.label.queryLabels`, `com.atproto.label.subscribeLabels`, and `com.atproto.temp.fetchLabels` are backed by persisted local labels rather than synthesized snapshots. Admin takedowns emit `!hide` labels and restores emit negation events.
+- Label query/stream behavior is covered by local regression tests in `t/labels.t`. The official reference PDS does not provide a like-for-like local labeler implementation to diff against, so direct upstream differential checks are focused on moderation semantics rather than label RPC parity.
 
 Interop fixtures:
 

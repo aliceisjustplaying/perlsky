@@ -91,10 +91,10 @@ sub is_blob_takedown ($c, $did, $cid) {
 sub assert_login_allowed ($c, $account, %opts) {
   xrpc_error(403, 'AccountDeleted', 'Account has been deleted') if defined $account->{deleted_at};
   if (is_repo_takedown($c, $account->{did}) && !$opts{allow_takedown}) {
-    xrpc_error(403, 'AccountTakedown', 'Account has been taken down');
+    xrpc_error(401, 'AccountTakedown', 'Account has been taken down');
   }
   if (defined $account->{deactivated_at} && !$opts{allow_deactivated}) {
-    xrpc_error(403, 'AccountDeactivated', 'Account is deactivated');
+    xrpc_error(401, 'AccountDeactivated', 'Account is deactivated');
   }
   return 1;
 }
@@ -124,7 +124,7 @@ sub assert_record_readable ($c, $uri, %opts) {
 
 sub assert_repo_writable ($c, $account) {
   if (is_repo_takedown($c, $account->{did}) || defined $account->{deactivated_at}) {
-    xrpc_error(401, 'InvalidToken', 'Bad token scope');
+    xrpc_error(400, 'InvalidToken', 'Bad token scope');
   }
   return 1;
 }

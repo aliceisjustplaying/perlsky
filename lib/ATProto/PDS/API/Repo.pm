@@ -120,7 +120,13 @@ sub register_repo_handlers ($registry, $app) {
   $registry->register('com.atproto.repo.listRecords', sub ($c, $endpoint) {
     my $account = _resolve_repo($c, $c->param('repo'));
     _xrpc_error(404, 'RepoNotFound', 'Repository was not found') unless $account;
-    assert_repo_readable($c, $account);
+    assert_repo_readable(
+      $c,
+      $account,
+      status  => 400,
+      error   => 'InvalidRequest',
+      message => 'Could not find repo: ' . ($c->param('repo') // q()),
+    );
     my $page = _list_visible_records(
       $c,
       $account->{did},

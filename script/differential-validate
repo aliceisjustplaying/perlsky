@@ -11,6 +11,7 @@ use File::Spec;
 use File::Temp qw(tempdir);
 use IO::Socket::INET;
 use JSON::PP ();
+use MIME::Base64 qw(encode_base64);
 use POSIX qw(WNOHANG);
 use Time::HiRes qw(sleep time);
 
@@ -195,6 +196,12 @@ sub get_json ($origin, $nsid, $query = undef, $headers = {}) {
 
 sub auth_header ($token) {
   return { Authorization => "Bearer $token" };
+}
+
+sub admin_auth_header ($password) {
+  return {
+    Authorization => 'Basic ' . encode_base64("admin:$password", q()),
+  };
 }
 
 sub normalized_domains ($res) {
@@ -505,14 +512,16 @@ pass("started perlds at http://127.0.0.1:$perl_port");
 
 my %server = (
   reference => {
-    origin => $reference_info->{origin},
-    handle => 'alice.test',
-    email  => 'alice-ref@test.com',
+    origin         => $reference_info->{origin},
+    handle         => 'alice.test',
+    email          => 'alice-ref@test.com',
+    admin_password => 'reference-admin-secret',
   },
   perlds => {
-    origin => "http://127.0.0.1:$perl_port",
-    handle => 'alice.test',
-    email  => 'alice-perl@test.com',
+    origin         => "http://127.0.0.1:$perl_port",
+    handle         => 'alice.test',
+    email          => 'alice-perl@test.com',
+    admin_password => 'perlds-admin-secret',
   },
 );
 
@@ -672,9 +681,141 @@ for my $name (sort keys %server) {
   next unless $res->is_success;
   my $json = $res->json;
   $server{$name}{record_uri} = $json->{uri};
+  $server{$name}{record_cid} = $json->{cid};
   check(($json->{uri} // q()) =~ m{/app\.bsky\.feed\.post/diffpost\z}, "$name createRecord returns the expected record URI");
   check(defined $json->{cid} && length $json->{cid}, "$name createRecord returns a CID");
 }
+
+note('Comparing moderation takedown behavior');
+for my $name (sort keys %server) {
+  my $res = post_json(
+    $server{$name}{origin},
+    'com.atproto.admin.updateSubjectStatus',
+    {
+      subject  => {
+        '$type' => 'com.atproto.admin.defs#repoRef',
+        did     => $server{$name}{did},
+      },
+      takedown => { applied => true },
+    },
+    admin_auth_header($server{$name}{admin_password}),
+  );
+  check($res->is_success, "$name repo takedown succeeds");
+  next unless $res->is_success;
+
+  my $blocked_login = post_json($server{$name}{origin}, 'com.atproto.server.createSession', {
+    identifier => $server{$name}{renamed_handle} || $server{$name}{handle},
+    password   => 'hunter22',
+  });
+  my $allowed_login = post_json($server{$name}{origin}, 'com.atproto.server.createSession', {
+    identifier     => $server{$name}{renamed_handle} || $server{$name}{handle},
+    password       => 'hunter22',
+    allowTakendown => true,
+  });
+
+  my $blocked_write = $allowed_login->is_success
+    ? post_json($server{$name}{origin}, 'com.atproto.repo.createRecord', {
+        repo       => $server{$name}{did},
+        collection => 'app.bsky.feed.post',
+        rkey       => 'takedown-diff',
+        record     => {
+          %{$record},
+          text => "takedown write validation for $name",
+        },
+      }, auth_header(($allowed_login->json || {})->{accessJwt}))
+    : undef;
+
+  my $blocked_list = get_form($server{$name}{origin}, 'com.atproto.repo.listRecords', {
+    repo       => $server{$name}{did},
+    collection => 'app.bsky.feed.post',
+  });
+
+  $server{$name}{repo_takedown} = {
+    login_blocked => $blocked_login->is_success ? 0 : 1,
+    login_error   => ($blocked_login->json || {})->{error},
+    allow_login   => $allowed_login->is_success ? 1 : 0,
+    write_blocked => ($blocked_write && !$blocked_write->is_success) ? 1 : 0,
+    write_error   => $blocked_write ? (($blocked_write->json || {})->{error}) : undef,
+    list_blocked  => $blocked_list->is_success ? 0 : 1,
+    list_error    => ($blocked_list->json || {})->{error},
+  };
+
+  $res = post_json(
+    $server{$name}{origin},
+    'com.atproto.admin.updateSubjectStatus',
+    {
+      subject  => {
+        '$type' => 'com.atproto.admin.defs#repoRef',
+        did     => $server{$name}{did},
+      },
+      takedown => { applied => false },
+    },
+    admin_auth_header($server{$name}{admin_password}),
+  );
+  check($res->is_success, "$name repo takedown restore succeeds");
+
+  $res = post_json(
+    $server{$name}{origin},
+    'com.atproto.admin.updateSubjectStatus',
+    {
+      subject  => {
+        '$type' => 'com.atproto.repo.strongRef',
+        uri     => $server{$name}{record_uri},
+        cid     => $server{$name}{record_cid},
+      },
+      takedown => { applied => true },
+    },
+    admin_auth_header($server{$name}{admin_password}),
+  );
+  check($res->is_success, "$name record takedown succeeds");
+  next unless $res->is_success;
+
+  my $record_uri = $server{$name}{record_uri};
+  my ($collection, $rkey) = $record_uri =~ m{at://[^/]+/([^/]+)/([^/?#]+)\z};
+  my $get_record = get_form($server{$name}{origin}, 'com.atproto.repo.getRecord', {
+    repo       => $server{$name}{did},
+    collection => $collection,
+    rkey       => $rkey,
+  });
+  my $list_records = get_form($server{$name}{origin}, 'com.atproto.repo.listRecords', {
+    repo       => $server{$name}{did},
+    collection => $collection,
+  });
+
+  my $records = $list_records->is_success ? ($list_records->json->{records} || []) : [];
+  my $record_hidden = !(grep { (($_->{uri} // q()) eq $record_uri) } @$records);
+  $server{$name}{record_takedown} = {
+    get_blocked   => $get_record->is_success ? 0 : 1,
+    get_error     => ($get_record->json || {})->{error},
+    list_hidden   => $record_hidden ? 1 : 0,
+    list_success  => $list_records->is_success ? 1 : 0,
+  };
+
+  $res = post_json(
+    $server{$name}{origin},
+    'com.atproto.admin.updateSubjectStatus',
+    {
+      subject  => {
+        '$type' => 'com.atproto.repo.strongRef',
+        uri     => $record_uri,
+        cid     => $server{$name}{record_cid},
+      },
+      takedown => { applied => false },
+    },
+    admin_auth_header($server{$name}{admin_password}),
+  );
+  check($res->is_success, "$name record takedown restore succeeds");
+}
+
+check(
+  same_hash($server{reference}{repo_takedown}, $server{perlds}{repo_takedown}),
+  'repo takedown login and write semantics match the official reference PDS',
+);
+
+check(
+  same_hash($server{reference}{record_takedown}, $server{perlds}{record_takedown}),
+  'record takedown visibility semantics match the official reference PDS',
+);
 
 note('Comparing listRecords');
 for my $name (sort keys %server) {

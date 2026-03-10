@@ -101,7 +101,7 @@ $t->post_ok('/xrpc/com.atproto.admin.updateSubjectStatus' => {
 $t->post_ok('/xrpc/com.atproto.server.createSession' => json => {
   identifier => 'alice.example.test',
   password   => 'hunter22',
-})->status_is(403)
+})->status_is(401)
   ->json_is('/error', 'AccountTakedown');
 
 $t->post_ok('/xrpc/com.atproto.server.createSession' => json => {
@@ -123,15 +123,15 @@ $t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
     text      => 'blocked',
     createdAt => '2026-03-10T00:00:01Z',
   },
-})->status_is(401)
+})->status_is(400)
   ->json_is('/error', 'InvalidToken')
   ->json_is('/message', 'Bad token scope');
 
 $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.repo.listRecords')->query(
   repo       => $did,
   collection => 'app.bsky.feed.post',
-))->status_is(404)
-  ->json_is('/error', 'RepoNotFound');
+))->status_is(400)
+  ->json_is('/error', 'InvalidRequest');
 
 $t->post_ok('/xrpc/com.atproto.moderation.createReport' => {
   Authorization => "Bearer $takedown_access",
