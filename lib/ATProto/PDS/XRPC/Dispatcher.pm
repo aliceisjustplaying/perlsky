@@ -18,7 +18,7 @@ sub register_routes ($self) {
         return $handler->($c, $endpoint) if $handler;
 
         $c->send({ json => {
-          error   => 'NotYetImplemented',
+          error   => 'NotImplemented',
           message => "No subscription handler registered for $endpoint->{id}",
           nsid    => $endpoint->{id},
         }});
@@ -33,12 +33,27 @@ sub register_routes ($self) {
 
     $route->to(cb => sub ($c) {
       my $handler = $c->app->api_registry->handler_for($endpoint->{id});
-      return $handler->($c, $endpoint) if $handler;
+      if ($handler) {
+        my $result = eval { $handler->($c, $endpoint) };
+        if (my $err = $@) {
+          if (ref($err) eq 'HASH' && $err->{error}) {
+            return $c->render(
+              status => $err->{status} // 400,
+              json   => {
+                error   => $err->{error},
+                message => $err->{message} // $err->{error},
+              },
+            );
+          }
+          die $err;
+        }
+        return $c->render(json => $result);
+      }
 
       $c->render(
         status => 501,
         json   => {
-          error   => 'NotYetImplemented',
+          error   => 'NotImplemented',
           message => "No handler registered for $endpoint->{id}",
           nsid    => $endpoint->{id},
           type    => $endpoint->{type},

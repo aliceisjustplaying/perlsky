@@ -5,8 +5,11 @@ use warnings;
 
 use Mojo::Base 'Mojolicious', -signatures;
 use Mojo::JSON ();
+use ATProto::PDS::API::Builtins qw(register_builtin_handlers);
 use ATProto::PDS::API::Registry;
+use ATProto::PDS::Identity qw(service_did);
 use ATProto::PDS::LexiconCatalog qw(endpoint_catalog);
+use ATProto::PDS::LexiconRegistry;
 use ATProto::PDS::XRPC::Dispatcher;
 
 has project_root => '';
@@ -20,12 +23,14 @@ sub startup ($self) {
   $self->helper(api_registry => sub { state $registry = ATProto::PDS::API::Registry->new });
   $self->helper(endpoint_catalog => sub ($c) { endpoint_catalog($root) });
   $self->helper(config_value => sub ($c, $key, $default = undef) { $c->app->settings->{$key} // $default });
+  $self->helper(lexicons => sub ($c) { state $registry = ATProto::PDS::LexiconRegistry->new(root => $root) });
 
   my $routes = $self->routes;
   $routes->get('/')->to(cb => sub ($c) {
     $c->render(json => {
       service   => 'perlds',
       status    => 'booting',
+      did       => service_did($c->app->settings),
       endpoints => scalar @{ $c->endpoint_catalog },
     });
   });
@@ -38,28 +43,24 @@ sub startup ($self) {
     });
   });
 
-  $self->_register_builtin_handlers;
+  $routes->get('/.well-known/did.json')->to(cb => sub ($c) {
+    $c->render(json => {
+      '@context' => ['https://www.w3.org/ns/did/v1'],
+      id         => service_did($c->app->settings),
+      service    => [{
+        id              => service_did($c->app->settings) . '#atproto_pds',
+        type            => 'AtprotoPersonalDataServer',
+        serviceEndpoint => $c->config_value('base_url', 'http://127.0.0.1:7755'),
+      }],
+    });
+  });
+
+  register_builtin_handlers($self->api_registry, $self);
   ATProto::PDS::XRPC::Dispatcher->new(
     app     => $self,
     routes  => $routes,
     catalog => endpoint_catalog($root),
   )->register_routes;
-}
-
-sub _register_builtin_handlers ($self) {
-  $self->api_registry->register('com.atproto.server.describeServer', sub ($c, $endpoint) {
-    my $domain = $c->config_value('service_handle_domain', 'localhost');
-    my $base   = $c->config_value('base_url', 'http://127.0.0.1:7755');
-    (my $host = $base) =~ s{\Ahttps?://}{};
-    $host =~ s{/.*\z}{};
-
-    $c->render(json => {
-      inviteCodeRequired        => Mojo::JSON->false,
-      phoneVerificationRequired => Mojo::JSON->false,
-      availableUserDomains      => [$domain],
-      did                       => "did:web:$host",
-    });
-  });
 }
 
 1;

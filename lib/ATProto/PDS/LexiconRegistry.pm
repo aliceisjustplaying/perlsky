@@ -35,7 +35,8 @@ sub get ($self, $id) {
 }
 
 sub _load_lexicons ($self) {
-    my $root = path($self->root);
+    my $candidate = File::Spec->catdir($self->root, 'share', 'lexicons');
+    my $root = path(-d $candidate ? $candidate : $self->root);
     return unless -d $root;
 
     for my $file ($root->list_tree->grep(qr/\.json$/)->each) {
