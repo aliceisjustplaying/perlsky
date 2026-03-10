@@ -106,9 +106,9 @@ sub create_account ($self, %args) {
       INSERT INTO accounts (
         id, account_id, did, handle, email, password_hash, password_salt,
         created_at, updated_at, deactivated_at, deleted_at, email_confirmed_at,
-        did_doc_json, private_key, public_key, public_key_multibase,
+        did_doc_json, private_key, public_key, public_key_multibase, signing_key_did,
         repo_commit_cid, repo_root_cid, repo_rev, invites_disabled, invite_note
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     },
     undef,
     $account_id,
@@ -127,6 +127,7 @@ sub create_account ($self, %args) {
     $args{private_key},
     $args{public_key},
     $args{public_key_multibase},
+    $args{signing_key_did},
     $args{repo_commit_cid},
     $args{repo_root_cid},
     $args{repo_rev},
@@ -141,7 +142,7 @@ sub update_account ($self, $did, %changes) {
   my %allowed = map { $_ => 1 } qw(
     handle email password_hash password_salt updated_at deactivated_at deleted_at
     email_confirmed_at invites_disabled invite_note
-    did_doc private_key public_key public_key_multibase
+    did_doc private_key public_key public_key_multibase signing_key_did
     repo_commit_cid repo_root_cid repo_rev
   );
   my (@sets, @bind);
@@ -1011,12 +1012,13 @@ sub reserve_signing_key ($self, %args) {
   $self->dbh->do(
     q{
       INSERT INTO reserved_signing_keys (
-        did, private_key, public_key, public_key_multibase, created_at, claimed_at
-      ) VALUES (?, ?, ?, ?, ?, ?)
+        did, private_key, public_key, public_key_multibase, signing_key_did, created_at, claimed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(did) DO UPDATE SET
         private_key = excluded.private_key,
         public_key = excluded.public_key,
         public_key_multibase = excluded.public_key_multibase,
+        signing_key_did = excluded.signing_key_did,
         created_at = excluded.created_at,
         claimed_at = excluded.claimed_at
     },
@@ -1025,6 +1027,7 @@ sub reserve_signing_key ($self, %args) {
     $args{private_key},
     $args{public_key},
     $args{public_key_multibase},
+    $args{signing_key_did},
     $now,
     $args{claimed_at},
   );
@@ -1436,6 +1439,13 @@ sub default_migrations {
             status_json TEXT
           )
         },
+      ],
+    },
+    {
+      version => 4,
+      statements => [
+        q{ALTER TABLE accounts ADD COLUMN signing_key_did TEXT},
+        q{ALTER TABLE reserved_signing_keys ADD COLUMN signing_key_did TEXT},
       ],
     },
   );

@@ -11,6 +11,7 @@ use JSON::PP ();
 use ATProto::PDS::API::Helpers qw(account_view find_account invite_code_view require_admin subject_key);
 use ATProto::PDS::API::Util qw(xrpc_error);
 use ATProto::PDS::Auth::Password qw(hash_password);
+use ATProto::PDS::Crypto::Secp256k1 qw(signing_did_to_public_key_multibase);
 use ATProto::PDS::Identity qw(account_did_doc normalize_handle);
 
 our @EXPORT_OK = qw(register_admin_handlers);
@@ -216,15 +217,19 @@ sub register_admin_handlers ($registry, $app) {
     my $body = $c->req->json || {};
     my $account = $c->store->get_account_by_did($body->{did} // q());
     xrpc_error(404, 'AccountNotFound', 'Account was not found') unless $account;
-    my $multibase = $body->{signingKey} // q();
-    $multibase =~ s/\Adid:key://;
+    my $signing_key = $body->{signingKey} // q();
+    xrpc_error(400, 'InvalidRequest', 'signingKey must be a did:key')
+      unless $signing_key =~ /\Adid:key:/;
+    my $multibase = signing_did_to_public_key_multibase($signing_key);
     my $updated = {
       %$account,
       public_key_multibase => $multibase,
+      signing_key_did      => $signing_key,
     };
     $c->store->update_account(
       $account->{did},
       public_key_multibase => $multibase,
+      signing_key_did      => $signing_key,
       did_doc              => account_did_doc($c->app->settings, $updated),
     );
     return {};

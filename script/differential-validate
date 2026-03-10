@@ -164,6 +164,12 @@ sub post_json ($origin, $nsid, $payload, $headers = {}) {
   return $tx->result;
 }
 
+sub post_empty ($origin, $nsid, $headers = {}) {
+  my $ua = Mojo::UserAgent->new(max_redirects => 0);
+  my $tx = $ua->post("$origin/xrpc/$nsid" => $headers);
+  return $tx->result;
+}
+
 sub get_form ($origin, $nsid, $query, $headers = {}) {
   my $ua  = Mojo::UserAgent->new(max_redirects => 0);
   my $url = Mojo::URL->new("$origin/xrpc/$nsid")->query($query);
@@ -346,8 +352,60 @@ sub same_hash ($left, $right) {
   return $json->encode($left) eq $json->encode($right);
 }
 
+sub normalize_did_doc ($doc, $expected_did, $expected_handle, $expected_origin) {
+  my @services = grep { (($_->{id} // q()) eq '#atproto_pds') || (($_->{id} // q()) =~ /atproto_pds\z/) } @{ $doc->{service} || [] };
+  my @methods  = grep { (($_->{id} // q()) eq '#atproto') || (($_->{id} // q()) =~ /#atproto\z/) } @{ $doc->{verificationMethod} || [] };
+  my $service  = $services[0] || {};
+  my $method   = $methods[0]  || {};
+  return {
+    id_matches            => (($doc->{id} // q()) eq $expected_did) ? 1 : 0,
+    handle_matches        => (((($doc->{alsoKnownAs} || [])->[0]) // q()) eq "at://$expected_handle") ? 1 : 0,
+    service_endpoint_ok   => (($service->{serviceEndpoint} // q()) eq $expected_origin) ? 1 : 0,
+    service_type_ok       => (($service->{type} // q()) eq 'AtprotoPersonalDataServer') ? 1 : 0,
+    verification_type_set => defined($method->{type}) && length($method->{type}) ? 1 : 0,
+    verification_key_set  => defined($method->{publicKeyMultibase}) && ($method->{publicKeyMultibase} =~ /\Az/) ? 1 : 0,
+  };
+}
+
+sub normalize_plc_credentials ($json, $expected_handle, $expected_origin) {
+  return {
+    handle_matches       => (((($json->{alsoKnownAs} || [])->[0]) // q()) eq "at://$expected_handle") ? 1 : 0,
+    verification_is_did  => (($json->{verificationMethods}{atproto} // q()) =~ /\Adid:key:/) ? 1 : 0,
+    rotation_key_count   => 0 + @{ $json->{rotationKeys} || [] },
+    all_rotation_are_did => @{ $json->{rotationKeys} || [] }
+      ? ((grep { ($_ // q()) =~ /\Adid:key:/ } @{ $json->{rotationKeys} || [] }) == @{ $json->{rotationKeys} || [] } ? 1 : 0)
+      : 0,
+    service_endpoint_ok  => (($json->{services}{atproto_pds}{endpoint} // q()) eq $expected_origin) ? 1 : 0,
+    service_type_ok      => (($json->{services}{atproto_pds}{type} // q()) eq 'AtprotoPersonalDataServer') ? 1 : 0,
+  };
+}
+
+sub normalize_signed_plc_operation ($json, $expected_handle, $expected_origin) {
+  my $op = $json->{operation} || {};
+  return {
+    type_ok              => (($op->{type} // q()) eq 'plc_operation') ? 1 : 0,
+    handle_matches       => (((($op->{alsoKnownAs} || [])->[0]) // q()) eq "at://$expected_handle") ? 1 : 0,
+    verification_is_did  => (($op->{verificationMethods}{atproto} // q()) =~ /\Adid:key:/) ? 1 : 0,
+    rotation_key_count   => 0 + @{ $op->{rotationKeys} || [] },
+    service_endpoint_ok  => (($op->{services}{atproto_pds}{endpoint} // q()) eq $expected_origin) ? 1 : 0,
+    has_prev             => defined($op->{prev}) && length($op->{prev}) ? 1 : 0,
+    has_sig              => defined($op->{sig})  && length($op->{sig})  ? 1 : 0,
+  };
+}
+
+sub normalize_xrpc_error ($res) {
+  my $json = $res->json || {};
+  return {
+    status => $res->code,
+    error  => $json->{error},
+  };
+}
+
 note('Preparing official reference runtime');
 setup_reference_runtime();
+
+my $diff_account_did_method = $ENV{PERLDS_DIFF_ACCOUNT_DID_METHOD} // 'did:web';
+note("Differential mode: $diff_account_did_method");
 
 my $plc_port     = free_port();
 my $reference_port = free_port();
@@ -408,6 +466,13 @@ print {$cfg_fh} encode_json({
   base_url              => "http://127.0.0.1:$perl_port",
   service_handle_domain => 'test',
   service_did_method    => 'did:web',
+  account_did_method    => $diff_account_did_method,
+  ($diff_account_did_method eq 'did:plc'
+    ? (
+        plc_url                      => $plc_info->{origin},
+        plc_rotation_private_key_hex => ('11' x 32),
+      )
+    : ()),
   jwt_secret            => 'perlds-jwt-secret',
   admin_password        => 'perlds-admin-secret',
   data_dir              => File::Spec->catdir($tmp, 'perlds-data'),
@@ -475,11 +540,14 @@ for my $name (sort keys %server) {
   $server{$name}{did} = $json->{did};
   $server{$name}{access} = $json->{accessJwt};
   $server{$name}{refresh} = $json->{refreshJwt};
+  $server{$name}{create_account} = $json;
 
   check(($json->{handle} // q()) eq $server{$name}{handle}, "$name createAccount returns normalized handle");
   check(defined $json->{did} && $json->{did} =~ /\Adid:/, "$name createAccount returns a DID");
   check(defined $json->{accessJwt} && length $json->{accessJwt}, "$name createAccount returns an access token");
   check(defined $json->{refreshJwt} && length $json->{refreshJwt}, "$name createAccount returns a refresh token");
+  check(($json->{did} // q()) =~ /\Adid:plc:/, "$name createAccount returns a PLC DID")
+    if $diff_account_did_method eq 'did:plc';
 }
 
 note('Comparing resolveHandle');
@@ -496,8 +564,83 @@ for my $name (sort keys %server) {
   check($res->is_success, "$name getSession succeeds");
   next unless $res->is_success;
   my $json = $res->json;
+  $server{$name}{session} = $json;
   check(($json->{did} // q()) eq $server{$name}{did}, "$name getSession returns the created DID");
   check(($json->{handle} // q()) eq $server{$name}{handle}, "$name getSession returns the created handle");
+}
+
+if ($diff_account_did_method eq 'did:plc') {
+  note('Comparing PLC identity semantics');
+  for my $name (sort keys %server) {
+    my $res = get_json(
+      $server{$name}{origin},
+      'com.atproto.identity.getRecommendedDidCredentials',
+      undef,
+      auth_header($server{$name}{access}),
+    );
+    check($res->is_success, "$name getRecommendedDidCredentials succeeds");
+    next unless $res->is_success;
+    $server{$name}{recommended_did} = normalize_plc_credentials(
+      $res->json || {},
+      $server{$name}{handle},
+      $server{$name}{origin},
+    );
+  }
+
+  check(
+    same_hash($server{reference}{recommended_did}, $server{perlds}{recommended_did}),
+    'getRecommendedDidCredentials matches the official reference PDS semantics',
+  );
+
+  note('Comparing PLC signature requests');
+  for my $name (sort keys %server) {
+    my $res = post_empty(
+      $server{$name}{origin},
+      'com.atproto.identity.requestPlcOperationSignature',
+      auth_header($server{$name}{access}),
+    );
+    check($res->is_success, "$name requestPlcOperationSignature succeeds");
+  }
+
+  note('Comparing PLC handle updates');
+  for my $name (sort keys %server) {
+    my $new_handle = $name eq 'reference' ? 'alice-renamed-ref.test' : 'alice-renamed-perl.test';
+    my $res = post_json(
+      $server{$name}{origin},
+      'com.atproto.identity.updateHandle',
+      { handle => $new_handle },
+      auth_header($server{$name}{access}),
+    );
+    check($res->is_success, "$name updateHandle succeeds for PLC accounts");
+    next unless $res->is_success;
+    $server{$name}{renamed_handle} = $new_handle;
+
+    my $handle_res = get_form(
+      $server{$name}{origin},
+      'com.atproto.identity.resolveHandle',
+      { handle => $new_handle },
+    );
+    check($handle_res->is_success, "$name resolveHandle finds the renamed PLC handle");
+    check(($handle_res->json->{did} // q()) eq $server{$name}{did}, "$name renamed PLC handle still resolves to the same DID")
+      if $handle_res->is_success;
+  }
+
+  note('Comparing PLC token requirements');
+  for my $name (sort keys %server) {
+    my $res = post_json(
+      $server{$name}{origin},
+      'com.atproto.identity.signPlcOperation',
+      {},
+      auth_header($server{$name}{access}),
+    );
+    check(!$res->is_success, "$name signPlcOperation rejects missing tokens");
+    $server{$name}{missing_plc_token_error} = normalize_xrpc_error($res);
+  }
+
+  check(
+    same_hash($server{reference}{missing_plc_token_error}, $server{perlds}{missing_plc_token_error}),
+    'signPlcOperation matches the official reference PDS token requirement semantics',
+  );
 }
 
 my $record = {

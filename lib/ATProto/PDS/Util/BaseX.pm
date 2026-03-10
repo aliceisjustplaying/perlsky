@@ -4,6 +4,7 @@ use v5.34;
 use warnings;
 
 use Exporter 'import';
+use Math::BigInt try => 'GMP';
 use MIME::Base64 qw(encode_base64 decode_base64);
 
 our @EXPORT_OK = qw(
@@ -59,42 +60,37 @@ sub decode_base32 {
 sub encode_base58btc {
   my ($bytes) = @_;
   return '' unless defined $bytes;
-  return '1' x _leading_zero_bytes($bytes) unless length $bytes;
-
-  my @digits = (0);
-  for my $byte (unpack('C*', $bytes)) {
-    my $carry = $byte;
-    for my $i (0 .. $#digits) {
-      my $value = $digits[$i] * 256 + $carry;
-      $digits[$i] = $value % 58;
-      $carry      = int($value / 58);
-    }
-    push @digits, ($carry % 58), do { $carry = int($carry / 58) } while $carry;
-  }
+  return q() unless length $bytes;
 
   my $zeroes = _leading_zero_bytes($bytes);
-  my $out    = ('1' x $zeroes) . join('', map { substr($BASE58_ALPHABET, $_, 1) } reverse @digits);
-  return $out;
+  my $value  = Math::BigInt->from_hex('0x' . unpack('H*', $bytes));
+  my $out    = q();
+
+  while ($value->bcmp(0) > 0) {
+    my ($quotient, $remainder) = $value->copy->bdiv(58);
+    $out = substr($BASE58_ALPHABET, $remainder->numify, 1) . $out;
+    $value = $quotient;
+  }
+
+  return ('1' x $zeroes) . $out;
 }
 
 sub decode_base58btc {
   my ($text) = @_;
   return '' unless defined $text && length $text;
 
-  my @bytes = (0);
+  my ($leading) = $text =~ /\A(1*)/;
+  my $value = Math::BigInt->new(0);
   for my $char (split //, $text) {
     die "invalid base58 character: $char" unless exists $BASE58_INDEX{$char};
-    my $carry = $BASE58_INDEX{$char};
-    for my $i (0 .. $#bytes) {
-      my $value = $bytes[$i] * 58 + $carry;
-      $bytes[$i] = $value & 0xff;
-      $carry     = $value >> 8;
-    }
-    push @bytes, ($carry & 0xff), do { $carry >>= 8 } while $carry;
+    $value->bmul(58)->badd($BASE58_INDEX{$char});
   }
 
-  my $zeroes = ($text =~ tr/1//);
-  return ("\0" x $zeroes) . pack('C*', reverse @bytes);
+  my $hex = $value->as_hex;
+  $hex =~ s/\A0x//;
+  $hex = '0' . $hex if length($hex) % 2;
+  my $bytes = $value->is_zero ? q() : pack('H*', $hex);
+  return ("\0" x length($leading)) . $bytes;
 }
 
 sub base64url_encode {

@@ -13,6 +13,7 @@ use ATProto::PDS::API::Server qw(require_auth);
 use ATProto::PDS::API::Util qw(iso8601 xrpc_error);
 use ATProto::PDS::Auth::Password qw(hash_password random_hex);
 use ATProto::PDS::Identity qw(account_did_doc normalize_handle service_did service_did_doc);
+use ATProto::PDS::PLC qw(create_signed_plc_operation is_plc_did plc_rotation_did plc_update_handle recommended_did_credentials refresh_plc_did_doc submit_plc_operation);
 use ATProto::PDS::Repo::CID;
 use ATProto::PDS::Repo::DagCbor qw(encode_dag_cbor);
 
@@ -20,14 +21,8 @@ our @EXPORT_OK = qw(register_misc_handlers);
 
 sub register_misc_handlers ($registry, $app) {
   $registry->register('com.atproto.identity.getRecommendedDidCredentials', sub ($c, $endpoint) {
-    return {
-      rotationKeys        => [],
-      alsoKnownAs         => [],
-      verificationMethods => {},
-      services            => {
-        atproto_pds => service_did_doc($c->app->settings)->{service}[0],
-      },
-    };
+    my (undef, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
+    return recommended_did_credentials($c->app->settings, $account);
   });
 
   $registry->register('com.atproto.identity.refreshIdentity', sub ($c, $endpoint) {
@@ -60,62 +55,84 @@ sub register_misc_handlers ($registry, $app) {
 
   $registry->register('com.atproto.identity.requestPlcOperationSignature', sub ($c, $endpoint) {
     my (undef, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
+    xrpc_error(400, 'InvalidRequest', 'account does not have an email address')
+      unless defined($account->{email}) && length($account->{email});
     my $token = $c->store->create_action_token(
       did        => $account->{did},
       email      => $account->{email},
-      purpose    => 'plc_signature',
+      purpose    => 'plc_operation',
       expires_at => time + 3600,
     );
     $c->store->log_outbound_email(
       recipient_did   => $account->{did},
       recipient_email => $account->{email},
-      subject         => 'perlds PLC operation signature',
-      content         => "Use token $token->{token} to sign your PLC operation.",
-    ) if $account->{email};
+      subject         => 'PLC update requested',
+      content         => "Use token $token->{token} to authorize your PLC operation.",
+    );
     return {};
   });
 
   $registry->register('com.atproto.identity.signPlcOperation', sub ($c, $endpoint) {
     my (undef, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
+    xrpc_error(400, 'InvalidRequest', 'PLC operations are only supported for did:plc accounts')
+      unless is_plc_did($account->{did});
     my $body = $c->req->json || {};
-    if (defined($body->{token}) && length($body->{token})) {
-      my $token = $c->store->get_action_token($body->{token});
-      xrpc_error(400, 'InvalidToken', 'Token was not found') unless $token;
-      xrpc_error(400, 'InvalidToken', 'Token purpose did not match') unless ($token->{purpose} // q()) eq 'plc_signature';
-      xrpc_error(400, 'ExpiredToken', 'Token has expired')
-        if defined($token->{expires_at}) && $token->{expires_at} < time;
-      xrpc_error(400, 'InvalidToken', 'Token was not issued for this account')
-        unless ($token->{did} // q()) eq $account->{did};
-      $c->store->consume_action_token($token->{token});
-    }
+    my $token_value = $body->{token} // q();
+    xrpc_error(400, 'InvalidRequest', 'email confirmation token required to sign PLC operations')
+      unless length $token_value;
+    my $token = $c->store->get_action_token($token_value);
+    xrpc_error(400, 'InvalidToken', 'Token is invalid') unless $token;
+    xrpc_error(400, 'InvalidToken', 'Token purpose did not match') unless ($token->{purpose} // q()) eq 'plc_operation';
+    xrpc_error(400, 'ExpiredToken', 'Token has expired')
+      if defined($token->{expires_at}) && $token->{expires_at} < time;
+    xrpc_error(400, 'InvalidToken', 'Token was not issued for this account')
+      unless ($token->{did} // q()) eq $account->{did};
+    $c->store->consume_action_token($token->{token});
+    my $current = recommended_did_credentials($c->app->settings, $account);
+    my $last_op = ATProto::PDS::PLC::get_last_plc_operation($c->app->settings, $account->{did});
     return {
-      operation => {
-        type                => 'com.atproto.identity.plcOperation',
-        did                 => $account->{did},
-        alsoKnownAs         => $body->{alsoKnownAs} // $account->{did_doc}{alsoKnownAs} // [],
-        verificationMethods => $body->{verificationMethods} // {},
-        services            => $body->{services} // {},
-        rotationKeys        => $body->{rotationKeys} // [],
-        signedAt            => iso8601(),
-      },
+      operation => create_signed_plc_operation($c->app->settings, {
+        type                => 'plc_operation',
+        rotationKeys        => $body->{rotationKeys} // $current->{rotationKeys},
+        alsoKnownAs         => $body->{alsoKnownAs} // $current->{alsoKnownAs},
+        verificationMethods => $body->{verificationMethods} // $current->{verificationMethods},
+        services            => $body->{services} // $current->{services},
+        prev                => ATProto::PDS::Repo::CID->for_dag_cbor(encode_dag_cbor($last_op))->to_string,
+      }),
     };
   });
 
   $registry->register('com.atproto.identity.submitPlcOperation', sub ($c, $endpoint) {
+    my (undef, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
+    xrpc_error(400, 'InvalidRequest', 'PLC operations are only supported for did:plc accounts')
+      unless is_plc_did($account->{did});
     my $body = $c->req->json || {};
     my $operation = $body->{operation} || {};
-    my $account = $c->store->get_account_by_did($operation->{did} // q());
-    if (!$account) {
-      my (undef, $authed) = require_auth($c, audience => 'access', allow_refresh => 1);
-      $account = $authed;
-    }
-    xrpc_error(404, 'DidNotFound', 'Account was not found') unless $account;
-
-    my $did_doc = $account->{did_doc} || account_did_doc($c->app->settings, $account);
-    $did_doc->{alsoKnownAs}         = $operation->{alsoKnownAs}         if exists $operation->{alsoKnownAs};
-    $did_doc->{verificationMethod}  = $operation->{verificationMethods} if exists $operation->{verificationMethods};
-    $did_doc->{service}             = $operation->{services}            if exists $operation->{services};
+    my $rotation_did = ATProto::PDS::PLC::plc_rotation_did($c->app->settings);
+    xrpc_error(400, 'InvalidRequest', q{Rotation keys do not include server's rotation key})
+      unless grep { ($_ // q()) eq $rotation_did } @{ $operation->{rotationKeys} || [] };
+    xrpc_error(400, 'InvalidRequest', 'Incorrect type on atproto_pds service')
+      unless (($operation->{services}{atproto_pds}{type} // q()) eq 'AtprotoPersonalDataServer');
+    xrpc_error(400, 'InvalidRequest', 'Incorrect endpoint on atproto_pds service')
+      unless (($operation->{services}{atproto_pds}{endpoint} // q()) eq $c->app->settings->{base_url});
+    xrpc_error(400, 'InvalidRequest', 'Incorrect signing key')
+      unless (($operation->{verificationMethods}{atproto} // q()) eq ($account->{signing_key_did} // q()));
+    my $primary_aka = (($operation->{alsoKnownAs} || [])->[0]) // q();
+    xrpc_error(400, 'InvalidRequest', 'Incorrect handle in alsoKnownAs')
+      if ($account->{handle} // q()) && ($primary_aka ne 'at://' . $account->{handle});
+    submit_plc_operation($c->app->settings, $account->{did}, $operation);
+    my $did_doc = refresh_plc_did_doc($c->app->settings, $account->{did});
     $c->store->update_account($account->{did}, did_doc => $did_doc);
+    $account = $c->store->update_account($account->{did}, did_doc => $did_doc);
+    $c->store->append_event(
+      did     => $account->{did},
+      type    => 'identity',
+      rev     => $account->{repo_rev},
+      payload => {
+        did    => $account->{did},
+        handle => $account->{handle},
+      },
+    );
     return {};
   });
 
@@ -130,10 +147,13 @@ sub register_misc_handlers ($registry, $app) {
       if $existing && ($existing->{did} // q()) ne $account->{did};
     xrpc_error(400, 'HandleNotAvailable', 'That handle is reserved')
       if $c->store->get_reserved_handle($handle);
+    my $did_doc = is_plc_did($account->{did})
+      ? plc_update_handle($c->app->settings, $account, $handle)
+      : account_did_doc($c->app->settings, { %$account, handle => $handle });
     my $updated = $c->store->update_account(
       $account->{did},
       handle  => $handle,
-      did_doc => account_did_doc($c->app->settings, { %$account, handle => $handle }),
+      did_doc => $did_doc,
     );
     $c->store->append_event(
       did     => $updated->{did},

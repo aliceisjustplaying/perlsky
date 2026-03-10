@@ -6,14 +6,13 @@ use feature 'signatures';
 no warnings 'experimental::signatures';
 
 use JSON::PP qw(decode_json);
-use Crypt::PK::Ed25519;
 
+use ATProto::PDS::Crypto::Secp256k1 qw(generate_keypair sign_compact_low_s);
 use ATProto::PDS::Repo::Bytes;
 use ATProto::PDS::Repo::CAR qw(read_car write_car);
 use ATProto::PDS::Repo::CID;
 use ATProto::PDS::Repo::DagCbor qw(encode_dag_cbor);
 use ATProto::PDS::Repo::MST qw(build_mst);
-use ATProto::PDS::Util::BaseX qw(encode_base58btc);
 use ATProto::PDS::Util::TID qw(next_tid);
 
 sub new ($class, %args) {
@@ -26,16 +25,7 @@ sub store ($self) {
 }
 
 sub generate_signing_key ($self) {
-  my $pk = Crypt::PK::Ed25519->new;
-  $pk->generate_key;
-  my $private = $pk->export_key_raw('private');
-  my $public  = $pk->export_key_raw('public');
-  my $multibase = 'z' . encode_base58btc(pack('C*', 0xed, 0x01) . $public);
-  return {
-    private_key         => $private,
-    public_key          => $public,
-    public_key_multibase => $multibase,
-  };
+  return generate_keypair();
 }
 
 sub initialize_repo ($self, $account) {
@@ -128,9 +118,7 @@ sub apply_writes ($self, $account, $writes, %opts) {
     prev    => $latest ? ATProto::PDS::Repo::CID->from_string($latest->{cid}) : undef,
   };
   my $unsigned_bytes = encode_dag_cbor($unsigned);
-  my $pk = Crypt::PK::Ed25519->new;
-  $pk->import_key_raw($account->{private_key}, 'private');
-  my $sig = $pk->sign_message($unsigned_bytes);
+  my $sig = sign_compact_low_s($account->{private_key}, $unsigned_bytes);
   my $commit = { %$unsigned, sig => ATProto::PDS::Repo::Bytes->new($sig) };
   my $commit_bytes = encode_dag_cbor($commit);
   my $commit_cid = ATProto::PDS::Repo::CID->for_dag_cbor($commit_bytes);

@@ -13,6 +13,7 @@ use ATProto::PDS::API::Util qw(iso8601 xrpc_error);
 use ATProto::PDS::Auth::JWT qw(decode_jwt encode_jwt);
 use ATProto::PDS::Auth::Password qw(hash_password random_hex);
 use ATProto::PDS::Identity qw(account_did account_did_doc normalize_handle service_did);
+use ATProto::PDS::PLC qw(account_did_method create_plc_account is_plc_did refresh_plc_did_doc);
 use ATProto::PDS::Repo::CAR qw(read_car);
 
 our @EXPORT_OK = qw(register_server_handlers require_auth session_view);
@@ -42,21 +43,38 @@ sub register_server_handlers ($registry, $app) {
     }
 
     my $account_id = random_hex(8);
-    my $did        = $body->{did} || account_did($c->app->settings, $account_id);
+    my $did_method = account_did_method($c->app->settings);
+    my $did        = $body->{did};
     my $reserved   = $body->{did} ? $c->store->get_reserved_signing_key($did) : undef;
     my $keys       = ($reserved && !defined $reserved->{claimed_at})
       ? {
           private_key          => $reserved->{private_key},
           public_key           => $reserved->{public_key},
           public_key_multibase => $reserved->{public_key_multibase},
+          signing_key_did      => $reserved->{signing_key_did},
         }
       : $c->repo_manager->generate_signing_key;
+    my $did_doc;
+    if (!$did) {
+      if ($did_method eq 'did:plc') {
+        my $plc = create_plc_account(
+          $c->app->settings,
+          handle          => $handle,
+          signing_key_did => $keys->{signing_key_did},
+        );
+        $did     = $plc->{did};
+        $did_doc = $plc->{did_doc};
+      } else {
+        $did = account_did($c->app->settings, $account_id);
+      }
+    }
     my $password_record = hash_password($password);
-    my $did_doc = account_did_doc($c->app->settings, {
+    $did_doc //= account_did_doc($c->app->settings, {
       account_id            => $account_id,
       did                   => $did,
       handle                => $handle,
       public_key_multibase  => $keys->{public_key_multibase},
+      signing_key_did       => $keys->{signing_key_did},
     });
 
     my $account = $c->store->create_account(
@@ -71,6 +89,7 @@ sub register_server_handlers ($registry, $app) {
       private_key           => $keys->{private_key},
       public_key            => $keys->{public_key},
       public_key_multibase  => $keys->{public_key_multibase},
+      signing_key_did       => $keys->{signing_key_did},
     );
 
     my $repo = $c->repo_manager->initialize_repo($account);
@@ -78,7 +97,7 @@ sub register_server_handlers ($registry, $app) {
       repo_commit_cid => $repo->{cid},
       repo_root_cid   => $repo->{root_cid},
       repo_rev        => $repo->{rev},
-      did_doc         => account_did_doc($c->app->settings, $account),
+      did_doc         => is_plc_did($account->{did}) ? refresh_plc_did_doc($c->app->settings, $account->{did}) : account_did_doc($c->app->settings, $account),
     );
 
     $c->store->record_invite_code_use(
@@ -427,10 +446,11 @@ sub register_server_handlers ($registry, $app) {
         private_key          => $keys->{private_key},
         public_key           => $keys->{public_key},
         public_key_multibase => $keys->{public_key_multibase},
+        signing_key_did      => $keys->{signing_key_did},
       );
     }
     return {
-      signingKey => 'did:key:' . $keys->{public_key_multibase},
+      signingKey => $keys->{signing_key_did},
     };
   });
 

@@ -8,6 +8,8 @@ no warnings 'experimental::signatures';
 use Exporter 'import';
 use Mojo::URL;
 
+use ATProto::PDS::PLC qw(account_did_method format_plc_did_doc is_plc_did recommended_did_credentials);
+
 our @EXPORT_OK = qw(
   account_did
   account_did_doc
@@ -42,6 +44,9 @@ sub service_did ($config_or_url) {
 
 sub account_did ($config_or_url, $account_id) {
   die 'account id is required' unless defined $account_id && length $account_id;
+  my $config = _coerce_config($config_or_url);
+  die 'did:plc accounts must be provisioned through the PLC flow'
+    if account_did_method($config) eq 'did:plc';
   my $did = service_did($config_or_url);
   return "$did:users:$account_id";
 }
@@ -51,6 +56,12 @@ sub account_did_doc ($config_or_url, $account) {
   my $base_url = $config->{base_url} // 'http://127.0.0.1:7755';
   my $did      = $account->{did} // account_did($config, $account->{account_id} // $account->{id});
   my $handle   = $account->{handle};
+
+  if (is_plc_did($did)) {
+    return $account->{did_doc} if $account->{did_doc};
+    return format_plc_did_doc($did, recommended_did_credentials($config, $account))
+      if $account->{signing_key_did};
+  }
 
   my %doc = (
     '@context' => ['https://www.w3.org/ns/did/v1'],
@@ -63,9 +74,16 @@ sub account_did_doc ($config_or_url, $account) {
   );
   $doc{alsoKnownAs} = ["at://$handle"] if defined $handle && length $handle;
   if (my $multibase = $account->{public_key_multibase}) {
+    my $type = ($account->{signing_key_did} // q()) =~ /\Adid:key:/ ? 'EcdsaSecp256k1VerificationKey2019' : 'Multikey';
+    if ($type eq 'EcdsaSecp256k1VerificationKey2019') {
+      $doc{'@context'} = [
+        'https://www.w3.org/ns/did/v1',
+        'https://w3id.org/security/suites/secp256k1-2019/v1',
+      ];
+    }
     $doc{verificationMethod} = [{
       id                 => "$did#atproto",
-      type               => 'Multikey',
+      type               => $type,
       controller         => $did,
       publicKeyMultibase => $multibase,
     }];
