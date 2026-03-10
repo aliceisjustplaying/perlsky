@@ -80,6 +80,7 @@ Important fields:
 - `hostname`: the host relays should crawl
 - `service_handle_domain`: the suffix used for local handles
 - If you want users like `alice.pds.example.com`, set `service_handle_domain` to `pds.example.com`, not `example.com`.
+- Public handle resolution for `alice.pds.example.com` also requires wildcard DNS for `*.pds.example.com` and a reverse proxy/TLS setup that will answer those subdomains.
 - `invite_code_required`: if true, `createAccount` requires a valid invite code
 - `account_did_method`: set to `did:plc` if you want PLC-backed user DIDs
 - `plc_rotation_private_key_hex`: required for `did:plc` account creation
@@ -150,6 +151,13 @@ systemctl enable --now perlsky
 
 Expose `perlsky` through a TLS-capable reverse proxy to `127.0.0.1:7755`.
 
+If `service_handle_domain` is a subdomain suffix such as `pds.example.com`, your proxy must answer both:
+
+- `pds.example.com`
+- `*.pds.example.com`
+
+That is what allows external PDSes to resolve `https://alice.pds.example.com/.well-known/atproto-did`.
+
 A minimal Caddy site looks like:
 
 ```caddy
@@ -158,6 +166,8 @@ pds.example.com {
   reverse_proxy 127.0.0.1:7755
 }
 ```
+
+For public user handles you also need a matching wildcard-capable site or on-demand TLS path for `*.pds.example.com`.
 
 A minimal nginx site looks like:
 
@@ -193,6 +203,7 @@ Then validate the public host:
 curl https://pds.example.com/_health
 curl https://pds.example.com/.well-known/did.json
 curl https://pds.example.com/xrpc/com.atproto.server.describeServer
+curl --resolve alice.pds.example.com:443:SERVER_IP https://alice.pds.example.com/.well-known/atproto-did
 ```
 
 For browser-hosted clients such as `https://bsky.app`, `perlsky` also answers CORS preflight requests on XRPC routes. A quick manual probe looks like:
@@ -208,6 +219,7 @@ You should see:
 - a healthy `_health` response
 - a `did:web:pds.example.com` DID document
 - `describeServer.availableUserDomains` matching `service_handle_domain`
+- a per-handle `/.well-known/atproto-did` response returning the account DID when queried on the handle host
 
 ## First Account
 

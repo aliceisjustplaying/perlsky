@@ -162,6 +162,16 @@ sub startup ($self) {
     });
   });
 
+  $routes->get('/.well-known/atproto-did')->to(cb => sub ($c) {
+    my $host = lc($c->req->url->to_abs->host // ($c->req->headers->host // q()));
+    $host =~ s/:\d+\z//;
+    my $account = $c->store->get_account_by_handle($host);
+    return $c->render(status => 404, text => 'handle not found') unless $account;
+
+    $c->res->headers->content_type('text/plain; charset=utf-8');
+    $c->render(data => $account->{did});
+  });
+
   $routes->get('/users/:account_id/did.json')->to(cb => sub ($c) {
     my $match = $c->store->get_account_by_id($c->stash('account_id'));
     return $c->render(status => 404, json => { error => 'DidNotFound' }) unless $match;
@@ -185,6 +195,7 @@ sub _cors_path ($path) {
   my $text = ref($path) ? $path->to_string : ($path // q());
   return 1 if $text =~ m{\A/xrpc(?:/|\z)};
   return 1 if $text eq '/.well-known/did.json';
+  return 1 if $text eq '/.well-known/atproto-did';
   return 0;
 }
 

@@ -39,6 +39,22 @@ $t->get_ok('/xrpc/com.atproto.server.describeServer')
   ->json_is('/availableUserDomains/0' => 'localhost')
   ->json_like('/did' => qr/\Adid:web:/);
 
+$t->post_ok('/xrpc/com.atproto.server.createAccount' => json => {
+  handle   => 'routeprobe.localhost',
+  email    => 'routeprobe@example.com',
+  password => 'hunter42',
+})->status_is(200);
+
+my $routeprobe_did = $t->tx->res->json->{did};
+
+$t->get_ok('/.well-known/atproto-did' => { Host => 'routeprobe.localhost' })
+  ->status_is(200)
+  ->content_type_like(qr{text/plain})
+  ->content_is($routeprobe_did);
+
+$t->get_ok('/.well-known/atproto-did' => { Host => 'missing.localhost' })
+  ->status_is(404);
+
 $t->post_ok('/xrpc/com.atproto.repo.createRecord' => json => {})
   ->status_is(404)
   ->json_is('/error' => 'RepoNotFound');
