@@ -1,0 +1,32 @@
+#!/usr/bin/env perl
+use v5.34;
+use warnings;
+
+use Config ();
+use FindBin ();
+use File::Spec;
+
+BEGIN {
+  require File::Spec;
+  require lib;
+  my $root = File::Spec->rel2abs(File::Spec->catdir($FindBin::RealBin, '..'));
+  lib->import(
+    File::Spec->catdir($root, 'lib'),
+    File::Spec->catdir($root, 'local', 'lib', 'perl5'),
+    File::Spec->catdir($root, 'local', 'lib', 'perl5', $Config::Config{archname}),
+  );
+}
+
+use ATProto::PDS;
+use ATProto::PDS::Config qw(load_config);
+
+my $root        = File::Spec->rel2abs(File::Spec->catdir($FindBin::RealBin, '..'));
+my $config_path = $ENV{PERLDS_CONFIG} || File::Spec->catfile($root, 'etc', 'perlds.example.json');
+my $config      = load_config($config_path);
+
+my $app = ATProto::PDS->new(
+  project_root => $root,
+  settings     => $config,
+);
+
+$app->start(@ARGV);
