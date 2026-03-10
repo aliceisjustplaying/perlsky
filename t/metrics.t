@@ -68,37 +68,37 @@ my $metrics = $t->tx->res->body;
 
 like(
   $metrics,
-  qr/perlds_xrpc_requests_total\{endpoint_type="procedure",method="POST",nsid="com\.atproto\.server\.createAccount",status="200"\} 1\b/,
+  qr/perlsky_xrpc_requests_total\{endpoint_type="procedure",method="POST",nsid="com\.atproto\.server\.createAccount",status="200"\} 1\b/,
   'createAccount request counter is exported',
 );
 like(
   $metrics,
-  qr/perlds_xrpc_request_duration_seconds_count\{endpoint_type="procedure",method="POST",nsid="com\.atproto\.server\.createAccount",status="200"\} 1\b/,
+  qr/perlsky_xrpc_request_duration_seconds_count\{endpoint_type="procedure",method="POST",nsid="com\.atproto\.server\.createAccount",status="200"\} 1\b/,
   'createAccount latency histogram is exported',
 );
 like(
   $metrics,
-  qr/perlds_subscription_connections_total\{nsid="com\.atproto\.sync\.subscribeRepos"\} 1\b/,
+  qr/perlsky_subscription_connections_total\{nsid="com\.atproto\.sync\.subscribeRepos"\} 1\b/,
   'subscription open count is exported',
 );
 like(
   $metrics,
-  qr/perlds_subscription_active\{nsid="com\.atproto\.sync\.subscribeRepos"\} 0\b/,
+  qr/perlsky_subscription_active\{nsid="com\.atproto\.sync\.subscribeRepos"\} 0\b/,
   'subscription active gauge returns to zero after close',
 );
 like(
   $metrics,
-  qr/perlds_blob_ingress_bytes_total\{mime_type="text\/plain"\} 5\b/,
+  qr/perlsky_blob_ingress_bytes_total\{mime_type="text\/plain"\} 5\b/,
   'blob upload bytes are exported',
 );
 like(
   $metrics,
-  qr/perlds_store_operations_total\{operation="append_event",status="ok"\} [1-9]\d*\b/,
+  qr/perlsky_store_operations_total\{operation="append_event",status="ok"\} [1-9]\d*\b/,
   'store operation counters are exported',
 );
 like(
   $metrics,
-  qr/perlds_build_info\{service="perlds"\} 1\b/,
+  qr/perlsky_build_info\{service="perlsky"\} 1\b/,
   'build info metric is exported',
 );
 

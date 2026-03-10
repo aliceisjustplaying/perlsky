@@ -20,7 +20,7 @@ use Test::Mojo;
 use ATProto::PDS;
 
 my $root = File::Spec->rel2abs(File::Spec->catdir($Bin, '..'));
-my $config = File::Spec->catfile($root, 'etc', 'perlds.example.json');
+my $config = File::Spec->catfile($root, 'etc', 'perlsky.example.json');
 my $t = Test::Mojo->new(ATProto::PDS->new(
   project_root => $root,
   settings     => {

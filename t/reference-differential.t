@@ -16,8 +16,8 @@ BEGIN {
   );
 }
 
-plan skip_all => 'set PERLDS_RUN_REFERENCE_DIFF=1 to run the official reference PDS differential harness'
-  unless $ENV{PERLDS_RUN_REFERENCE_DIFF};
+plan skip_all => 'set PERLSKY_RUN_REFERENCE_DIFF=1 to run the official reference PDS differential harness'
+  unless $ENV{PERLSKY_RUN_REFERENCE_DIFF};
 
 my $root = File::Spec->rel2abs(File::Spec->catdir($Bin, '..'));
 my $script = File::Spec->catfile($root, 'script', 'differential-validate');

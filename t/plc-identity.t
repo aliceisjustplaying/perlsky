@@ -72,9 +72,9 @@ sub spawn_plc_mock {
     open STDOUT, '>', $log_file or die "open($log_file): $!";
     open STDERR, '>&', \*STDOUT or die "dup stdout failed";
     chdir $root or die "chdir($root): $!";
-    $ENV{PERLDS_READY_FILE} = $ready_file;
-    $ENV{PERLDS_PLC_PORT}   = free_port();
-    $ENV{PERLDS_PLC_HOST}   = '127.0.0.1';
+    $ENV{PERLSKY_READY_FILE} = $ready_file;
+    $ENV{PERLSKY_PLC_PORT}   = free_port();
+    $ENV{PERLSKY_PLC_HOST}   = '127.0.0.1';
     exec 'fnm', 'exec', '--using=20', '--', 'node',
       File::Spec->catfile($root, 'tools', 'differential', 'plc-mock.cjs');
     die "exec failed: $!";

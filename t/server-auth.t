@@ -30,7 +30,7 @@ my $config = {
   service_handle_domain => 'localhost',
   jwt_secret            => 'test-secret',
   data_dir              => $tmp,
-  db_path               => File::Spec->catfile($tmp, 'perlds.sqlite'),
+  db_path               => File::Spec->catfile($tmp, 'perlsky.sqlite'),
 };
 
 my $t = Test::Mojo->new(ATProto::PDS->new(

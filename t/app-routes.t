@@ -21,7 +21,7 @@ use ATProto::PDS;
 use ATProto::PDS::Config qw(load_config);
 
 my $root   = File::Spec->rel2abs(File::Spec->catdir($Bin, '..'));
-my $config = load_config(File::Spec->catfile($root, 'etc', 'perlds.example.json'));
+my $config = load_config(File::Spec->catfile($root, 'etc', 'perlsky.example.json'));
 my $t      = Test::Mojo->new(
   ATProto::PDS->new(
     project_root => $root,
@@ -31,7 +31,7 @@ my $t      = Test::Mojo->new(
 
 $t->get_ok('/_health')
   ->status_is(200)
-  ->json_is('/service' => 'perlds')
+  ->json_is('/service' => 'perlsky')
   ->json_has('/ok');
 
 $t->get_ok('/xrpc/com.atproto.server.describeServer')

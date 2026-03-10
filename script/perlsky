@@ -21,7 +21,7 @@ use ATProto::PDS;
 use ATProto::PDS::Config qw(load_config);
 
 my $root        = File::Spec->rel2abs(File::Spec->catdir($FindBin::RealBin, '..'));
-my $config_path = $ENV{PERLDS_CONFIG} || File::Spec->catfile($root, 'etc', 'perlds.example.json');
+my $config_path = $ENV{PERLSKY_CONFIG} || File::Spec->catfile($root, 'etc', 'perlsky.example.json');
 my $config      = load_config($config_path);
 
 my $app = ATProto::PDS->new(

@@ -38,8 +38,8 @@ sub observe_store_operation ($metrics, $operation, $code) {
       operation => $operation,
       status    => $status,
     };
-    $metrics->increment_counter('perlds_store_operations_total', 1, $labels);
-    $metrics->observe_histogram('perlds_store_operation_duration_seconds', $duration, $labels);
+    $metrics->increment_counter('perlsky_store_operations_total', 1, $labels);
+    $metrics->observe_histogram('perlsky_store_operation_duration_seconds', $duration, $labels);
   }
 
   die $@ unless $ok;

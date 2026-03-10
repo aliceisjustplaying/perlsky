@@ -3,12 +3,12 @@
 const fs = require('node:fs');
 const http = require('node:http');
 
-const readyFile = process.env.PERLDS_READY_FILE;
-const host = process.env.PERLDS_CRAWLER_HOST || '127.0.0.1';
-const port = Number(process.env.PERLDS_CRAWLER_PORT || 0);
+const readyFile = process.env.PERLSKY_READY_FILE;
+const host = process.env.PERLSKY_CRAWLER_HOST || '127.0.0.1';
+const port = Number(process.env.PERLSKY_CRAWLER_PORT || 0);
 
 if (!readyFile) {
-  console.error('PERLDS_READY_FILE is required');
+  console.error('PERLSKY_READY_FILE is required');
   process.exit(1);
 }
 

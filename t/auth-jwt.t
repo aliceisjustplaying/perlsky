@@ -21,13 +21,13 @@ use ATProto::PDS::Auth::JWT qw(decode_jwt encode_jwt);
 my $token = encode_jwt(
   {
     sub => 'did:web:example.com:users:alice',
-    aud => 'perlds',
+    aud => 'perlsky',
     exp => 1_900_000_000,
   },
   'super-secret',
 );
 
-my $decoded = decode_jwt($token, 'super-secret', audience => 'perlds', now => 1_800_000_000);
+my $decoded = decode_jwt($token, 'super-secret', audience => 'perlsky', now => 1_800_000_000);
 
 is($decoded->{claims}{sub}, 'did:web:example.com:users:alice', 'subject round-trips');
 is($decoded->{header}{alg}, 'HS256', 'algorithm preserved');

@@ -135,7 +135,7 @@ sub can_read_private_blob ($c, $did) {
     && $auth =~ /\ABearer\s+\Q@{[$c->config_value('admin_password')]}\E\z/;
   return 0 unless $auth =~ /\ABearer\s+(.+)\z/i;
   my $token = $1;
-  my $decoded = eval { decode_jwt($token, $c->config_value('jwt_secret', 'perlds-dev-secret')) };
+  my $decoded = eval { decode_jwt($token, $c->config_value('jwt_secret', 'perlsky-dev-secret')) };
   return 0 unless $decoded && ref($decoded) eq 'HASH';
   my $claims = $decoded->{claims} || {};
   return (($claims->{sub} // q()) eq ($did // q())) ? 1 : 0;

@@ -76,12 +76,12 @@ sub notify_of_update ($self, %args) {
       for my $result (@{ $results || [] }) {
         if ($self->{metrics}) {
           my $result_label = $result->{ok} ? 'ok' : 'error';
-          $self->{metrics}->increment_counter('perlds_crawler_requests_total', 1, {
+          $self->{metrics}->increment_counter('perlsky_crawler_requests_total', 1, {
             service => $result->{service},
             result  => $result_label,
           });
           $self->{metrics}->observe_histogram(
-            'perlds_crawler_request_duration_seconds',
+            'perlsky_crawler_request_duration_seconds',
             $result->{duration_seconds} // 0,
             {
               service => $result->{service},

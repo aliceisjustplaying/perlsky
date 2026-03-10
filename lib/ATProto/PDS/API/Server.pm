@@ -261,7 +261,7 @@ sub register_server_handlers ($registry, $app) {
       $c->store->log_outbound_email(
         recipient_did   => $account->{did},
         recipient_email => $account->{email},
-        subject         => 'perlds password reset',
+        subject         => 'perlsky password reset',
         content         => "Use token $token->{token} to reset your password.",
       );
     }
@@ -304,7 +304,7 @@ sub register_server_handlers ($registry, $app) {
     $c->store->log_outbound_email(
       recipient_did   => $account->{did},
       recipient_email => $account->{email},
-      subject         => 'perlds email confirmation',
+      subject         => 'perlsky email confirmation',
       content         => "Use token $token->{token} to confirm your email address.",
     );
     return {};
@@ -338,7 +338,7 @@ sub register_server_handlers ($registry, $app) {
       $c->store->log_outbound_email(
         recipient_did   => $account->{did},
         recipient_email => $account->{email},
-        subject         => 'perlds email change authorization',
+        subject         => 'perlsky email change authorization',
         content         => "Use token $token->{token} to update your email address.",
       );
     }
@@ -380,7 +380,7 @@ sub register_server_handlers ($registry, $app) {
     $c->store->log_outbound_email(
       recipient_did   => $account->{did},
       recipient_email => $account->{email},
-      subject         => 'perlds account deletion',
+      subject         => 'perlsky account deletion',
       content         => "Use token $token->{token} to delete your account.",
     ) if $account->{email};
     return {};
@@ -435,7 +435,7 @@ sub register_server_handlers ($registry, $app) {
       exp => $exp,
       typ => 'service',
       ($c->param('lxm') ? (lxm => $c->param('lxm')) : ()),
-    }, $c->config_value('jwt_secret', 'perlds-dev-secret'));
+    }, $c->config_value('jwt_secret', 'perlsky-dev-secret'));
     return { token => $token };
   });
 
@@ -526,7 +526,7 @@ sub require_auth ($c, %opts) {
     unless $auth =~ /\ABearer\s+(.+)\z/i;
   my $token = $1;
 
-  my $decoded = eval { decode_jwt($token, $c->config_value('jwt_secret', 'perlds-dev-secret')) };
+  my $decoded = eval { decode_jwt($token, $c->config_value('jwt_secret', 'perlsky-dev-secret')) };
   if (my $err = $@) {
     my $message = "$err";
     my $code = $message =~ /expired/i ? 'ExpiredToken' : 'InvalidToken';
@@ -552,7 +552,7 @@ sub _issue_session ($c, $account) {
   );
 
   my $issuer = service_did($c->app->settings);
-  my $secret = $c->config_value('jwt_secret', 'perlds-dev-secret');
+  my $secret = $c->config_value('jwt_secret', 'perlsky-dev-secret');
   my $now    = time;
 
   my $access = encode_jwt({
@@ -598,7 +598,7 @@ sub _new_app_password {
 }
 
 sub _new_invite_code {
-  return 'perlds-' . substr(random_hex(8), 0, 12);
+  return 'perlsky-' . substr(random_hex(8), 0, 12);
 }
 
 1;

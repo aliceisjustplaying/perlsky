@@ -31,7 +31,7 @@ sub startup ($self) {
   my $root   = $self->project_root;
   my $public_url = Mojo::URL->new($config->{base_url} // 'http://127.0.0.1:7755');
   my $metrics = ATProto::PDS::Metrics->new(
-    service => $config->{service_name} // 'perlds',
+    service => $config->{service_name} // 'perlsky',
   );
   my $crawler_notifier = ATProto::PDS::Crawlers->new(
     hostname     => ($config->{hostname} // lc($public_url->host // 'localhost')),
@@ -40,7 +40,7 @@ sub startup ($self) {
     metrics      => $metrics,
   );
 
-  $self->secrets([$config->{jwt_secret} // 'perlds-dev-secret']);
+  $self->secrets([$config->{jwt_secret} // 'perlsky-dev-secret']);
   $self->helper(metrics => sub { $metrics });
   $self->helper(api_registry => sub { state $registry = ATProto::PDS::API::Registry->new });
   $self->helper(endpoint_catalog => sub ($c) { endpoint_catalog($root) });
@@ -48,7 +48,7 @@ sub startup ($self) {
   $self->helper(lexicons => sub ($c) { state $registry = ATProto::PDS::LexiconRegistry->new(root => $root) });
   $self->helper(store => sub ($c) {
     state $store = ATProto::PDS::Store::SQLite->new(
-      path => $c->app->settings->{db_path} || File::Spec->catfile($root, 'data', 'runtime', 'perlds.sqlite'),
+      path => $c->app->settings->{db_path} || File::Spec->catfile($root, 'data', 'runtime', 'perlsky.sqlite'),
       metrics => $metrics,
     )->bootstrap;
   });
@@ -71,12 +71,12 @@ sub startup ($self) {
       ? length($args{binary} // q())
       : length(Mojo::JSON::encode_json($args{json} // {}));
 
-    $c->app->metrics->increment_counter('perlds_subscription_frames_total', 1, {
+    $c->app->metrics->increment_counter('perlsky_subscription_frames_total', 1, {
       nsid      => $nsid,
       frame_type => $frame_type,
       encoding  => $encoding,
     });
-    $c->app->metrics->increment_counter('perlds_subscription_bytes_total', $payload_size, {
+    $c->app->metrics->increment_counter('perlsky_subscription_bytes_total', $payload_size, {
       nsid     => $nsid,
       encoding => $encoding,
     });
@@ -86,12 +86,12 @@ sub startup ($self) {
       : $c->send({ json => $args{json} });
   });
   $self->helper(observe_blob_ingress => sub ($c, $mime_type, $bytes) {
-    $c->app->metrics->increment_counter('perlds_blob_ingress_bytes_total', $bytes, {
+    $c->app->metrics->increment_counter('perlsky_blob_ingress_bytes_total', $bytes, {
       mime_type => $mime_type || 'application/octet-stream',
     });
   });
   $self->helper(observe_blob_egress => sub ($c, $mime_type, $bytes) {
-    $c->app->metrics->increment_counter('perlds_blob_egress_bytes_total', $bytes, {
+    $c->app->metrics->increment_counter('perlsky_blob_egress_bytes_total', $bytes, {
       mime_type => $mime_type || 'application/octet-stream',
     });
   });
@@ -105,7 +105,7 @@ sub startup ($self) {
   my $routes = $self->routes;
   $routes->get('/')->to(cb => sub ($c) {
     $c->render(json => {
-      service   => 'perlds',
+      service   => 'perlsky',
       status    => 'booting',
       did       => service_did($c->app->settings),
       endpoints => scalar @{ $c->endpoint_catalog },
@@ -115,7 +115,7 @@ sub startup ($self) {
   $routes->get('/_health')->to(cb => sub ($c) {
     $c->render(json => {
       ok        => Mojo::JSON->true,
-      service   => 'perlds',
+      service   => 'perlsky',
       endpoints => scalar @{ endpoint_catalog($root) },
     });
   });

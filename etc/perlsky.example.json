@@ -11,5 +11,5 @@
   "crawlers": [],
   "crawler_notify_interval": 1200,
   "data_dir": "data/runtime",
-  "db_path": "data/runtime/perlds.sqlite"
+  "db_path": "data/runtime/perlsky.sqlite"
 }

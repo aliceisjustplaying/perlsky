@@ -444,7 +444,7 @@ sub wait_for_crawler_requests ($name, $origin, $minimum = 1, $timeout = 10) {
 note('Preparing official reference runtime');
 setup_reference_runtime();
 
-my $diff_account_did_method = $ENV{PERLDS_DIFF_ACCOUNT_DID_METHOD} // 'did:web';
+my $diff_account_did_method = $ENV{PERLSKY_DIFF_ACCOUNT_DID_METHOD} // 'did:web';
 note("Differential mode: $diff_account_did_method");
 
 my $plc_port     = free_port();
@@ -454,21 +454,21 @@ my $perl_port    = free_port();
 my $plc_ready = File::Spec->catfile($tmp, 'plc.ready.json');
 my $ref_ready = File::Spec->catfile($tmp, 'reference.ready.json');
 my $reference_crawler_ready = File::Spec->catfile($tmp, 'reference-crawler.ready.json');
-my $perlds_crawler_ready    = File::Spec->catfile($tmp, 'perlds-crawler.ready.json');
+my $perlsky_crawler_ready    = File::Spec->catfile($tmp, 'perlsky-crawler.ready.json');
 
 my $plc_log = File::Spec->catfile($tmp, 'plc.log');
 my $ref_log = File::Spec->catfile($tmp, 'reference.log');
-my $perl_log = File::Spec->catfile($tmp, 'perlds.log');
+my $perl_log = File::Spec->catfile($tmp, 'perlsky.log');
 my $reference_crawler_log = File::Spec->catfile($tmp, 'reference-crawler.log');
-my $perlds_crawler_log    = File::Spec->catfile($tmp, 'perlds-crawler.log');
+my $perlsky_crawler_log    = File::Spec->catfile($tmp, 'perlsky-crawler.log');
 
 my $plc = spawn_logged(
   'plc-mock',
   ['fnm', 'exec', '--using=20', '--', 'node', File::Spec->catfile($root, 'tools', 'differential', 'plc-mock.cjs')],
   {
-    PERLDS_READY_FILE => $plc_ready,
-    PERLDS_PLC_PORT   => $plc_port,
-    PERLDS_PLC_HOST   => '127.0.0.1',
+    PERLSKY_READY_FILE => $plc_ready,
+    PERLSKY_PLC_PORT   => $plc_port,
+    PERLSKY_PLC_HOST   => '127.0.0.1',
   },
   $plc_log,
 );
@@ -477,37 +477,37 @@ my $plc_info = wait_for_ready_file('plc mock', $plc_ready);
 pass("started local PLC mock at $plc_info->{origin}");
 
 my $reference_crawler_port = free_port();
-my $perlds_crawler_port    = free_port();
+my $perlsky_crawler_port    = free_port();
 
 my $reference_crawler = spawn_logged(
   'reference-crawler',
   ['fnm', 'exec', '--using=20', '--', 'node', File::Spec->catfile($root, 'tools', 'differential', 'crawler-mock.cjs')],
   {
-    PERLDS_READY_FILE   => $reference_crawler_ready,
-    PERLDS_CRAWLER_PORT => $reference_crawler_port,
-    PERLDS_CRAWLER_HOST => '127.0.0.1',
+    PERLSKY_READY_FILE   => $reference_crawler_ready,
+    PERLSKY_CRAWLER_PORT => $reference_crawler_port,
+    PERLSKY_CRAWLER_HOST => '127.0.0.1',
   },
   $reference_crawler_log,
 );
 
-my $perlds_crawler = spawn_logged(
-  'perlds-crawler',
+my $perlsky_crawler = spawn_logged(
+  'perlsky-crawler',
   ['fnm', 'exec', '--using=20', '--', 'node', File::Spec->catfile($root, 'tools', 'differential', 'crawler-mock.cjs')],
   {
-    PERLDS_READY_FILE   => $perlds_crawler_ready,
-    PERLDS_CRAWLER_PORT => $perlds_crawler_port,
-    PERLDS_CRAWLER_HOST => '127.0.0.1',
+    PERLSKY_READY_FILE   => $perlsky_crawler_ready,
+    PERLSKY_CRAWLER_PORT => $perlsky_crawler_port,
+    PERLSKY_CRAWLER_HOST => '127.0.0.1',
   },
-  $perlds_crawler_log,
+  $perlsky_crawler_log,
 );
 
 my $reference_crawler_info = wait_for_ready_file('reference crawler', $reference_crawler_ready);
 wait_for_http_ok('reference crawler', "$reference_crawler_info->{origin}/_health");
 pass("started reference crawler mock at $reference_crawler_info->{origin}");
 
-my $perlds_crawler_info = wait_for_ready_file('perlds crawler', $perlds_crawler_ready);
-wait_for_http_ok('perlds crawler', "$perlds_crawler_info->{origin}/_health");
-pass("started perlds crawler mock at $perlds_crawler_info->{origin}");
+my $perlsky_crawler_info = wait_for_ready_file('perlsky crawler', $perlsky_crawler_ready);
+wait_for_http_ok('perlsky crawler', "$perlsky_crawler_info->{origin}/_health");
+pass("started perlsky crawler mock at $perlsky_crawler_info->{origin}");
 
 my $reference_data = File::Spec->catdir($tmp, 'reference');
 make_path($reference_data);
@@ -516,7 +516,7 @@ my $reference = spawn_logged(
   'reference-pds',
   ['fnm', 'exec', '--using=20', '--', 'node', File::Spec->catfile($root, 'tools', 'differential', 'reference-pds-runner.cjs')],
   {
-    PERLDS_READY_FILE                        => $ref_ready,
+    PERLSKY_READY_FILE                       => $ref_ready,
     PDS_PORT                                 => $reference_port,
     PDS_HOSTNAME                             => 'localhost',
     PDS_DEV_MODE                             => 1,
@@ -538,8 +538,8 @@ my $reference_info = wait_for_ready_file('reference pds', $ref_ready);
 wait_for_http_ok('reference pds', "$reference_info->{origin}/xrpc/_health");
 pass("started official reference PDS at $reference_info->{origin}");
 
-my $perlds_config = File::Spec->catfile($tmp, 'perlds.json');
-open my $cfg_fh, '>', $perlds_config or die "unable to write $perlds_config: $!";
+my $perlsky_config = File::Spec->catfile($tmp, 'perlsky.json');
+open my $cfg_fh, '>', $perlsky_config or die "unable to write $perlsky_config: $!";
 print {$cfg_fh} encode_json({
   base_url              => "http://127.0.0.1:$perl_port",
   hostname              => 'localhost',
@@ -552,25 +552,25 @@ print {$cfg_fh} encode_json({
         plc_rotation_private_key_hex => ('11' x 32),
       )
     : ()),
-  jwt_secret            => 'perlds-jwt-secret',
-  admin_password        => 'perlds-admin-secret',
-  crawlers              => [$perlds_crawler_info->{origin}],
-  data_dir              => File::Spec->catdir($tmp, 'perlds-data'),
-  db_path               => File::Spec->catfile($tmp, 'perlds.sqlite'),
+  jwt_secret            => 'perlsky-jwt-secret',
+  admin_password        => 'perlsky-admin-secret',
+  crawlers              => [$perlsky_crawler_info->{origin}],
+  data_dir              => File::Spec->catdir($tmp, 'perlsky-data'),
+  db_path               => File::Spec->catfile($tmp, 'perlsky.sqlite'),
 });
 close $cfg_fh;
 
-my $perlds = spawn_logged(
-  'perlds',
-  [$^X, File::Spec->catfile($root, 'script', 'perlds'), 'daemon', '-l', "http://127.0.0.1:$perl_port"],
+my $perlsky = spawn_logged(
+  'perlsky',
+  [$^X, File::Spec->catfile($root, 'script', 'perlsky'), 'daemon', '-l', "http://127.0.0.1:$perl_port"],
   {
-    PERLDS_CONFIG => $perlds_config,
+    PERLSKY_CONFIG => $perlsky_config,
   },
   $perl_log,
 );
 
-wait_for_http_ok('perlds', "http://127.0.0.1:$perl_port/_health");
-pass("started perlds at http://127.0.0.1:$perl_port");
+wait_for_http_ok('perlsky', "http://127.0.0.1:$perl_port/_health");
+pass("started perlsky at http://127.0.0.1:$perl_port");
 
 my %server = (
   reference => {
@@ -580,12 +580,12 @@ my %server = (
     admin_password => 'reference-admin-secret',
     crawler_origin => $reference_crawler_info->{origin},
   },
-  perlds => {
+  perlsky => {
     origin         => "http://127.0.0.1:$perl_port",
     handle         => 'alice.test',
     email          => 'alice-perl@test.com',
-    admin_password => 'perlds-admin-secret',
-    crawler_origin => $perlds_crawler_info->{origin},
+    admin_password => 'perlsky-admin-secret',
+    crawler_origin => $perlsky_crawler_info->{origin},
   },
 );
 
@@ -603,8 +603,8 @@ check(
       availableUserDomains => normalized_domains(get_json($server{reference}{origin}, 'com.atproto.server.describeServer')),
     },
     {
-      inviteCodeRequired => $server{perlds}{describe}{inviteCodeRequired} ? true : false,
-      availableUserDomains => normalized_domains(get_json($server{perlds}{origin}, 'com.atproto.server.describeServer')),
+      inviteCodeRequired => $server{perlsky}{describe}{inviteCodeRequired} ? true : false,
+      availableUserDomains => normalized_domains(get_json($server{perlsky}{origin}, 'com.atproto.server.describeServer')),
     },
   ),
   'describeServer matches on invite requirement and user domains',
@@ -655,7 +655,7 @@ for my $name (sort keys %server) {
 }
 
 check(
-  same_hash($server{reference}{crawler_notice}, $server{perlds}{crawler_notice}),
+  same_hash($server{reference}{crawler_notice}, $server{perlsky}{crawler_notice}),
   'outbound crawler notifications match the official reference PDS semantics',
 );
 
@@ -689,7 +689,7 @@ if ($diff_account_did_method eq 'did:plc') {
   }
 
   check(
-    same_hash($server{reference}{recommended_did}, $server{perlds}{recommended_did}),
+    same_hash($server{reference}{recommended_did}, $server{perlsky}{recommended_did}),
     'getRecommendedDidCredentials matches the official reference PDS semantics',
   );
 
@@ -739,7 +739,7 @@ if ($diff_account_did_method eq 'did:plc') {
   }
 
   check(
-    same_hash($server{reference}{missing_plc_token_error}, $server{perlds}{missing_plc_token_error}),
+    same_hash($server{reference}{missing_plc_token_error}, $server{perlsky}{missing_plc_token_error}),
     'signPlcOperation matches the official reference PDS token requirement semantics',
   );
 }
@@ -889,12 +889,12 @@ for my $name (sort keys %server) {
 }
 
 check(
-  same_hash($server{reference}{repo_takedown}, $server{perlds}{repo_takedown}),
+  same_hash($server{reference}{repo_takedown}, $server{perlsky}{repo_takedown}),
   'repo takedown login and write semantics match the official reference PDS',
 );
 
 check(
-  same_hash($server{reference}{record_takedown}, $server{perlds}{record_takedown}),
+  same_hash($server{reference}{record_takedown}, $server{perlsky}{record_takedown}),
   'record takedown visibility semantics match the official reference PDS',
 );
 
@@ -970,7 +970,7 @@ for my $name (sort keys %server) {
 }
 
 check(
-  same_hash($server{reference}{import_repo_state}, $server{perlds}{import_repo_state}),
+  same_hash($server{reference}{import_repo_state}, $server{perlsky}{import_repo_state}),
   'importRepo restores the same normalized repo state as the official reference PDS',
 );
 
@@ -1003,7 +1003,7 @@ for my $name (sort keys %server) {
 }
 
 check(
-  same_hash($server{reference}{firehose_commit}, $server{perlds}{firehose_commit}),
+  same_hash($server{reference}{firehose_commit}, $server{perlsky}{firehose_commit}),
   'subscribeRepos emits the same normalized commit semantics as the official reference PDS',
 );
 
@@ -1019,21 +1019,21 @@ for my $name (sort keys %server) {
 }
 
 check(
-  same_hash($server{reference}{future_cursor}, $server{perlds}{future_cursor}),
+  same_hash($server{reference}{future_cursor}, $server{perlsky}{future_cursor}),
   'subscribeRepos agrees on future cursor errors',
 );
 
 if ($failed) {
   print "\nReference PDS log:\n";
   print slurp_file($ref_log);
-  print "\nperlds log:\n";
+  print "\nperlsky log:\n";
   print slurp_file($perl_log);
   print "\nPLC mock log:\n";
   print slurp_file($plc_log);
   print "\nReference crawler log:\n";
   print slurp_file($reference_crawler_log);
-  print "\nperlds crawler log:\n";
-  print slurp_file($perlds_crawler_log);
+  print "\nperlsky crawler log:\n";
+  print slurp_file($perlsky_crawler_log);
   die "\ndifferential validation failed with $failed mismatches\n";
 }
 

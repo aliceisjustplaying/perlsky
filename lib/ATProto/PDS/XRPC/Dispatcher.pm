@@ -20,7 +20,7 @@ sub register_routes ($self) {
     return $c->finish(1008) unless $endpoint;
 
     if ($endpoint->{type} ne 'subscription') {
-      $c->app->metrics->increment_counter('perlds_subscription_closes_total', 1, {
+      $c->app->metrics->increment_counter('perlsky_subscription_closes_total', 1, {
         nsid => $endpoint->{id},
         code => 1008,
       });
@@ -32,16 +32,16 @@ sub register_routes ($self) {
     }
 
     my $labels = { nsid => $endpoint->{id} };
-    $c->app->metrics->increment_counter('perlds_subscription_connections_total', 1, $labels);
-    $c->app->metrics->add_gauge('perlds_subscription_active', 1, $labels);
+    $c->app->metrics->increment_counter('perlsky_subscription_connections_total', 1, $labels);
+    $c->app->metrics->add_gauge('perlsky_subscription_active', 1, $labels);
     $c->on(finish => sub ($c, $code, $reason = undef) {
-      $c->app->metrics->add_gauge('perlds_subscription_active', -1, $labels);
-      $c->app->metrics->increment_counter('perlds_subscription_closes_total', 1, {
+      $c->app->metrics->add_gauge('perlsky_subscription_active', -1, $labels);
+      $c->app->metrics->increment_counter('perlsky_subscription_closes_total', 1, {
         %{$labels},
         code => defined($code) ? $code : 0,
       });
       $c->app->metrics->observe_histogram(
-        'perlds_subscription_duration_seconds',
+        'perlsky_subscription_duration_seconds',
         time - $started,
         $labels,
       );
@@ -70,9 +70,9 @@ sub register_routes ($self) {
         endpoint_type => $endpoint_type,
         status       => $status,
       };
-      $c->app->metrics->increment_counter('perlds_xrpc_requests_total', 1, $labels);
+      $c->app->metrics->increment_counter('perlsky_xrpc_requests_total', 1, $labels);
       $c->app->metrics->observe_histogram(
-        'perlds_xrpc_request_duration_seconds',
+        'perlsky_xrpc_request_duration_seconds',
         time - $started,
         $labels,
       );

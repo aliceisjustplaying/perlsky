@@ -9,90 +9,90 @@ use JSON::PP ();
 
 sub new ($class, %args) {
   my $self = bless {
-    service => $args{service} // 'perlds',
+    service => $args{service} // 'perlsky',
     metrics => {},
   }, $class;
 
   $self->_register_counter(
-    'perlds_xrpc_requests_total',
+    'perlsky_xrpc_requests_total',
     'Total XRPC HTTP requests by method, endpoint, type, and status.',
     [qw(method nsid endpoint_type status)],
   );
   $self->_register_histogram(
-    'perlds_xrpc_request_duration_seconds',
+    'perlsky_xrpc_request_duration_seconds',
     'XRPC HTTP request duration in seconds.',
     [qw(method nsid endpoint_type status)],
     [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10],
   );
   $self->_register_counter(
-    'perlds_subscription_connections_total',
+    'perlsky_subscription_connections_total',
     'Total websocket subscription connections opened.',
     [qw(nsid)],
   );
   $self->_register_counter(
-    'perlds_subscription_closes_total',
+    'perlsky_subscription_closes_total',
     'Total websocket subscription closes by endpoint and close code.',
     [qw(nsid code)],
   );
   $self->_register_gauge(
-    'perlds_subscription_active',
+    'perlsky_subscription_active',
     'Active websocket subscription connections.',
     [qw(nsid)],
   );
   $self->_register_counter(
-    'perlds_subscription_frames_total',
+    'perlsky_subscription_frames_total',
     'Total websocket frames emitted by endpoint, frame type, and encoding.',
     [qw(nsid frame_type encoding)],
   );
   $self->_register_counter(
-    'perlds_subscription_bytes_total',
+    'perlsky_subscription_bytes_total',
     'Total websocket frame bytes emitted by endpoint and encoding.',
     [qw(nsid encoding)],
   );
   $self->_register_histogram(
-    'perlds_subscription_duration_seconds',
+    'perlsky_subscription_duration_seconds',
     'Subscription connection lifetime in seconds.',
     [qw(nsid)],
     [0.1, 0.5, 1, 5, 15, 30, 60, 300, 900, 3600],
   );
   $self->_register_counter(
-    'perlds_crawler_requests_total',
+    'perlsky_crawler_requests_total',
     'Total outbound requestCrawl notifications by crawler service and result.',
     [qw(service result)],
   );
   $self->_register_histogram(
-    'perlds_crawler_request_duration_seconds',
+    'perlsky_crawler_request_duration_seconds',
     'Outbound requestCrawl latency in seconds.',
     [qw(service result)],
     [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10],
   );
   $self->_register_counter(
-    'perlds_blob_ingress_bytes_total',
+    'perlsky_blob_ingress_bytes_total',
     'Total bytes accepted through repo blob uploads.',
     [qw(mime_type)],
   );
   $self->_register_counter(
-    'perlds_blob_egress_bytes_total',
+    'perlsky_blob_egress_bytes_total',
     'Total bytes served through sync blob downloads.',
     [qw(mime_type)],
   );
   $self->_register_counter(
-    'perlds_store_operations_total',
+    'perlsky_store_operations_total',
     'Total instrumented store operations by operation and status.',
     [qw(operation status)],
   );
   $self->_register_histogram(
-    'perlds_store_operation_duration_seconds',
+    'perlsky_store_operation_duration_seconds',
     'Duration of instrumented store operations.',
     [qw(operation status)],
     [0.0005, 0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1],
   );
   $self->_register_gauge(
-    'perlds_build_info',
+    'perlsky_build_info',
     'Static build information for the running service.',
     [qw(service)],
   );
-  $self->set_gauge('perlds_build_info', 1, { service => $self->{service} });
+  $self->set_gauge('perlsky_build_info', 1, { service => $self->{service} });
 
   return $self;
 }

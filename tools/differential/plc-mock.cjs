@@ -16,12 +16,12 @@ const plc = require(path.join(
   'dist',
 ));
 
-const readyFile = process.env.PERLDS_READY_FILE;
-const port = Number(process.env.PERLDS_PLC_PORT || '0');
-const host = process.env.PERLDS_PLC_HOST || '127.0.0.1';
+const readyFile = process.env.PERLSKY_READY_FILE;
+const port = Number(process.env.PERLSKY_PLC_PORT || '0');
+const host = process.env.PERLSKY_PLC_HOST || '127.0.0.1';
 
 if (!readyFile) {
-  console.error('PERLDS_READY_FILE is required');
+  console.error('PERLSKY_READY_FILE is required');
   process.exit(1);
 }
 
@@ -82,7 +82,7 @@ const server = http.createServer(async (req, res) => {
     const parts = path.split('/').filter(Boolean).map(decodeURIComponent);
 
     if (parts.length === 0) {
-      return sendJson(res, 200, { service: 'perlds-plc-mock' });
+      return sendJson(res, 200, { service: 'perlsky-plc-mock' });
     }
 
     const did = parts[0];

@@ -18,10 +18,10 @@ const {
   'pds',
 ));
 
-const readyFile = process.env.PERLDS_READY_FILE;
+const readyFile = process.env.PERLSKY_READY_FILE;
 
 if (!readyFile) {
-  console.error('PERLDS_READY_FILE is required');
+  console.error('PERLSKY_READY_FILE is required');
   process.exit(1);
 }
 

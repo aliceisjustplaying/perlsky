@@ -34,7 +34,7 @@ my $app = ATProto::PDS->new(
     jwt_secret            => 'extended-secret',
     admin_password        => 'admin-secret',
     data_dir              => $tmp,
-    db_path               => File::Spec->catfile($tmp, 'perlds.sqlite'),
+    db_path               => File::Spec->catfile($tmp, 'perlsky.sqlite'),
   },
 );
 

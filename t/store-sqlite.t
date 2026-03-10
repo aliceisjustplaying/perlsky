@@ -23,7 +23,7 @@ my $root = File::Spec->rel2abs(File::Spec->catdir($Bin, '..'));
 my $tmp  = File::Spec->catdir($root, 'data', 'tmp-tests', 'store-sqlite');
 remove_tree($tmp) if -d $tmp;
 
-my $db_path = File::Spec->catfile($tmp, 'perlds.sqlite');
+my $db_path = File::Spec->catfile($tmp, 'perlsky.sqlite');
 my $store   = ATProto::PDS::Store::SQLite->new(path => $db_path)->bootstrap;
 
 ok(-f $db_path, 'bootstrap creates the sqlite database');
