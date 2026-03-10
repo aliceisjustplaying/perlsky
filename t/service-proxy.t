@@ -61,6 +61,10 @@ $appview_app->routes->any('/xrpc/*nsid')->to(cb => sub {
       saved   => [],
     }];
   }
+  if ($nsid eq 'app.bsky.notification.listNotifications') {
+    $body{notifications} = [];
+    $body{priority} = JSON::PP::false;
+  }
   $c->render(json => \%body);
 });
 
@@ -122,13 +126,41 @@ ok(!defined($t->tx->res->json->{auth}), 'anonymous appview request does not forw
 $t->get_ok('/xrpc/app.bsky.actor.getPreferences' => {
   Authorization => "Bearer $access",
 })->status_is(200)
-  ->json_is('/preferences/0/$type' => 'app.bsky.actor.defs#savedFeedsPref');
+  ->json_is('/preferences' => []);
+
+$t->post_ok('/xrpc/app.bsky.actor.putPreferences' => {
+  Authorization => "Bearer $access",
+} => json => {
+  preferences => [{
+    '$type' => 'app.bsky.actor.defs#savedFeedsPref',
+    pinned  => ['at://did:plc:feed/app.bsky.feed.generator/demo'],
+    saved   => [],
+  }],
+})->status_is(200)
+  ->json_is({});
+
+$t->get_ok('/xrpc/app.bsky.actor.getPreferences' => {
+  Authorization => "Bearer $access",
+})->status_is(200)
+  ->json_is('/preferences/0/$type' => 'app.bsky.actor.defs#savedFeedsPref')
+  ->json_is('/preferences/0/pinned/0' => 'at://did:plc:feed/app.bsky.feed.generator/demo');
+
+$t->get_ok("/xrpc/app.bsky.actor.getProfile?actor=$did" => {
+  Authorization => "Bearer $access",
+})->status_is(200)
+  ->json_is('/did' => $did)
+  ->json_is('/handle' => $created->{handle});
+
+$t->get_ok('/xrpc/app.bsky.notification.listNotifications?limit=40' => {
+  Authorization => "Bearer $access",
+})->status_is(200)
+  ->json_is('/notifications' => []);
 
 my $appview_auth = _decode_bearer($t->tx->res->json->{auth});
 is($appview_auth->{header}{alg}, 'ES256K', 'appview proxy auth uses ES256K');
 is($appview_auth->{claims}{iss}, $did, 'appview proxy auth is issued by the account DID');
 is($appview_auth->{claims}{aud}, 'did:web:appview.test', 'appview proxy auth targets the appview DID');
-is($appview_auth->{claims}{lxm}, 'app.bsky.actor.getPreferences', 'appview proxy auth binds the proxied method');
+is($appview_auth->{claims}{lxm}, 'app.bsky.notification.listNotifications', 'appview proxy auth binds the proxied method');
 ok(_verify_es256k($account->{public_key}, $appview_auth->{signing_input}, $appview_auth->{signature}), 'appview proxy auth signature verifies');
 
 $t->get_ok('/xrpc/chat.bsky.convo.getLog' => {
@@ -146,7 +178,7 @@ $t->get_ok('/xrpc/app.bsky.actor.getPreferences' => {
   Authorization   => "Bearer $access",
   'Atproto-Proxy' => 'did:web:appview.test#bsky_appview',
 })->status_is(200)
-  ->json_is('/nsid' => 'app.bsky.actor.getPreferences');
+  ->json_is('/preferences/0/$type' => 'app.bsky.actor.defs#savedFeedsPref');
 
 $t->get_ok('/xrpc/example.unsupported.method')
   ->status_is(404)

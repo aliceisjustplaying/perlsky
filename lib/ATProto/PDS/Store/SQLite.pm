@@ -1059,6 +1059,60 @@ sub list_subject_statuses ($self) {
   return [ map { _row_from_json_columns($_, qw(subject_json takedown_json deactivated_json)) } @$rows ];
 }
 
+sub put_preferences ($self, $did, $namespace, $preferences, %args) {
+  die 'did is required' unless defined $did && length $did;
+  die 'namespace is required' unless defined $namespace && length $namespace;
+  die 'preferences must be an arrayref' unless ref($preferences) eq 'ARRAY';
+
+  my $now = $args{updated_at} // time;
+  $self->txn(sub ($dbh) {
+    $dbh->do(
+      q{DELETE FROM preferences WHERE did = ? AND namespace = ?},
+      undef,
+      $did,
+      $namespace,
+    );
+
+    for my $pref (@$preferences) {
+      next unless ref($pref) eq 'HASH';
+      my $type = $pref->{'$type'} // next;
+      $dbh->do(
+        q{
+          INSERT INTO preferences (
+            did, namespace, pref_type, pref_json, updated_at
+          ) VALUES (?, ?, ?, ?, ?)
+        },
+        undef,
+        $did,
+        $namespace,
+        $type,
+        encode_json($pref),
+        $now,
+      );
+    }
+  });
+
+  return $self->list_preferences($did, $namespace);
+}
+
+sub list_preferences ($self, $did, $namespace) {
+  die 'did is required' unless defined $did && length $did;
+  die 'namespace is required' unless defined $namespace && length $namespace;
+
+  my $rows = $self->dbh->selectall_arrayref(
+    q{
+      SELECT pref_json
+      FROM preferences
+      WHERE did = ? AND namespace = ?
+      ORDER BY pref_type ASC
+    },
+    { Slice => {} },
+    $did,
+    $namespace,
+  );
+  return [ map { decode_json($_->{pref_json}) } @$rows ];
+}
+
 sub put_label ($self, %args) {
   return observe_store_operation($self->{metrics}, 'put_label', sub {
     my $subject_key = $args{subject_key} // die 'subject_key is required';
@@ -1621,6 +1675,22 @@ sub default_migrations {
           )
         },
         q{CREATE INDEX IF NOT EXISTS labels_lookup_idx ON labels (src, uri, id)},
+      ],
+    },
+    {
+      version => 6,
+      statements => [
+        q{
+          CREATE TABLE IF NOT EXISTS preferences (
+            did TEXT NOT NULL,
+            namespace TEXT NOT NULL,
+            pref_type TEXT NOT NULL,
+            pref_json TEXT NOT NULL,
+            updated_at INTEGER NOT NULL,
+            PRIMARY KEY (did, namespace, pref_type)
+          )
+        },
+        q{CREATE INDEX IF NOT EXISTS preferences_lookup_idx ON preferences (did, namespace, pref_type)},
       ],
     },
   );
