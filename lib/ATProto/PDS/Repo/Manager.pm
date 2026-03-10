@@ -26,6 +26,10 @@ sub store ($self) {
   return $self->{store};
 }
 
+sub crawler_notifier ($self) {
+  return $self->{crawler_notifier};
+}
+
 sub generate_signing_key ($self) {
   return generate_keypair();
 }
@@ -185,6 +189,8 @@ sub apply_writes ($self, $account, $writes, %opts) {
       car_bytes  => $car_bytes,
     );
   });
+  $self->crawler_notifier->notify_of_update()
+    if $self->crawler_notifier;
 
   return {
     cid      => $commit_cid->to_string,
@@ -310,6 +316,8 @@ sub import_repo_car ($self, $account, $car_bytes) {
       car_bytes  => $next_car_bytes,
     );
   });
+  $self->crawler_notifier->notify_of_update()
+    if $self->crawler_notifier;
 
   return {
     cid      => $commit_cid->to_string,

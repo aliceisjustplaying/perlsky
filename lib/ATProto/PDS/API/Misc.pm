@@ -127,7 +127,7 @@ sub register_misc_handlers ($registry, $app) {
     my $did_doc = refresh_plc_did_doc($c->app->settings, $account->{did});
     $c->store->update_account($account->{did}, did_doc => $did_doc);
     $account = $c->store->update_account($account->{did}, did_doc => $did_doc);
-    $c->store->append_event(
+    $c->append_event(
       did     => $account->{did},
       type    => 'identity',
       rev     => $account->{repo_rev},
@@ -158,7 +158,7 @@ sub register_misc_handlers ($registry, $app) {
       handle  => $handle,
       did_doc => $did_doc,
     );
-    $c->store->append_event(
+    $c->append_event(
       did     => $updated->{did},
       type    => 'identity',
       rev     => $updated->{repo_rev},

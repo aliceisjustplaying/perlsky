@@ -106,7 +106,7 @@ sub register_server_handlers ($registry, $app) {
       used_by => $account->{did},
     ) if $invite;
     $c->store->claim_reserved_signing_key($did) if $reserved && !defined $reserved->{claimed_at};
-    $c->store->append_event(
+    $c->append_event(
       did     => $account->{did},
       type    => 'account',
       rev     => $account->{repo_rev},
@@ -222,7 +222,7 @@ sub register_server_handlers ($registry, $app) {
   $registry->register('com.atproto.server.deactivateAccount', sub ($c, $endpoint) {
     my (undef, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
     $c->store->update_account($account->{did}, deactivated_at => time);
-    $c->store->append_event(
+    $c->append_event(
       did     => $account->{did},
       type    => 'account',
       rev     => $account->{repo_rev},
@@ -237,7 +237,7 @@ sub register_server_handlers ($registry, $app) {
   $registry->register('com.atproto.server.activateAccount', sub ($c, $endpoint) {
     my (undef, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
     $c->store->update_account($account->{did}, deactivated_at => undef);
-    $c->store->append_event(
+    $c->append_event(
       did     => $account->{did},
       type    => 'account',
       rev     => $account->{repo_rev},
@@ -408,7 +408,7 @@ sub register_server_handlers ($registry, $app) {
       $c->store->revoke_sessions_by_did($account->{did});
       $c->store->revoke_app_passwords_by_did($account->{did});
       $c->store->consume_action_token($token->{token});
-      $c->store->append_event(
+      $c->append_event(
         did     => $account->{did},
         type    => 'account',
         rev     => $account->{repo_rev},

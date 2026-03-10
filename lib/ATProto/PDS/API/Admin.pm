@@ -79,7 +79,7 @@ sub register_admin_handlers ($registry, $app) {
         $subject->{did},
         deactivated_at => $body->{deactivated}{applied} ? time : undef,
       );
-      $c->store->append_event(
+      $c->append_event(
         did     => $subject->{did},
         type    => 'account',
         rev     => ($c->store->get_account_by_did($subject->{did})->{repo_rev} // undef),
@@ -335,7 +335,7 @@ sub _sync_hide_label ($c, $subject, $before, $after) {
     );
   }
 
-  $c->store->append_event(
+  $c->append_event(
     did     => $src,
     type    => 'label',
     payload => {

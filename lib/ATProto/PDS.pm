@@ -5,6 +5,7 @@ use warnings;
 
 use Mojo::Base 'Mojolicious', -signatures;
 use Mojo::JSON ();
+use Mojo::URL;
 use ATProto::PDS::API::Admin qw(register_admin_handlers);
 use ATProto::PDS::API::Builtins qw(register_builtin_handlers);
 use ATProto::PDS::API::Misc qw(register_misc_handlers);
@@ -12,6 +13,7 @@ use ATProto::PDS::API::Repo qw(register_repo_handlers);
 use ATProto::PDS::API::Registry;
 use ATProto::PDS::API::Server qw(register_server_handlers);
 use ATProto::PDS::API::Sync qw(register_sync_handlers);
+use ATProto::PDS::Crawlers;
 use ATProto::PDS::Identity qw(account_did_doc service_did);
 use ATProto::PDS::LexiconCatalog qw(endpoint_catalog);
 use ATProto::PDS::LexiconRegistry;
@@ -26,6 +28,12 @@ has settings     => sub { {} };
 sub startup ($self) {
   my $config = $self->settings;
   my $root   = $self->project_root;
+  my $public_url = Mojo::URL->new($config->{base_url} // 'http://127.0.0.1:7755');
+  my $crawler_notifier = ATProto::PDS::Crawlers->new(
+    hostname     => ($config->{hostname} // lc($public_url->host // 'localhost')),
+    crawlers     => $config->{crawlers} // [],
+    min_interval => $config->{crawler_notify_interval} // (20 * 60),
+  );
 
   $self->secrets([$config->{jwt_secret} // 'perlds-dev-secret']);
   $self->helper(api_registry => sub { state $registry = ATProto::PDS::API::Registry->new });
@@ -37,8 +45,22 @@ sub startup ($self) {
       path => $c->app->settings->{db_path} || File::Spec->catfile($root, 'data', 'runtime', 'perlds.sqlite'),
     )->bootstrap;
   });
+  $self->helper(crawler_notifier => sub ($c) {
+    state $notifier = do {
+      $crawler_notifier->{store} = $c->store;
+      $crawler_notifier;
+    };
+  });
+  $self->helper(append_event => sub ($c, %args) {
+    my $seq = $c->store->append_event(%args);
+    $c->crawler_notifier->notify_of_update(last_seq => $seq);
+    return $seq;
+  });
   $self->helper(repo_manager => sub ($c) {
-    state $manager = ATProto::PDS::Repo::Manager->new(store => $c->store);
+    state $manager = ATProto::PDS::Repo::Manager->new(
+      store            => $c->store,
+      crawler_notifier => $c->crawler_notifier,
+    );
   });
 
   my $routes = $self->routes;
