@@ -1,0 +1,38 @@
+#!/usr/bin/env perl
+use v5.34;
+use warnings;
+
+use File::Basename qw(dirname);
+use File::Path qw(make_path);
+use File::Spec;
+
+my $root = File::Spec->rel2abs(File::Spec->catdir(dirname(__FILE__), '..'));
+my $runtime_dir = File::Spec->catdir($root, '.tools', 'reference-runtime');
+my $module_path = File::Spec->catdir($runtime_dir, 'node_modules', '@atproto', 'pds');
+
+if (-d $module_path) {
+  print "$module_path\n";
+  exit 0;
+}
+
+make_path($runtime_dir);
+
+chdir $runtime_dir or die "unable to chdir to $runtime_dir: $!";
+
+if (!-f File::Spec->catfile($runtime_dir, 'package.json')) {
+  system('npm', 'init', '-y') == 0
+    or die "npm init failed\n";
+}
+
+my @fnm_check = ('fnm', 'exec', '--using=20', '--', 'node', '--version');
+if (system(@fnm_check) != 0) {
+  system('fnm', 'install', '20') == 0
+    or die "unable to install Node 20 with fnm\n";
+}
+
+system(
+  'fnm', 'exec', '--using=20', '--',
+  'npm', 'install', '--no-save', '@atproto/pds@0.4.214',
+) == 0 or die "npm install for \@atproto/pds failed\n";
+
+print "$module_path\n";

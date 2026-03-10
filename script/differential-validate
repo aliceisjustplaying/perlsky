@@ -1,0 +1,618 @@
+#!/usr/bin/env perl
+use v5.34;
+use warnings;
+use feature 'signatures';
+no warnings 'experimental::signatures';
+
+use Config ();
+use File::Basename qw(dirname);
+use File::Path qw(make_path);
+use File::Spec;
+use File::Temp qw(tempdir);
+use IO::Socket::INET;
+use JSON::PP ();
+use POSIX qw(WNOHANG);
+use Time::HiRes qw(sleep time);
+
+BEGIN {
+  require lib;
+  my $root = File::Spec->rel2abs(File::Spec->catdir(dirname(__FILE__), '..'));
+  lib->import(
+    File::Spec->catdir($root, 'lib'),
+    File::Spec->catdir($root, 'local', 'lib', 'perl5'),
+    File::Spec->catdir($root, 'local', 'lib', 'perl5', $Config::Config{archname}),
+  );
+}
+
+use Mojo::JSON qw(decode_json encode_json true false);
+use Mojo::URL;
+use Mojo::UserAgent;
+use ATProto::PDS::EventStream qw(decode_frame);
+
+my $root = File::Spec->rel2abs(File::Spec->catdir(dirname(__FILE__), '..'));
+my $tmp  = tempdir(CLEANUP => 1);
+my @children;
+my $failed = 0;
+
+END {
+  my $status = $?;
+  for my $child (reverse @children) {
+    next unless $child->{pid};
+    my $alive = kill 0, $child->{pid};
+    next unless $alive;
+    kill 'TERM', $child->{pid};
+    for (1 .. 40) {
+      my $done = waitpid($child->{pid}, WNOHANG);
+      last if $done == $child->{pid};
+      sleep 0.1;
+    }
+    kill 'KILL', $child->{pid} if kill 0, $child->{pid};
+    waitpid($child->{pid}, 0);
+  }
+  $? = $status;
+}
+
+sub note ($message) {
+  print "$message\n";
+}
+
+sub pass ($message) {
+  print "ok - $message\n";
+}
+
+sub fail_check ($message) {
+  print "not ok - $message\n";
+  $failed++;
+}
+
+sub check ($condition, $message) {
+  if ($condition) {
+    pass($message);
+  } else {
+    fail_check($message);
+  }
+}
+
+sub free_port () {
+  my $sock = IO::Socket::INET->new(
+    LocalAddr => '127.0.0.1',
+    LocalPort => 0,
+    Proto     => 'tcp',
+    Listen    => 5,
+    ReuseAddr => 1,
+  ) or die "unable to allocate a free port: $!";
+  my $port = $sock->sockport;
+  close $sock;
+  return $port;
+}
+
+sub spawn_logged ($name, $cmd, $env, $log_path) {
+  open my $log_fh, '>', $log_path or die "unable to open $log_path: $!";
+  my $pid = fork;
+  die "unable to fork for $name: $!" unless defined $pid;
+
+  if ($pid == 0) {
+    chdir $root or die "unable to chdir to $root: $!";
+    open STDOUT, '>&', $log_fh or die "unable to redirect stdout for $name: $!";
+    open STDERR, '>&', $log_fh or die "unable to redirect stderr for $name: $!";
+    %ENV = (%ENV, %{$env // {}});
+    exec @{$cmd} or die "unable to exec $name: $!";
+  }
+
+  close $log_fh;
+  my $child = {
+    name => $name,
+    pid  => $pid,
+    log  => $log_path,
+  };
+  push @children, $child;
+  return $child;
+}
+
+sub slurp_file ($path) {
+  return q() unless -f $path;
+  open my $fh, '<', $path or return q();
+  local $/;
+  return <$fh> // q();
+}
+
+sub wait_for_ready_file ($name, $path, $timeout = 30) {
+  my $deadline = time + $timeout;
+  while (time < $deadline) {
+    if (-f $path) {
+      return decode_json(slurp_file($path));
+    }
+    sleep 0.1;
+  }
+  die "timed out waiting for $name ready file $path\n";
+}
+
+sub wait_for_http_ok ($name, $url, $timeout = 30) {
+  my $ua = Mojo::UserAgent->new(max_redirects => 0);
+  my $deadline = time + $timeout;
+  while (time < $deadline) {
+    my $tx = eval { $ua->get($url) };
+    if ($tx) {
+      my $res = eval { $tx->result };
+      return $res if $res && $res->is_success;
+    }
+    sleep 0.2;
+  }
+  die "timed out waiting for $name at $url\n";
+}
+
+sub setup_reference_runtime () {
+  my @cmd = ($^X, File::Spec->catfile($root, 'script', 'setup-reference-runtime'));
+  system(@cmd) == 0 or die "reference runtime setup failed\n";
+}
+
+sub random_hex ($bytes) {
+  open my $fh, '<:raw', '/dev/urandom' or die "unable to read /dev/urandom: $!";
+  read($fh, my $buf, $bytes) == $bytes or die "unable to read $bytes bytes from /dev/urandom\n";
+  close $fh;
+  return unpack('H*', $buf);
+}
+
+sub post_json ($origin, $nsid, $payload, $headers = {}) {
+  my $ua = Mojo::UserAgent->new(max_redirects => 0);
+  my $tx = $ua->post(
+    "$origin/xrpc/$nsid" => {
+      'Content-Type' => 'application/json',
+      %{$headers},
+    } => json => $payload,
+  );
+  return $tx->result;
+}
+
+sub get_form ($origin, $nsid, $query, $headers = {}) {
+  my $ua  = Mojo::UserAgent->new(max_redirects => 0);
+  my $url = Mojo::URL->new("$origin/xrpc/$nsid")->query($query);
+  my $tx  = $ua->get($url => $headers);
+  return $tx->result;
+}
+
+sub get_json ($origin, $nsid, $query = undef, $headers = {}) {
+  my $res = defined $query ? get_form($origin, $nsid, $query, $headers) : Mojo::UserAgent->new(max_redirects => 0)->get("$origin/xrpc/$nsid" => $headers)->result;
+  return $res;
+}
+
+sub auth_header ($token) {
+  return { Authorization => "Bearer $token" };
+}
+
+sub normalized_domains ($res) {
+  my $json = $res->json || {};
+  return [ sort map { /^\./ ? $_ : ".$_" } @{ $json->{availableUserDomains} || [] } ];
+}
+
+sub quiet_firehose ($url, $quiet_seconds = 0.5) {
+  my $ua = Mojo::UserAgent->new;
+  my $got_frame = 0;
+  my $error;
+  my $done = 0;
+
+  $ua->websocket($url => sub ($ua, $tx) {
+    unless ($tx->is_websocket) {
+      $error = $tx->res->error->{message} // 'websocket handshake failed';
+      $done = 1;
+      Mojo::IOLoop->stop;
+      return;
+    }
+
+    my $timer = Mojo::IOLoop->timer($quiet_seconds => sub {
+      $done = 1;
+      $tx->finish(1000);
+    });
+
+    $tx->on(binary => sub ($tx, $bytes) {
+      $got_frame = 1;
+      Mojo::IOLoop->remove($timer);
+      $tx->finish(1000);
+    });
+
+    $tx->on(finish => sub ($tx, $code, $reason = undef) {
+      Mojo::IOLoop->stop if $done || $got_frame || defined $error;
+    });
+  });
+
+  Mojo::IOLoop->start unless Mojo::IOLoop->is_running;
+  die "$error\n" if defined $error;
+  return !$got_frame;
+}
+
+sub next_commit_frame ($url, $expected_path, $trigger, $timeout = 10) {
+  my $ua = Mojo::UserAgent->new;
+  my $frame;
+  my $error;
+  my $deadline = time + $timeout;
+  my $triggered = 0;
+  my $done = 0;
+
+  $ua->websocket($url => sub ($ua, $tx) {
+    unless ($tx->is_websocket) {
+      $error = $tx->res->error->{message} // 'websocket handshake failed';
+      $done = 1;
+      Mojo::IOLoop->stop;
+      return;
+    }
+
+    my $timer;
+    $timer = Mojo::IOLoop->recurring(0.1 => sub {
+      if (time >= $deadline) {
+        $error = "timed out waiting for firehose commit at $expected_path";
+        Mojo::IOLoop->remove($timer);
+        $done = 1;
+        $tx->finish(1000);
+      }
+    });
+
+    $tx->on(binary => sub ($tx, $bytes) {
+      my $decoded = decode_frame($bytes);
+      my $header  = $decoded->{header} || {};
+      my $body    = $decoded->{body}   || {};
+      my @ops     = @{ $body->{ops} || [] };
+      my $match   = grep { ($_->{path} // q()) eq $expected_path } @ops;
+      if (($header->{t} // q()) eq '#commit' && $match) {
+        $frame = $decoded;
+        Mojo::IOLoop->remove($timer);
+        $done = 1;
+        $tx->finish(1000);
+      }
+    });
+
+    Mojo::IOLoop->next_tick(sub {
+      return if $triggered;
+      $triggered = 1;
+      eval { $trigger->() };
+      if ($@) {
+        $error = $@;
+        Mojo::IOLoop->remove($timer);
+        $done = 1;
+        $tx->finish(1011);
+      }
+    });
+
+    $tx->on(finish => sub ($tx, $code, $reason = undef) {
+      Mojo::IOLoop->stop if $done || defined $error;
+    });
+  });
+
+  Mojo::IOLoop->start unless Mojo::IOLoop->is_running;
+  die "$error\n" if defined $error;
+  return $frame;
+}
+
+sub first_frame ($url, $timeout = 5) {
+  my $ua = Mojo::UserAgent->new;
+  my $frame;
+  my $error;
+  my $done = 0;
+  my $deadline = time + $timeout;
+
+  $ua->websocket($url => sub ($ua, $tx) {
+    unless ($tx->is_websocket) {
+      $error = $tx->res->error->{message} // 'websocket handshake failed';
+      $done = 1;
+      Mojo::IOLoop->stop;
+      return;
+    }
+
+    my $timer;
+    $timer = Mojo::IOLoop->recurring(0.1 => sub {
+      if (time >= $deadline) {
+        $error = "timed out waiting for firehose frame";
+        Mojo::IOLoop->remove($timer);
+        $done = 1;
+        $tx->finish(1000);
+      }
+    });
+
+    $tx->on(binary => sub ($tx, $bytes) {
+      $frame = decode_frame($bytes);
+      Mojo::IOLoop->remove($timer);
+      $done = 1;
+      $tx->finish(1000);
+    });
+
+    $tx->on(finish => sub ($tx, $code, $reason = undef) {
+      Mojo::IOLoop->stop if $done || defined $error;
+    });
+  });
+
+  Mojo::IOLoop->start unless Mojo::IOLoop->is_running;
+  die "$error\n" if defined $error;
+  return $frame;
+}
+
+sub normalize_commit_frame ($frame, $did) {
+  my $header = $frame->{header} || {};
+  my $body   = $frame->{body}   || {};
+  my $first  = $body->{ops}[0] || {};
+
+  return {
+    op         => $header->{op},
+    type       => $header->{t},
+    repo_match => (($body->{repo} // q()) eq $did) ? 1 : 0,
+    action     => $first->{action},
+    path       => $first->{path},
+    has_blocks => length($body->{blocks} // q()) > 0 ? 1 : 0,
+    has_commit => defined $body->{commit} ? 1 : 0,
+    seq_is_int => defined($body->{seq}) && $body->{seq} =~ /\A\d+\z/ ? 1 : 0,
+  };
+}
+
+sub same_hash ($left, $right) {
+  my $json = JSON::PP->new->canonical(1)->allow_nonref(1);
+  return $json->encode($left) eq $json->encode($right);
+}
+
+note('Preparing official reference runtime');
+setup_reference_runtime();
+
+my $plc_port     = free_port();
+my $reference_port = free_port();
+my $perl_port    = free_port();
+
+my $plc_ready = File::Spec->catfile($tmp, 'plc.ready.json');
+my $ref_ready = File::Spec->catfile($tmp, 'reference.ready.json');
+
+my $plc_log = File::Spec->catfile($tmp, 'plc.log');
+my $ref_log = File::Spec->catfile($tmp, 'reference.log');
+my $perl_log = File::Spec->catfile($tmp, 'perlds.log');
+
+my $plc = spawn_logged(
+  'plc-mock',
+  ['fnm', 'exec', '--using=20', '--', 'node', File::Spec->catfile($root, 'tools', 'differential', 'plc-mock.cjs')],
+  {
+    PERLDS_READY_FILE => $plc_ready,
+    PERLDS_PLC_PORT   => $plc_port,
+    PERLDS_PLC_HOST   => '127.0.0.1',
+  },
+  $plc_log,
+);
+
+my $plc_info = wait_for_ready_file('plc mock', $plc_ready);
+pass("started local PLC mock at $plc_info->{origin}");
+
+my $reference_data = File::Spec->catdir($tmp, 'reference');
+make_path($reference_data);
+
+my $reference = spawn_logged(
+  'reference-pds',
+  ['fnm', 'exec', '--using=20', '--', 'node', File::Spec->catfile($root, 'tools', 'differential', 'reference-pds-runner.cjs')],
+  {
+    PERLDS_READY_FILE                        => $ref_ready,
+    PDS_PORT                                 => $reference_port,
+    PDS_HOSTNAME                             => 'localhost',
+    PDS_DEV_MODE                             => 1,
+    PDS_DATA_DIRECTORY                       => File::Spec->catdir($reference_data, 'data'),
+    PDS_BLOBSTORE_DISK_LOCATION              => File::Spec->catdir($reference_data, 'blobs'),
+    PDS_BLOBSTORE_DISK_TMP_LOCATION          => File::Spec->catdir($reference_data, 'blobs-tmp'),
+    PDS_PLC_ROTATION_KEY_K256_PRIVATE_KEY_HEX => random_hex(32),
+    PDS_JWT_SECRET                           => 'reference-jwt-secret',
+    PDS_ADMIN_PASSWORD                       => 'reference-admin-secret',
+    PDS_INVITE_REQUIRED                      => 0,
+    PDS_DID_PLC_URL                          => $plc_info->{origin},
+    PDS_CONTACT_EMAIL_ADDRESS                => 'abuse@example.test',
+  },
+  $ref_log,
+);
+
+my $reference_info = wait_for_ready_file('reference pds', $ref_ready);
+wait_for_http_ok('reference pds', "$reference_info->{origin}/xrpc/_health");
+pass("started official reference PDS at $reference_info->{origin}");
+
+my $perlds_config = File::Spec->catfile($tmp, 'perlds.json');
+open my $cfg_fh, '>', $perlds_config or die "unable to write $perlds_config: $!";
+print {$cfg_fh} encode_json({
+  base_url              => "http://127.0.0.1:$perl_port",
+  service_handle_domain => 'test',
+  service_did_method    => 'did:web',
+  jwt_secret            => 'perlds-jwt-secret',
+  admin_password        => 'perlds-admin-secret',
+  data_dir              => File::Spec->catdir($tmp, 'perlds-data'),
+  db_path               => File::Spec->catfile($tmp, 'perlds.sqlite'),
+});
+close $cfg_fh;
+
+my $perlds = spawn_logged(
+  'perlds',
+  [$^X, File::Spec->catfile($root, 'script', 'perlds'), 'daemon', '-l', "http://127.0.0.1:$perl_port"],
+  {
+    PERLDS_CONFIG => $perlds_config,
+  },
+  $perl_log,
+);
+
+wait_for_http_ok('perlds', "http://127.0.0.1:$perl_port/_health");
+pass("started perlds at http://127.0.0.1:$perl_port");
+
+my %server = (
+  reference => {
+    origin => $reference_info->{origin},
+    handle => 'alice.test',
+    email  => 'alice-ref@test.com',
+  },
+  perlds => {
+    origin => "http://127.0.0.1:$perl_port",
+    handle => 'alice.test',
+    email  => 'alice-perl@test.com',
+  },
+);
+
+note('Comparing describeServer');
+for my $name (sort keys %server) {
+  my $res = get_json($server{$name}{origin}, 'com.atproto.server.describeServer');
+  check($res->is_success, "$name describeServer succeeds");
+  $server{$name}{describe} = $res->json if $res->is_success;
+}
+
+check(
+  same_hash(
+    {
+      inviteCodeRequired => $server{reference}{describe}{inviteCodeRequired} ? true : false,
+      availableUserDomains => normalized_domains(get_json($server{reference}{origin}, 'com.atproto.server.describeServer')),
+    },
+    {
+      inviteCodeRequired => $server{perlds}{describe}{inviteCodeRequired} ? true : false,
+      availableUserDomains => normalized_domains(get_json($server{perlds}{origin}, 'com.atproto.server.describeServer')),
+    },
+  ),
+  'describeServer matches on invite requirement and user domains',
+);
+
+note('Creating matching accounts');
+for my $name (sort keys %server) {
+  my $res = post_json($server{$name}{origin}, 'com.atproto.server.createAccount', {
+    handle   => $server{$name}{handle},
+    email    => $server{$name}{email},
+    password => 'hunter22',
+  });
+  check($res->is_success, "$name createAccount succeeds");
+  next unless $res->is_success;
+
+  my $json = $res->json;
+  $server{$name}{did} = $json->{did};
+  $server{$name}{access} = $json->{accessJwt};
+  $server{$name}{refresh} = $json->{refreshJwt};
+
+  check(($json->{handle} // q()) eq $server{$name}{handle}, "$name createAccount returns normalized handle");
+  check(defined $json->{did} && $json->{did} =~ /\Adid:/, "$name createAccount returns a DID");
+  check(defined $json->{accessJwt} && length $json->{accessJwt}, "$name createAccount returns an access token");
+  check(defined $json->{refreshJwt} && length $json->{refreshJwt}, "$name createAccount returns a refresh token");
+}
+
+note('Comparing resolveHandle');
+for my $name (sort keys %server) {
+  my $res = get_form($server{$name}{origin}, 'com.atproto.identity.resolveHandle', { handle => $server{$name}{handle} });
+  check($res->is_success, "$name resolveHandle succeeds");
+  next unless $res->is_success;
+  check(($res->json->{did} // q()) eq $server{$name}{did}, "$name resolveHandle returns the created DID");
+}
+
+note('Comparing getSession');
+for my $name (sort keys %server) {
+  my $res = get_json($server{$name}{origin}, 'com.atproto.server.getSession', undef, auth_header($server{$name}{access}));
+  check($res->is_success, "$name getSession succeeds");
+  next unless $res->is_success;
+  my $json = $res->json;
+  check(($json->{did} // q()) eq $server{$name}{did}, "$name getSession returns the created DID");
+  check(($json->{handle} // q()) eq $server{$name}{handle}, "$name getSession returns the created handle");
+}
+
+my $record = {
+  '$type'   => 'app.bsky.feed.post',
+  text      => 'differential validation post',
+  createdAt => '2026-03-10T00:00:00Z',
+};
+
+note('Comparing createRecord');
+for my $name (sort keys %server) {
+  my $res = post_json($server{$name}{origin}, 'com.atproto.repo.createRecord', {
+    repo       => $server{$name}{did},
+    collection => 'app.bsky.feed.post',
+    rkey       => 'diffpost',
+    record     => $record,
+  }, auth_header($server{$name}{access}));
+  check($res->is_success, "$name createRecord succeeds");
+  next unless $res->is_success;
+  my $json = $res->json;
+  $server{$name}{record_uri} = $json->{uri};
+  check(($json->{uri} // q()) =~ m{/app\.bsky\.feed\.post/diffpost\z}, "$name createRecord returns the expected record URI");
+  check(defined $json->{cid} && length $json->{cid}, "$name createRecord returns a CID");
+}
+
+note('Comparing listRecords');
+for my $name (sort keys %server) {
+  my $res = get_form($server{$name}{origin}, 'com.atproto.repo.listRecords', {
+    repo       => $server{$name}{did},
+    collection => 'app.bsky.feed.post',
+  });
+  check($res->is_success, "$name listRecords succeeds");
+  next unless $res->is_success;
+  my $records = $res->json->{records} || [];
+  check(@{$records} >= 1, "$name listRecords returns at least one record");
+  check(($records->[0]{value}{text} // q()) eq $record->{text}, "$name listRecords returns the created text");
+}
+
+note('Comparing getLatestCommit');
+for my $name (sort keys %server) {
+  my $res = get_form($server{$name}{origin}, 'com.atproto.sync.getLatestCommit', { did => $server{$name}{did} });
+  check($res->is_success, "$name getLatestCommit succeeds");
+  next unless $res->is_success;
+  my $json = $res->json;
+  check(defined $json->{cid} && length $json->{cid}, "$name getLatestCommit returns a CID");
+  check(defined $json->{rev} && length $json->{rev}, "$name getLatestCommit returns a rev");
+}
+
+note('Comparing getRepo CAR exports');
+for my $name (sort keys %server) {
+  my $res = get_form($server{$name}{origin}, 'com.atproto.sync.getRepo', { did => $server{$name}{did} });
+  check($res->is_success, "$name getRepo succeeds");
+  next unless $res->is_success;
+  my $ctype = $res->headers->content_type // q();
+  check($ctype =~ m{application/vnd\.ipld\.car}, "$name getRepo returns CAR bytes");
+  check(length($res->body // q()) > 0, "$name getRepo CAR payload is non-empty");
+}
+
+note('Comparing firehose live follow behavior');
+for my $name (sort keys %server) {
+  my $quiet = quiet_firehose("$server{$name}{origin}/xrpc/com.atproto.sync.subscribeRepos");
+  check($quiet, "$name subscribeRepos stays quiet with no cursor before a new write");
+}
+
+for my $name (sort keys %server) {
+  my $path = 'app.bsky.feed.post/firehose-diff';
+  my $frame = next_commit_frame(
+    "$server{$name}{origin}/xrpc/com.atproto.sync.subscribeRepos",
+    $path,
+    sub {
+      my $res = post_json($server{$name}{origin}, 'com.atproto.repo.createRecord', {
+        repo       => $server{$name}{did},
+        collection => 'app.bsky.feed.post',
+        rkey       => 'firehose-diff',
+        record     => {
+          %{$record},
+          text => "firehose validation for $name",
+        },
+      }, auth_header($server{$name}{access}));
+      die "createRecord for firehose failed on $name\n" unless $res->is_success;
+    },
+  );
+  $server{$name}{firehose_commit} = normalize_commit_frame($frame, $server{$name}{did});
+  check($server{$name}{firehose_commit}{repo_match}, "$name firehose commit belongs to the created repo");
+}
+
+check(
+  same_hash($server{reference}{firehose_commit}, $server{perlds}{firehose_commit}),
+  'subscribeRepos emits the same normalized commit semantics as the official reference PDS',
+);
+
+note('Comparing future cursor error behavior');
+for my $name (sort keys %server) {
+  my $frame = first_frame("$server{$name}{origin}/xrpc/com.atproto.sync.subscribeRepos?cursor=999999999999");
+  my $header = $frame->{header} || {};
+  my $body   = $frame->{body}   || {};
+  $server{$name}{future_cursor} = {
+    op    => $header->{op},
+    error => $body->{error},
+  };
+}
+
+check(
+  same_hash($server{reference}{future_cursor}, $server{perlds}{future_cursor}),
+  'subscribeRepos agrees on future cursor errors',
+);
+
+if ($failed) {
+  print "\nReference PDS log:\n";
+  print slurp_file($ref_log);
+  print "\nperlds log:\n";
+  print slurp_file($perl_log);
+  print "\nPLC mock log:\n";
+  print slurp_file($plc_log);
+  die "\ndifferential validation failed with $failed mismatches\n";
+}
+
+note('Differential validation succeeded');
+exit 0;
