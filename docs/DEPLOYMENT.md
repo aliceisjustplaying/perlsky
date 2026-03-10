@@ -72,6 +72,7 @@ Important fields:
 - `base_url`: the public HTTPS origin for the PDS
 - `hostname`: the host relays should crawl
 - `service_handle_domain`: the suffix used for local handles
+- If you want users like `alice.pds.example.com`, set `service_handle_domain` to `pds.example.com`, not `example.com`.
 - `account_did_method`: set to `did:plc` if you want PLC-backed user DIDs
 - `plc_rotation_private_key_hex`: required for `did:plc` account creation
 - `crawlers`: relay/crawler origins to notify after repo activity
