@@ -27,6 +27,12 @@ Metrics and observability:
 - The main runtime signals cover XRPC request counts/latency, websocket subscriptions and emitted frames, crawler notifications, blob ingress/egress bytes, and key store operation timings.
 - Detailed operator documentation lives in `docs/METRICS.md`.
 
+Deployment and first-account setup:
+
+- Generic single-node deployment instructions live in `docs/DEPLOYMENT.md`.
+- The deployment guide includes a reverse-proxy layout, a sample `systemd` unit, validation commands, and a `createAccount` example for bootstrapping the first user.
+- If `service_handle_domain` is `example.com`, submitting `handle: "alice"` to `com.atproto.server.createAccount` creates `alice.example.com`.
+
 Relay / crawler discovery:
 
 - Configure `hostname` to the public host name you want relays to crawl, for example `pds.example.com`. This should be the host, not the full URL.
