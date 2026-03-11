@@ -7,10 +7,9 @@ no warnings 'experimental::signatures';
 
 use Exporter 'import';
 use JSON::PP ();
-use Mojo::IOLoop;
 
-use ATProto::PDS::EventStream qw(encode_error_frame encode_info_frame encode_message_frame);
-use ATProto::PDS::API::Util qw(flatten_params iso8601 resolve_did_account xrpc_error);
+use ATProto::PDS::EventStream qw(encode_message_frame);
+use ATProto::PDS::API::Util qw(flatten_params iso8601 pump_event_subscription resolve_did_account subscription_start_seq xrpc_error);
 use ATProto::PDS::Identity qw(service_host);
 use ATProto::PDS::Moderation qw(assert_blob_readable assert_record_readable assert_repo_readable);
 use ATProto::PDS::Repo::CAR qw(write_car);
@@ -228,54 +227,16 @@ sub register_sync_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.sync.subscribeRepos', sub ($c, $endpoint) {
-    my $cursor_param = $c->param('cursor');
-    my $latest = $c->store->latest_event_seq;
-    my $oldest = $c->store->oldest_event_seq;
-
-    my $next_seq;
-    if (!defined $cursor_param || $cursor_param eq q()) {
-      $next_seq = $latest + 1;
-    } else {
-      my $cursor = int($cursor_param);
-      if ($cursor > $latest) {
-        $c->subscription_send(
-          binary     => encode_error_frame('FutureCursor', 'Cursor is ahead of the local event stream'),
-          frame_type => 'error',
-        );
-        $c->finish(1008);
-        return;
-      }
-      if ($oldest && $cursor && $cursor < $oldest) {
-        $c->subscription_send(
-          binary     => encode_info_frame('OutdatedCursor', 'Cursor predates the oldest locally retained event'),
-          frame_type => 'info',
-        );
-        $next_seq = $oldest;
-      } else {
-        $next_seq = defined($cursor_param) && length($cursor_param)
-          ? ($cursor + 1)
-          : ($oldest || ($latest + 1));
-      }
-    }
-
-    my $drain;
-    $drain = sub {
-      my $events = $c->store->list_events_from($next_seq, limit => 100);
-      for my $event (@$events) {
-        my $frame = _event_frame($event);
-        next unless $frame;
-        $next_seq = $event->{seq} + 1;
-        $c->subscription_send(
-          binary     => $frame,
-          frame_type => $event->{type} // 'message',
-        );
-      }
-    };
-
-    $drain->();
-    my $timer_id = Mojo::IOLoop->recurring(0.25 => sub { $drain->() });
-    $c->on(finish => sub ($c, $code, $reason = undef) {
-      Mojo::IOLoop->remove($timer_id) if defined $timer_id;
+    my $next_seq = subscription_start_seq(
+      $c,
+      cursor_param   => $c->param('cursor'),
+      future_message => 'Cursor is ahead of the local event stream',
+    );
+    return unless defined $next_seq;
+    pump_event_subscription($c, $next_seq, sub ($event) {
+      my $frame = _event_frame($event);
+      return unless defined $frame;
+      return ($frame, $event->{type} // 'message');
     });
     return;
   });

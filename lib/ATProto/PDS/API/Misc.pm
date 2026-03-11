@@ -7,13 +7,12 @@ no warnings 'experimental::signatures';
 
 use Exporter 'import';
 use JSON::PP ();
-use Mojo::IOLoop;
 
 use ATProto::PDS::API::Helpers qw(find_account require_admin subject_key);
 use ATProto::PDS::API::Server qw(require_auth);
-use ATProto::PDS::API::Util qw(flatten_params iso8601 xrpc_error);
+use ATProto::PDS::API::Util qw(flatten_params iso8601 pump_event_subscription subscription_start_seq xrpc_error);
 use ATProto::PDS::Auth::Password qw(hash_password random_hex);
-use ATProto::PDS::EventStream qw(encode_error_frame encode_info_frame encode_message_frame);
+use ATProto::PDS::EventStream qw(encode_message_frame);
 use ATProto::PDS::Identity qw(account_did_doc normalize_handle service_did service_did_doc);
 use ATProto::PDS::Moderation qw(assert_report_allowed);
 use ATProto::PDS::PLC qw(create_signed_plc_operation is_plc_did plc_rotation_did plc_update_handle recommended_did_credentials refresh_plc_did_doc submit_plc_operation);
@@ -232,53 +231,23 @@ sub register_misc_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.label.subscribeLabels', sub ($c, $endpoint) {
-    my $cursor_param = $c->param('cursor');
-    my $latest = $c->store->latest_event_seq;
-    my $oldest = $c->store->oldest_event_seq;
-
-    my $next_seq;
-    if (!defined $cursor_param || $cursor_param eq q()) {
-      $next_seq = $latest + 1;
-    } else {
-      my $cursor = int($cursor_param);
-      if ($cursor > $latest + 1) {
-        $c->subscription_send(
-          binary     => encode_error_frame('FutureCursor', 'Cursor is ahead of the local label stream'),
-          frame_type => 'error',
-        );
-        $c->finish(1008);
-        return;
-      }
-      if ($oldest && $cursor && $cursor < $oldest) {
-        $c->subscription_send(
-          binary     => encode_info_frame('OutdatedCursor', 'Cursor predates the oldest locally retained event'),
-          frame_type => 'info',
-        );
-        $next_seq = $oldest;
-      } else {
-        $next_seq = $cursor || ($oldest || ($latest + 1));
-      }
-    }
-
-    my $drain;
-    $drain = sub {
-      my $events = $c->store->list_events_from($next_seq, limit => 100);
-      for my $event (@$events) {
-        next unless ($event->{type} // q()) eq 'label';
-        my $labels = $event->{payload}{labels} || [];
-        next unless @$labels;
-        $next_seq = $event->{seq} + 1;
-        $c->subscription_send(binary => encode_message_frame('#labels', {
+    my $next_seq = subscription_start_seq(
+      $c,
+      cursor_param   => $c->param('cursor'),
+      future_message => 'Cursor is ahead of the local label stream',
+    );
+    return unless defined $next_seq;
+    pump_event_subscription($c, $next_seq, sub ($event) {
+      return unless ($event->{type} // q()) eq 'label';
+      my $labels = $event->{payload}{labels} || [];
+      return unless @$labels;
+      return (
+        encode_message_frame('#labels', {
           seq    => 0 + $event->{seq},
           labels => $labels,
-        }), frame_type => 'label');
-      }
-    };
-
-    $drain->();
-    my $timer_id = Mojo::IOLoop->recurring(0.25 => sub { $drain->() });
-    $c->on(finish => sub ($c, $code, $reason = undef) {
-      Mojo::IOLoop->remove($timer_id) if defined $timer_id;
+        }),
+        'label',
+      );
     });
     return;
   });

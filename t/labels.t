@@ -139,6 +139,39 @@ is($neg->{body}{labels}[0]{uri}, "at://$did", 'negation targets the same repo UR
 is($neg->{body}{labels}[0]{val}, '!hide', 'negation is for !hide');
 ok($neg->{body}{labels}[0]{neg}, 'restore emits a negation label');
 
+my $label_latest = $app->store->latest_event_seq;
+
+my $exclusive = Test::Mojo->new($app);
+$exclusive->websocket_ok("/xrpc/com.atproto.label.subscribeLabels?cursor=$label_latest");
+is($exclusive->message, undef, 'label cursor replay is exclusive');
+$exclusive->finish_ok;
+
+my $replay_start = $app->store->latest_event_seq;
+$app->store->append_event(
+  did     => $did,
+  type    => 'identity',
+  payload => { handle => 'alice.example.test' },
+);
+
+$t->post_ok('/xrpc/com.atproto.admin.updateSubjectStatus' => {
+  Authorization => 'Bearer admin-secret',
+} => json => {
+  subject  => { did => $bob_did },
+  takedown => { applied => JSON::PP::false },
+})->status_is(200);
+
+my $skip_non_label = Test::Mojo->new($app);
+$skip_non_label->websocket_ok("/xrpc/com.atproto.label.subscribeLabels?cursor=$replay_start")
+  ->message_ok('label replay skips over non-label backlog entries')
+  ->message_like({binary => qr/.+/}, 'replayed label frame is binary');
+
+my $replayed_label = decode_frame($skip_non_label->message->[1]);
+is($replayed_label->{header}{t}, '#labels', 'replayed backlog frame is labels');
+is($replayed_label->{body}{seq}, $replay_start + 2, 'label backlog cursor advances past skipped events');
+is($replayed_label->{body}{labels}[0]{uri}, "at://$bob_did", 'replayed label targets the later moderation update');
+ok($replayed_label->{body}{labels}[0]{neg}, 'replayed label carries the restore negation');
+$skip_non_label->finish_ok;
+
 $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.label.queryLabels')->query(
   uriPatterns => "at://$did*",
   sources     => $service_did,
@@ -155,5 +188,13 @@ my $error = decode_frame($future->message->[1]);
 is($error->{header}{op}, -1, 'future cursor frame is an error');
 is($error->{body}{error}, 'FutureCursor', 'error type is FutureCursor');
 $future->finish_ok;
+
+my $future_edge = Test::Mojo->new($app);
+$future_edge->websocket_ok('/xrpc/com.atproto.label.subscribeLabels?cursor=' . ($app->store->latest_event_seq + 1))
+  ->message_ok('latest+1 label cursor is rejected as future');
+
+my $future_edge_error = decode_frame($future_edge->message->[1]);
+is($future_edge_error->{body}{error}, 'FutureCursor', 'edge future cursor is also rejected');
+$future_edge->finish_ok;
 
 done_testing;

@@ -188,4 +188,33 @@ is($error->{header}{op}, -1, 'future cursor frame is an error');
 is($error->{body}{error}, 'FutureCursor', 'error type is FutureCursor');
 $future->finish_ok;
 
+my $skip_start = $app->store->latest_event_seq;
+$app->store->append_event(
+  did     => $did,
+  type    => 'mystery',
+  payload => { ignored => 1 },
+);
+
+$t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
+  Authorization => "Bearer $access",
+} => json => {
+  repo       => $did,
+  collection => 'app.bsky.feed.post',
+  rkey       => 'firehose-third',
+  record     => {
+    '$type'   => 'app.bsky.feed.post',
+    text      => 'skip unknown backlog',
+    createdAt => '2026-03-10T00:00:02Z',
+  },
+})->status_is(200);
+
+my $skip_unknown = Test::Mojo->new($app);
+$skip_unknown->websocket_ok("/xrpc/com.atproto.sync.subscribeRepos?cursor=$skip_start")
+  ->message_ok('subscription skips unhandled backlog events');
+
+my $skipped = decode_frame($skip_unknown->message->[1]);
+is($skipped->{body}{seq}, $skip_start + 2, 'repo backlog advances past skipped events');
+is($skipped->{body}{ops}[0]{path}, 'app.bsky.feed.post/firehose-third', 'repo replay reaches the later commit');
+$skip_unknown->finish_ok;
+
 done_testing;
