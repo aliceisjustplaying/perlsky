@@ -66,6 +66,18 @@ if ($command eq 'create-invite') {
   exit 0;
 }
 
+if ($command eq 'repair-binary-columns') {
+  my $store = ATProto::PDS::Store::SQLite->new(
+    path => $config->{db_path} || File::Spec->catfile($root, 'data', 'runtime', 'perlsky.sqlite'),
+  )->bootstrap;
+
+  my $result = $store->repair_binary_columns;
+  for my $key (sort keys %$result) {
+    print "$key=$result->{$key}\n";
+  }
+  exit 0;
+}
+
 die usage();
 
 sub _new_invite_code {
@@ -76,5 +88,6 @@ sub usage {
   return <<'EOF';
 usage:
   perlsky-admin create-invite [--use-count N] [--for-account DID] [--created-by DID]
+  perlsky-admin repair-binary-columns
 EOF
 }

@@ -5,11 +5,14 @@ use warnings;
 use feature 'signatures';
 no warnings 'experimental::signatures';
 
-use DBI;
+use DBI qw(:sql_types);
 use Exporter 'import';
 use File::Basename qw(dirname);
 use File::Path qw(make_path);
 use JSON::PP qw(decode_json encode_json);
+use ATProto::PDS::Repo::CAR qw(read_car);
+use ATProto::PDS::Repo::CID qw(CID_CODEC_DAG_CBOR CID_CODEC_RAW);
+use ATProto::PDS::Repo::DagCbor qw(decode_dag_cbor);
 use ATProto::PDS::Metrics::Store qw(observe_store_operation);
 
 our @EXPORT_OK = qw(default_migrations);
@@ -105,7 +108,8 @@ sub create_account ($self, %args) {
   my $handle     = $args{handle}     // die 'handle is required';
   my $now        = $args{created_at} // time;
 
-  $self->dbh->do(
+  _execute_sql(
+    $self->dbh,
     q{
       INSERT INTO accounts (
         id, account_id, did, handle, email, password_hash, password_salt,
@@ -114,29 +118,31 @@ sub create_account ($self, %args) {
         repo_commit_cid, repo_root_cid, repo_rev, invites_disabled, invite_note
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     },
-    undef,
-    $account_id,
-    $account_id,
-    $did,
-    $handle,
-    $args{email},
-    $args{password_hash},
-    $args{password_salt},
-    $now,
-    $now,
-    $args{deactivated_at},
-    $args{deleted_at},
-    $args{email_confirmed_at},
-    _maybe_json($args{did_doc}),
-    $args{private_key},
-    $args{public_key},
-    $args{public_key_multibase},
-    $args{signing_key_did},
-    $args{repo_commit_cid},
-    $args{repo_root_cid},
-    $args{repo_rev},
-    $args{invites_disabled} ? 1 : 0,
-    $args{invite_note},
+    [
+      $account_id,
+      $account_id,
+      $did,
+      $handle,
+      $args{email},
+      $args{password_hash},
+      $args{password_salt},
+      $now,
+      $now,
+      $args{deactivated_at},
+      $args{deleted_at},
+      $args{email_confirmed_at},
+      _maybe_json($args{did_doc}),
+      $args{private_key},
+      $args{public_key},
+      $args{public_key_multibase},
+      $args{signing_key_did},
+      $args{repo_commit_cid},
+      $args{repo_root_cid},
+      $args{repo_rev},
+      $args{invites_disabled} ? 1 : 0,
+      $args{invite_note},
+    ],
+    { 7 => 1, 14 => 1, 15 => 1 },
   );
 
   return $self->get_account_by_did($did);
@@ -160,10 +166,15 @@ sub update_account ($self, $did, %changes) {
 
   push @sets, 'updated_at = ?';
   push @bind, ($changes{updated_at} // time), $did;
-  $self->dbh->do(
+  my %blob_positions = map {
+    my $column = $sets[$_];
+    (($column =~ /^(?:password_salt|private_key|public_key) = \?$/) ? ($_ + 1 => 1) : ())
+  } 0 .. $#sets;
+  _execute_sql(
+    $self->dbh,
     'UPDATE accounts SET ' . join(', ', @sets) . ' WHERE did = ?',
-    undef,
-    @bind,
+    \@bind,
+    \%blob_positions,
   );
   return $self->get_account_by_did($did);
 }
@@ -455,7 +466,8 @@ sub put_record ($self, %args) {
   my $cid        = $args{cid}        // die 'cid is required';
   my $now        = $args{updated_at} // time;
 
-  $self->dbh->do(
+  _execute_sql(
+    $self->dbh,
     q{
       INSERT INTO records (
         did, collection, rkey, cid, value_json, record_bytes, created_at, updated_at
@@ -466,15 +478,17 @@ sub put_record ($self, %args) {
         record_bytes = excluded.record_bytes,
         updated_at = excluded.updated_at
     },
-    undef,
-    $did,
-    $collection,
-    $rkey,
-    $cid,
-    encode_json($args{value}),
-    $args{record_bytes},
-    $args{created_at} // $now,
-    $now,
+    [
+      $did,
+      $collection,
+      $rkey,
+      $cid,
+      encode_json($args{value}),
+      $args{record_bytes},
+      $args{created_at} // $now,
+      $now,
+    ],
+    { 6 => 1 },
   );
 
   return $self->get_record($did, $collection, $rkey);
@@ -484,21 +498,24 @@ sub replace_records_for_did ($self, $did, $records) {
   my $dbh = $self->dbh;
   $dbh->do(q{DELETE FROM records WHERE did = ?}, undef, $did);
   for my $record (@$records) {
-    $dbh->do(
+    _execute_sql(
+      $dbh,
       q{
         INSERT INTO records (
           did, collection, rkey, cid, value_json, record_bytes, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       },
-      undef,
-      $did,
-      $record->{collection},
-      $record->{rkey},
-      $record->{cid},
-      encode_json($record->{value}),
-      $record->{record_bytes},
-      $record->{created_at} // time,
-      $record->{updated_at} // time,
+      [
+        $did,
+        $record->{collection},
+        $record->{rkey},
+        $record->{cid},
+        encode_json($record->{value}),
+        $record->{record_bytes},
+        $record->{created_at} // time,
+        $record->{updated_at} // time,
+      ],
+      { 6 => 1 },
     );
   }
   return 1;
@@ -592,7 +609,8 @@ sub count_records_by_collection ($self, $did, $collection) {
 sub put_block ($self, %args) {
   my $cid = $args{cid} // die 'cid is required';
   my $now = $args{created_at} // time;
-  $self->dbh->do(
+  _execute_sql(
+    $self->dbh,
     q{
       INSERT INTO blocks (cid, codec, bytes, created_at)
       VALUES (?, ?, ?, ?)
@@ -600,21 +618,23 @@ sub put_block ($self, %args) {
         codec = excluded.codec,
         bytes = excluded.bytes
     },
-    undef,
-    $cid,
-    $args{codec},
-    $args{bytes},
-    $now,
+    [
+      $cid,
+      $args{codec},
+      $args{bytes},
+      $now,
+    ],
+    { 3 => 1 },
   );
   return $self->get_block($cid);
 }
 
 sub get_block ($self, $cid) {
-  return $self->dbh->selectrow_hashref(
+  return _row_from_blob_columns($self->dbh->selectrow_hashref(
     q{SELECT * FROM blocks WHERE cid = ?},
     undef,
     $cid,
-  );
+  ), qw(bytes));
 }
 
 sub get_blocks ($self, $cids) {
@@ -625,27 +645,30 @@ sub get_blocks ($self, $cids) {
     { Slice => {} },
     @$cids,
   );
-  return $rows;
+  return [ map { _row_from_blob_columns($_, qw(bytes)) } @$rows ];
 }
 
 sub put_commit ($self, %args) {
   my $did = $args{did} // die 'did is required';
   my $now = $args{created_at} // time;
-  $self->dbh->do(
+  _execute_sql(
+    $self->dbh,
     q{
       INSERT INTO commits (
         did, rev, cid, root_cid, prev_cid, commit_bytes, car_bytes, created_at
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     },
-    undef,
-    $did,
-    $args{rev},
-    $args{cid},
-    $args{root_cid},
-    $args{prev_cid},
-    $args{commit_bytes},
-    $args{car_bytes},
-    $now,
+    [
+      $did,
+      $args{rev},
+      $args{cid},
+      $args{root_cid},
+      $args{prev_cid},
+      $args{commit_bytes},
+      $args{car_bytes},
+      $now,
+    ],
+    { 6 => 1, 7 => 1 },
   );
   $self->set_repo_head(
     did        => $did,
@@ -659,20 +682,20 @@ sub put_commit ($self, %args) {
 }
 
 sub get_commit_by_rev ($self, $did, $rev) {
-  return $self->dbh->selectrow_hashref(
+  return _row_from_blob_columns($self->dbh->selectrow_hashref(
     q{SELECT * FROM commits WHERE did = ? AND rev = ?},
     undef,
     $did,
     $rev,
-  );
+  ), qw(commit_bytes car_bytes));
 }
 
 sub get_latest_commit ($self, $did) {
-  return $self->dbh->selectrow_hashref(
+  return _row_from_blob_columns($self->dbh->selectrow_hashref(
     q{SELECT * FROM commits WHERE did = ? ORDER BY created_at DESC, rev DESC LIMIT 1},
     undef,
     $did,
-  );
+  ), qw(commit_bytes car_bytes));
 }
 
 sub repo_car ($self, $did) {
@@ -761,20 +784,23 @@ sub search_accounts ($self, %args) {
 sub append_event ($self, %args) {
   return observe_store_operation($self->{metrics}, 'append_event', sub {
     my $now = $args{created_at} // time;
-    $self->dbh->do(
+    _execute_sql(
+      $self->dbh,
       q{
         INSERT INTO events (
           did, type, rev, commit_cid, payload_json, car_bytes, created_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?)
       },
-      undef,
-      $args{did},
-      $args{type},
-      $args{rev},
-      $args{commit_cid},
-      _maybe_json($args{payload}),
-      $args{car_bytes},
-      $now,
+      [
+        $args{did},
+        $args{type},
+        $args{rev},
+        $args{commit_cid},
+        _maybe_json($args{payload}),
+        $args{car_bytes},
+        $now,
+      ],
+      { 6 => 1 },
     );
     return $self->dbh->sqlite_last_insert_rowid;
   });
@@ -784,7 +810,7 @@ sub list_events_after ($self, $cursor, %args) {
   my $limit = $args{limit} // 100;
   my $sql = q{SELECT * FROM events WHERE seq > ? ORDER BY seq LIMIT ?};
   my $rows = $self->dbh->selectall_arrayref($sql, { Slice => {} }, $cursor // 0, $limit);
-  return [ map { _row_from_json_columns($_, qw(payload_json)) } @$rows ];
+  return [ map { _row_from_blob_columns(_row_from_json_columns($_, qw(payload_json)), qw(car_bytes)) } @$rows ];
 }
 
 sub list_events_from ($self, $cursor, %args) {
@@ -792,7 +818,7 @@ sub list_events_from ($self, $cursor, %args) {
     my $limit = $args{limit} // 100;
     my $sql = q{SELECT * FROM events WHERE seq >= ? ORDER BY seq LIMIT ?};
     my $rows = $self->dbh->selectall_arrayref($sql, { Slice => {} }, $cursor // 0, $limit);
-    return [ map { _row_from_json_columns($_, qw(payload_json)) } @$rows ];
+    return [ map { _row_from_blob_columns(_row_from_json_columns($_, qw(payload_json)), qw(car_bytes)) } @$rows ];
   });
 }
 
@@ -1129,7 +1155,8 @@ sub put_label ($self, %args) {
     my $uri         = $args{uri}         // die 'uri is required';
     my $val         = $args{val}         // die 'val is required';
     my $now         = $args{created_at}  // time;
-    $self->dbh->do(
+    _execute_sql(
+      $self->dbh,
       q{
         INSERT INTO labels (
           subject_key, src, uri, cid, val, exp, sig, created_at, updated_at
@@ -1141,16 +1168,18 @@ sub put_label ($self, %args) {
           sig = excluded.sig,
           updated_at = excluded.updated_at
       },
-      undef,
-      $subject_key,
-      $src,
-      $uri,
-      $args{cid},
-      $val,
-      $args{exp},
-      $args{sig},
-      $now,
-      $args{updated_at} // $now,
+      [
+        $subject_key,
+        $src,
+        $uri,
+        $args{cid},
+        $val,
+        $args{exp},
+        $args{sig},
+        $now,
+        $args{updated_at} // $now,
+      ],
+      { 7 => 1 },
     );
     return $self->get_label(
       subject_key => $subject_key,
@@ -1161,7 +1190,7 @@ sub put_label ($self, %args) {
 }
 
 sub get_label ($self, %args) {
-  return $self->dbh->selectrow_hashref(
+  return _row_from_blob_columns($self->dbh->selectrow_hashref(
     q{
       SELECT * FROM labels
       WHERE subject_key = ? AND src = ? AND val = ?
@@ -1170,7 +1199,7 @@ sub get_label ($self, %args) {
     $args{subject_key},
     $args{src},
     $args{val},
-  );
+  ), qw(sig));
 }
 
 sub delete_label ($self, %args) {
@@ -1217,7 +1246,7 @@ sub list_labels ($self, %args) {
       $next_cursor = $items[-1]{id};
     }
     return {
-      items  => \@items,
+      items  => [ map { _row_from_blob_columns($_, qw(sig)) } @items ],
       cursor => $next_cursor,
     };
   });
@@ -1226,7 +1255,8 @@ sub list_labels ($self, %args) {
 sub reserve_signing_key ($self, %args) {
   my $did = $args{did} // die 'did is required';
   my $now = $args{created_at} // time;
-  $self->dbh->do(
+  _execute_sql(
+    $self->dbh,
     q{
       INSERT INTO reserved_signing_keys (
         did, private_key, public_key, public_key_multibase, signing_key_did, created_at, claimed_at
@@ -1239,24 +1269,26 @@ sub reserve_signing_key ($self, %args) {
         created_at = excluded.created_at,
         claimed_at = excluded.claimed_at
     },
-    undef,
-    $did,
-    $args{private_key},
-    $args{public_key},
-    $args{public_key_multibase},
-    $args{signing_key_did},
-    $now,
-    $args{claimed_at},
+    [
+      $did,
+      $args{private_key},
+      $args{public_key},
+      $args{public_key_multibase},
+      $args{signing_key_did},
+      $now,
+      $args{claimed_at},
+    ],
+    { 2 => 1, 3 => 1 },
   );
   return $self->get_reserved_signing_key($did);
 }
 
 sub get_reserved_signing_key ($self, $did) {
-  return $self->dbh->selectrow_hashref(
+  return _row_from_blob_columns($self->dbh->selectrow_hashref(
     q{SELECT * FROM reserved_signing_keys WHERE did = ?},
     undef,
     $did,
-  );
+  ), qw(private_key public_key));
 }
 
 sub claim_reserved_signing_key ($self, $did, %args) {
@@ -1267,6 +1299,122 @@ sub claim_reserved_signing_key ($self, $did, %args) {
     $did,
   );
   return $self->get_reserved_signing_key($did);
+}
+
+sub repair_binary_columns ($self) {
+  my %counts = (
+    accounts              => 0,
+    reserved_signing_keys => 0,
+    blocks                => 0,
+    records               => 0,
+    commits               => 0,
+    events                => 0,
+    labels                => 0,
+  );
+
+  $self->txn(sub ($dbh) {
+    $counts{accounts} = _repair_blob_rows(
+      $dbh,
+      select_sql => q{SELECT did, password_salt, private_key, public_key FROM accounts},
+      update_sql => q{UPDATE accounts SET password_salt = ?, private_key = ?, public_key = ? WHERE did = ?},
+      columns    => [qw(password_salt private_key public_key)],
+      validate   => sub ($row, $candidate, $column) {
+        return 1 unless defined $candidate;
+        return length($candidate) == 16 if $column eq 'password_salt';
+        return length($candidate) == 32 if $column eq 'private_key';
+        return length($candidate) == 65 if $column eq 'public_key';
+        return 0;
+      },
+      params_for => sub ($row, $fixed) {
+        return @$fixed{qw(password_salt private_key public_key)}, $row->{did};
+      },
+    );
+
+    $counts{reserved_signing_keys} = _repair_blob_rows(
+      $dbh,
+      select_sql => q{SELECT did, private_key, public_key FROM reserved_signing_keys},
+      update_sql => q{UPDATE reserved_signing_keys SET private_key = ?, public_key = ? WHERE did = ?},
+      columns    => [qw(private_key public_key)],
+      validate   => sub ($row, $candidate, $column) {
+        return 1 unless defined $candidate;
+        return length($candidate) == 32 if $column eq 'private_key';
+        return length($candidate) == 65 if $column eq 'public_key';
+        return 0;
+      },
+      params_for => sub ($row, $fixed) {
+        return @$fixed{qw(private_key public_key)}, $row->{did};
+      },
+    );
+
+    $counts{blocks} = _repair_blob_rows(
+      $dbh,
+      select_sql => q{SELECT cid, codec, bytes FROM blocks},
+      update_sql => q{UPDATE blocks SET bytes = ? WHERE cid = ?},
+      columns    => [qw(bytes)],
+      validate   => sub ($row, $candidate, $column = undef) {
+        return _valid_block_bytes($row->{cid}, $row->{codec}, $candidate);
+      },
+      params_for => sub ($row, $fixed) {
+        return $fixed->{bytes}, $row->{cid};
+      },
+    );
+
+    $counts{records} = _repair_blob_rows(
+      $dbh,
+      select_sql => q{SELECT did, collection, rkey, cid, record_bytes FROM records},
+      update_sql => q{UPDATE records SET record_bytes = ? WHERE did = ? AND collection = ? AND rkey = ?},
+      columns    => [qw(record_bytes)],
+      validate   => sub ($row, $candidate, $column = undef) {
+        return _valid_dag_cbor_cid($row->{cid}, $candidate);
+      },
+      params_for => sub ($row, $fixed) {
+        return $fixed->{record_bytes}, @$row{qw(did collection rkey)};
+      },
+    );
+
+    $counts{commits} = _repair_blob_rows(
+      $dbh,
+      select_sql => q{SELECT did, rev, cid, commit_bytes, car_bytes FROM commits},
+      update_sql => q{UPDATE commits SET commit_bytes = ?, car_bytes = ? WHERE did = ? AND rev = ?},
+      columns    => [qw(commit_bytes car_bytes)],
+      validate   => sub ($row, $candidate, $column) {
+        return _valid_dag_cbor_cid($row->{cid}, $candidate) if $column eq 'commit_bytes';
+        return _valid_car_for_commit($row->{cid}, $candidate);
+      },
+      params_for => sub ($row, $fixed) {
+        return @$fixed{qw(commit_bytes car_bytes)}, @$row{qw(did rev)};
+      },
+    );
+
+    $counts{events} = _repair_blob_rows(
+      $dbh,
+      select_sql => q{SELECT seq, type, commit_cid, car_bytes FROM events WHERE car_bytes IS NOT NULL},
+      update_sql => q{UPDATE events SET car_bytes = ? WHERE seq = ?},
+      columns    => [qw(car_bytes)],
+      validate   => sub ($row, $candidate, $column = undef) {
+        return _valid_event_car($row, $candidate);
+      },
+      params_for => sub ($row, $fixed) {
+        return $fixed->{car_bytes}, $row->{seq};
+      },
+    );
+
+    $counts{labels} = _repair_blob_rows(
+      $dbh,
+      select_sql => q{SELECT id, sig FROM labels WHERE sig IS NOT NULL},
+      update_sql => q{UPDATE labels SET sig = ? WHERE id = ?},
+      columns    => [qw(sig)],
+      validate   => sub ($row, $candidate, $column = undef) {
+        return 1 unless defined $candidate;
+        return length($candidate) == 64;
+      },
+      params_for => sub ($row, $fixed) {
+        return $fixed->{sig}, $row->{id};
+      },
+    );
+  });
+
+  return \%counts;
 }
 
 sub reserve_handle ($self, $handle, %args) {
@@ -1726,6 +1874,7 @@ sub _connect ($self) {
 
 sub _row_to_account ($self, $row) {
   return undef unless $row;
+  _row_from_blob_columns($row, qw(password_salt private_key public_key));
   if (defined $row->{did_doc_json} && length $row->{did_doc_json}) {
     $row->{did_doc} = decode_json($row->{did_doc_json});
   }
@@ -1747,9 +1896,122 @@ sub _row_from_json_columns ($row, @columns) {
 
 sub _row_to_record ($row) {
   return undef unless $row;
+  _row_from_blob_columns($row, qw(record_bytes));
   $row->{value} = decode_json($row->{value_json}) if defined $row->{value_json};
   delete $row->{value_json};
   return $row;
+}
+
+sub _execute_sql ($dbh, $sql, $params = undef, $blob_positions = undef) {
+  my $sth = $dbh->prepare($sql);
+  my %blob = map { $_ => 1 } keys %{ $blob_positions // {} };
+  my $values = $params // [];
+  for my $index (0 .. $#$values) {
+    my $position = $index + 1;
+    if ($blob{$position}) {
+      $sth->bind_param($position, _normalize_blob_scalar($values->[$index]), SQL_BLOB);
+      next;
+    }
+    $sth->bind_param($position, $values->[$index]);
+  }
+  $sth->execute;
+  return $sth;
+}
+
+sub _row_from_blob_columns ($row, @columns) {
+  return undef unless $row;
+  for my $column (@columns) {
+    next unless exists $row->{$column};
+    $row->{$column} = _normalize_blob_scalar($row->{$column});
+  }
+  return $row;
+}
+
+sub _normalize_blob_scalar ($value) {
+  return undef unless defined $value;
+  my $copy = $value;
+  utf8::downgrade($copy, 1);
+  return $copy;
+}
+
+sub _demangle_utf8_blob ($value) {
+  return undef unless defined $value;
+  my $copy = _normalize_blob_scalar($value);
+  return $copy unless length $copy;
+  my $decoded = $copy;
+  return undef unless utf8::decode($decoded);
+  utf8::downgrade($decoded, 1);
+  return $decoded;
+}
+
+sub _repair_blob_rows ($dbh, %args) {
+  my $rows = $dbh->selectall_arrayref($args{select_sql}, { Slice => {} });
+  my %blob_positions = map { $_ + 1 => 1 } 0 .. @{ $args{columns} } - 1;
+  my $count = 0;
+
+  ROW:
+  for my $row (@$rows) {
+    my %fixed = %$row;
+    my $changed = 0;
+    for my $column (@{ $args{columns} }) {
+      my $current = _normalize_blob_scalar($row->{$column});
+      $fixed{$column} = $current;
+      next if $args{validate}->($row, $current, $column);
+      my $candidate = _demangle_utf8_blob($row->{$column});
+      next ROW unless defined $candidate && $args{validate}->($row, $candidate, $column);
+      $fixed{$column} = $candidate;
+      $changed = 1;
+    }
+    next unless $changed;
+    _execute_sql(
+      $dbh,
+      $args{update_sql},
+      [ $args{params_for}->($row, \%fixed) ],
+      \%blob_positions,
+    );
+    $count++;
+  }
+
+  return $count;
+}
+
+sub _valid_block_bytes ($cid, $codec, $bytes) {
+  return 0 unless defined $cid && defined $bytes;
+  my $actual = eval {
+    local $SIG{__WARN__} = sub { };
+    if (($codec // 0) == CID_CODEC_RAW) {
+      return ATProto::PDS::Repo::CID->for_raw($bytes)->to_string;
+    }
+    decode_dag_cbor($bytes) if ($codec // 0) == CID_CODEC_DAG_CBOR;
+    return ATProto::PDS::Repo::CID->for_dag_cbor($bytes)->to_string;
+  };
+  return 0 if $@;
+  return ($actual // q()) eq $cid;
+}
+
+sub _valid_dag_cbor_cid ($cid, $bytes) {
+  return 0 unless defined $cid && defined $bytes;
+  my $actual = eval {
+    local $SIG{__WARN__} = sub { };
+    decode_dag_cbor($bytes);
+    return ATProto::PDS::Repo::CID->for_dag_cbor($bytes)->to_string;
+  };
+  return 0 if $@;
+  return ($actual // q()) eq $cid;
+}
+
+sub _valid_car_for_commit ($commit_cid, $bytes) {
+  return 0 unless defined $bytes;
+  my $car = eval { read_car($bytes) };
+  return 0 if $@ || !$car;
+  return 1 unless defined $commit_cid && length $commit_cid;
+  return 0 unless @{ $car->{roots} || [] };
+  return ($car->{roots}[0]->to_string // q()) eq $commit_cid;
+}
+
+sub _valid_event_car ($row, $bytes) {
+  return 0 unless defined $bytes;
+  return _valid_car_for_commit($row->{commit_cid}, $bytes);
 }
 
 sub _paginate ($rows, $limit, $cursor_key) {
