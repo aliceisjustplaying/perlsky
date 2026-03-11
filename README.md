@@ -11,6 +11,8 @@ Current direction:
 
 The immediate goal is a PDS that is pleasant to hack on and interoperable enough to be exercised with real AT Protocol clients and repo sync tooling.
 
+Developer-oriented notes about the current facade/module split live in `docs/CODE_STRUCTURE.md`.
+
 Reference differential validation:
 
 - Run `script/differential-validate` to compare `perlsky` against the official published `@atproto/pds` on a focused set of account, repo, moderation, sync, firehose, and `importRepo` snapshot-restore behaviors.
