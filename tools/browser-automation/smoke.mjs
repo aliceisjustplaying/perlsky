@@ -930,3 +930,6 @@ await fs.writeFile(
 );
 console.log(JSON.stringify(summary, null, 2));
 await browser.close();
+if (!summary.ok) {
+  process.exitCode = 1;
+}

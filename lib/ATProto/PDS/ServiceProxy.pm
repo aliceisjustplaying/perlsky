@@ -132,7 +132,7 @@ sub _perform_upstream_request ($self, %args) {
   my $url     = $args{url};
   my $headers = $args{headers} // {};
   my $body    = $args{body};
-  my $attempts = ($method eq 'GET' || $method eq 'HEAD') ? 2 : 1;
+  my $attempts = ($method eq 'GET' || $method eq 'HEAD') ? 3 : 1;
   my $last_res;
 
   for my $attempt (1 .. $attempts) {
@@ -145,6 +145,7 @@ sub _perform_upstream_request ($self, %args) {
       my $message = "$err";
       xrpc_error(502, 'UpstreamFailure', $message || 'Upstream service unreachable')
         if $attempt >= $attempts;
+      select undef, undef, undef, 0.2 * $attempt;
       next;
     }
 
@@ -153,12 +154,16 @@ sub _perform_upstream_request ($self, %args) {
       if (!$res->code) {
         xrpc_error(502, 'UpstreamFailure', $err->{message} // 'Upstream service unreachable')
           if $attempt >= $attempts;
+        select undef, undef, undef, 0.2 * $attempt;
         next;
       }
     }
 
     $last_res = $res;
-    next if ($method eq 'GET' || $method eq 'HEAD') && ($res->code // 0) >= 500 && $attempt < $attempts;
+    if (($method eq 'GET' || $method eq 'HEAD') && ($res->code // 0) >= 500 && $attempt < $attempts) {
+      select undef, undef, undef, 0.2 * $attempt;
+      next;
+    }
     return $res;
   }
 

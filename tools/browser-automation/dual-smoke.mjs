@@ -49,8 +49,9 @@ const ignoredRequestFailure = [
   { url: /live-events\.workers\.bsky\.app\/config/i, error: /ERR_ABORTED/i },
   { url: /events\.bsky\.app\/t/i, error: /ERR_ABORTED/i },
   { url: /events\.bsky\.app\/gb\/api\/features\//i, error: /ERR_ABORTED/i },
-  { url: /(?:video\.bsky\.app\/watch|video\.cdn\.bsky\.app\/hls)\/.*\/(?:(?:playlist|video)\.m3u8|.*\.ts)/i, error: /ERR_ABORTED/i },
+  { url: /(?:video\.bsky\.app\/watch|video\.cdn\.bsky\.app\/hls)\/.*\/(?:(?:playlist|video)\.m3u8|.*\.ts|.*\.vtt)/i, error: /ERR_ABORTED/i },
   { url: /\/xrpc\/chat\.bsky\.convo\.getLog/i, error: /ERR_ABORTED/i },
+  { url: /\/xrpc\/app\.bsky\.graph\.(?:muteActor|unmuteActor)/i, error: /ERR_ABORTED/i },
 ];
 
 const ignoredHttpFailure = [
@@ -410,6 +411,7 @@ const pollNotifications = async ({ account, authorHandle, reasons, minIndexedAt,
 
 const accountFromConfig = (entry) => ({
   ...entry,
+  mediaPostText: entry.mediaPostText || `${entry.postText} image`,
   shortHandle: entry.handle.replace(/^@/, ''),
 });
 
@@ -481,6 +483,33 @@ const composePost = async (page, text) => {
   await wait(page, 300);
   await page.getByRole('button', { name: 'Publish post' }).click({ noWaitAfter: true });
   await wait(page, 4000);
+};
+
+const uploadComposerMedia = async (page) => {
+  const mediaFile = await ensureAvatarFixture();
+  const openMedia = page.getByTestId('openMediaBtn').last();
+  if (!(await openMedia.count())) {
+    throw new Error('composer media button unavailable');
+  }
+  const chooserPromise = page.waitForEvent('filechooser', { timeout: 10000 });
+  await openMedia.click({ noWaitAfter: true });
+  const chooser = await chooserPromise;
+  await chooser.setFiles(mediaFile);
+  await wait(page, 2000);
+  return mediaFile;
+};
+
+const composePostWithImage = async (page, text) => {
+  await page.locator('[aria-label="Compose new post"]').last().click({ noWaitAfter: true });
+  await wait(page, 800);
+  const editor = page.locator('[aria-label="Rich-Text Editor"]').last();
+  await editor.click({ noWaitAfter: true });
+  await editor.fill(text);
+  const mediaFile = await uploadComposerMedia(page);
+  await wait(page, 500);
+  await page.getByRole('button', { name: 'Publish post' }).click({ noWaitAfter: true });
+  await wait(page, 5000);
+  return { mediaFile };
 };
 
 const dismissModalBackdropIfPresent = async (page) => {
@@ -710,6 +739,28 @@ const ensureNotReposted = async (page, row) => {
   return { note: await buttonText(btn) };
 };
 
+const ensureBookmarked = async (page, row) => {
+  const btn = row.getByTestId('postBookmarkBtn').first();
+  const before = await buttonText(btn);
+  if (/remove from saved posts/i.test(before)) {
+    return { note: 'already bookmarked' };
+  }
+  await btn.click({ noWaitAfter: true });
+  await wait(page, 1500);
+  return { note: await buttonText(btn) };
+};
+
+const ensureNotBookmarked = async (page, row) => {
+  const btn = row.getByTestId('postBookmarkBtn').first();
+  const before = await buttonText(btn);
+  if (!/remove from saved posts/i.test(before)) {
+    return { note: 'already not bookmarked' };
+  }
+  await btn.click({ noWaitAfter: true });
+  await wait(page, 1500);
+  return { note: await buttonText(btn) };
+};
+
 const clickQuote = async (page, row, text) => {
   await dismissBlockingOverlays(page);
   const btn = row.getByTestId('repostBtn').first();
@@ -750,6 +801,130 @@ const clickReply = async (page, row, text) => {
     publishLabel: /publish reply|reply/i,
   });
   await dismissBlockingOverlays(page);
+};
+
+const openProfileMenu = async (page) => {
+  const btn = page.getByTestId('profileHeaderDropdownBtn').first();
+  await btn.waitFor({ state: 'visible', timeout: 15000 });
+  await btn.click({ noWaitAfter: true });
+  const menu = page.locator('[role="menu"]').last();
+  await menu.waitFor({ state: 'visible', timeout: 10000 });
+  return menu;
+};
+
+const menuItems = async (page) =>
+  page.locator('[role="menuitem"]').evaluateAll((els) =>
+    els.map((el) => (el.textContent || '').replace(/\s+/g, ' ').trim()).filter(Boolean),
+  );
+
+const closeActiveMenu = async (page) => {
+  const backdrop = page.locator('[aria-label*="backdrop"]').last();
+  if (await backdrop.count()) {
+    await backdrop.click({ force: true, noWaitAfter: true }).catch(() => undefined);
+    await wait(page, 400);
+    return;
+  }
+  await page.keyboard.press('Escape').catch(() => undefined);
+  await wait(page, 400);
+};
+
+const ensureProfileMuted = async (page) => {
+  await openProfileMenu(page);
+  const items = await menuItems(page);
+  if (items.some((item) => /unmute account/i.test(item))) {
+    await closeActiveMenu(page);
+    return { note: 'already muted' };
+  }
+  await page.getByRole('menuitem', { name: /mute account/i }).click({ noWaitAfter: true });
+  await wait(page, 1500);
+  await openProfileMenu(page);
+  const after = await menuItems(page);
+  await closeActiveMenu(page);
+  if (!after.some((item) => /unmute account/i.test(item))) {
+    throw new Error('mute account did not switch menu state');
+  }
+  return { note: 'muted account' };
+};
+
+const ensureProfileUnmuted = async (page) => {
+  await openProfileMenu(page);
+  const items = await menuItems(page);
+  if (!items.some((item) => /unmute account/i.test(item))) {
+    await closeActiveMenu(page);
+    return { note: 'already unmuted' };
+  }
+  await page.getByRole('menuitem', { name: /unmute account/i }).click({ noWaitAfter: true });
+  await wait(page, 1500);
+  await openProfileMenu(page);
+  const after = await menuItems(page);
+  await closeActiveMenu(page);
+  if (!after.some((item) => /mute account/i.test(item))) {
+    throw new Error('unmute account did not restore menu state');
+  }
+  return { note: 'unmuted account' };
+};
+
+const blockProfile = async (page) => {
+  await openProfileMenu(page);
+  const items = await menuItems(page);
+  if (items.some((item) => /unblock account/i.test(item))) {
+    await closeActiveMenu(page);
+    return { note: 'already blocked' };
+  }
+  await page.getByRole('menuitem', { name: /block account/i }).click({ noWaitAfter: true });
+  const dialog = page.locator('[role="dialog"]').last();
+  await dialog.waitFor({ state: 'visible', timeout: 10000 });
+  await dialog.getByRole('button', { name: /^Block$/i }).click({ noWaitAfter: true });
+  await wait(page, 2500);
+  const unblock = page.getByRole('button', { name: /unblock/i }).first();
+  if (!(await unblock.count())) {
+    throw new Error('block account did not expose an unblock button');
+  }
+  return { note: 'blocked account' };
+};
+
+const unblockProfile = async (page) => {
+  const unblock = page.getByRole('button', { name: /unblock/i }).first();
+  if (!(await unblock.count())) {
+    return { note: 'already unblocked' };
+  }
+  await unblock.click({ noWaitAfter: true });
+  await wait(page, 1000);
+  const dialog = page.locator('[role="dialog"]').last();
+  const confirm = dialog.getByRole('button', { name: /unblock/i }).last();
+  if (await confirm.count()) {
+    await confirm.click({ noWaitAfter: true });
+  }
+  await wait(page, 1500);
+  const blockedBadge = page.getByText(/user blocked/i).first();
+  if (await blockedBadge.count()) {
+    throw new Error('profile still appears blocked after unblock');
+  }
+  return { note: 'unblocked account' };
+};
+
+const openReportPostDraft = async (page, row) => {
+  await openPostOptions(page, row);
+  await page.getByRole('menuitem', { name: /report post/i }).click({ noWaitAfter: true });
+  const dialog = page.locator('[role="dialog"]').last();
+  await dialog.waitFor({ state: 'visible', timeout: 10000 });
+  await dialog.getByRole('button', { name: /create report for other/i }).click({ noWaitAfter: true });
+  await wait(page, 1000);
+  const submit = dialog.getByRole('button', { name: /submit report/i }).last();
+  await submit.waitFor({ state: 'visible', timeout: 10000 });
+  const body = normalizeText(await dialog.textContent());
+  const close = dialog.getByRole('button', { name: /close active dialog/i }).last();
+  if (await close.count()) {
+    await close.click({ noWaitAfter: true });
+  } else {
+    await page.keyboard.press('Escape').catch(() => undefined);
+  }
+  await wait(page, 1000);
+  return {
+    note: 'opened report draft without submitting',
+    submitVisible: true,
+    body,
+  };
 };
 
 const waitForVisibleEditor = async (page) => {
@@ -839,6 +1014,14 @@ const openNotifications = async (page) => {
   if (await heading.count()) {
     await heading.waitFor({ state: 'visible', timeout: 15000 });
   }
+};
+
+const openSavedPosts = async (page) => {
+  await page.goto(`${appBaseUrl}/saved`, {
+    waitUntil: 'domcontentloaded',
+    timeout: 60000,
+  });
+  await wait(page, 3000);
 };
 
 const waitForNotificationsFeed = async (page) => {
@@ -944,6 +1127,23 @@ try {
     return { rowTestId };
   }, { pageNames: ['primary'] });
 
+  await step('primary-compose-image-post', async () => composePostWithImage(primaryPage, primary.mediaPostText), {
+    pageNames: ['primary'],
+  });
+
+  await step('primary-image-post-record', async () => {
+    primary.imagePost = await waitForOwnPostRecord(primary, primary.mediaPostText);
+    const embed = primary.imagePost.value?.embed;
+    if (embed?.$type !== 'app.bsky.embed.images' || !Array.isArray(embed.images) || embed.images.length < 1) {
+      throw new Error('image post did not persist an app.bsky.embed.images record');
+    }
+    return {
+      uri: primary.imagePost.uri,
+      imageCount: embed.images.length,
+      mimeType: embed.images[0]?.image?.mimeType,
+    };
+  });
+
   await step('secondary-compose-root-post', () => composePost(secondaryPage, secondary.postText), {
     pageNames: ['secondary'],
   });
@@ -999,12 +1199,28 @@ try {
     return ensureLiked(primaryPage, row);
   }, { pageNames: ['primary'] });
 
+  await step('primary-bookmark-secondary-post', async () => {
+    const row = await findRowByPrimaryText(primaryPage, secondary.postText, 60000);
+    return ensureBookmarked(primaryPage, row);
+  }, { pageNames: ['primary'] });
+
+  await step('primary-saved-posts-secondary', async () => {
+    await openSavedPosts(primaryPage);
+    await primaryPage.getByText(`@${secondary.handle.replace(/^@/, '')}`).first().waitFor({
+      state: 'visible',
+      timeout: 20000,
+    });
+    return { note: `saved post by ${secondary.handle}` };
+  }, { pageNames: ['primary'] });
+
   await step('primary-repost-secondary-post', async () => {
+    await gotoProfile(primaryPage, secondary.handle);
     const row = await findRowByPrimaryText(primaryPage, secondary.postText, 60000);
     return ensureReposted(primaryPage, row);
   }, { pageNames: ['primary'] });
 
   await step('primary-quote-secondary-post', async () => {
+    await gotoProfile(primaryPage, secondary.handle);
     const row = await findRowByPrimaryText(primaryPage, secondary.postText, 60000);
     await clickQuote(primaryPage, row, primary.quoteText);
     primary.quotePost = await waitForOwnPostRecord(primary, primary.quoteText);
@@ -1012,6 +1228,7 @@ try {
   }, { pageNames: ['primary'] });
 
   await step('primary-reply-secondary-post', async () => {
+    await gotoProfile(primaryPage, secondary.handle);
     const row = await findRowByPrimaryText(primaryPage, secondary.postText, 60000);
     await clickReply(primaryPage, row, primary.replyText);
     primary.replyPost = await waitForOwnPostRecord(primary, primary.replyText);
@@ -1077,10 +1294,41 @@ try {
     return { note: feed ? 'notifications feed visible' : 'notifications page visible without explicit feed testid' };
   }, { pageNames: ['primary'] });
 
+  await step('primary-mute-secondary', async () => {
+    await gotoProfile(primaryPage, secondary.handle);
+    return ensureProfileMuted(primaryPage);
+  }, { pageNames: ['primary'] });
+
+  await step('primary-unmute-secondary', async () => {
+    await gotoProfile(primaryPage, secondary.handle);
+    return ensureProfileUnmuted(primaryPage);
+  }, { pageNames: ['primary'] });
+
+  await step('secondary-report-primary-post-draft', async () => {
+    await gotoProfile(secondaryPage, primary.handle);
+    const row = await findRowByPrimaryText(secondaryPage, primary.postText, 60000);
+    return openReportPostDraft(secondaryPage, row);
+  }, { pageNames: ['secondary'] });
+
+  await step('secondary-block-primary', async () => {
+    await gotoProfile(secondaryPage, primary.handle);
+    return blockProfile(secondaryPage);
+  }, { pageNames: ['secondary'] });
+
+  await step('secondary-unblock-primary', async () => {
+    return unblockProfile(secondaryPage);
+  }, { pageNames: ['secondary'] });
+
   await step('primary-cleanup-unlike-secondary-post', async () => {
     await gotoProfile(primaryPage, secondary.handle);
     const row = await findRowByPrimaryText(primaryPage, secondary.postText, 60000);
     return ensureNotLiked(primaryPage, row);
+  }, { optional: true, pageNames: ['primary'] });
+
+  await step('primary-cleanup-unbookmark-secondary-post', async () => {
+    await gotoProfile(primaryPage, secondary.handle);
+    const row = await findRowByPrimaryText(primaryPage, secondary.postText, 60000);
+    return ensureNotBookmarked(primaryPage, row);
   }, { optional: true, pageNames: ['primary'] });
 
   await step('primary-cleanup-undo-repost-secondary-post', async () => {
@@ -1103,6 +1351,12 @@ try {
     await gotoProfile(primaryPage, primary.handle);
     await openProfileTab(primaryPage, 'Posts');
     return maybeDeleteOwnPostByText(primaryPage, primary.quoteText, 'deleted quote post');
+  }, { pageNames: ['primary'] });
+
+  await step('primary-cleanup-delete-image-post', async () => {
+    await gotoProfile(primaryPage, primary.handle);
+    await openProfileTab(primaryPage, 'Posts');
+    return maybeDeleteOwnPostByText(primaryPage, primary.mediaPostText, 'deleted image post');
   }, { pageNames: ['primary'] });
 
   await step('primary-cleanup-delete-reply', async () => {
@@ -1151,3 +1405,6 @@ await fs.writeFile(
 );
 console.log(JSON.stringify(summary, null, 2));
 await browser.close();
+if (!summary.ok) {
+  process.exitCode = 1;
+}
