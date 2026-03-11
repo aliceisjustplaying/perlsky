@@ -1977,6 +1977,7 @@ sub _repair_blob_rows ($dbh, %args) {
 
 sub _valid_block_bytes ($cid, $codec, $bytes) {
   return 0 unless defined $cid && defined $bytes;
+  return 0 if utf8::is_utf8($bytes);
   my $actual = eval {
     local $SIG{__WARN__} = sub { };
     if (($codec // 0) == CID_CODEC_RAW) {
@@ -1991,6 +1992,7 @@ sub _valid_block_bytes ($cid, $codec, $bytes) {
 
 sub _valid_dag_cbor_cid ($cid, $bytes) {
   return 0 unless defined $cid && defined $bytes;
+  return 0 if utf8::is_utf8($bytes);
   my $actual = eval {
     local $SIG{__WARN__} = sub { };
     decode_dag_cbor($bytes);
