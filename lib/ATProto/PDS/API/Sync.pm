@@ -20,11 +20,8 @@ our @EXPORT_OK = qw(register_sync_handlers);
 
 sub register_sync_handlers ($registry, $app) {
   $registry->register('com.atproto.sync.getLatestCommit', sub ($c, $endpoint) {
-    my $account = resolve_did_account($c, $c->param('did') // q());
-    xrpc_error(404, 'RepoNotFound', 'Repository was not found') unless $account;
-    assert_repo_readable($c, $account, message => 'Could not find repo for DID: ' . ($c->param('did') // q()));
-    my $head = $c->store->get_repo_head($account->{did});
-    xrpc_error(404, 'RepoNotFound', 'Repository was not found') unless $head;
+    my $account = _readable_repo_by_did($c);
+    my $head = _repo_head_or_error($c, $account->{did});
     return {
       cid => $head->{commit_cid},
       rev => $head->{rev},
@@ -32,20 +29,26 @@ sub register_sync_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.sync.getHead', sub ($c, $endpoint) {
-    my $account = resolve_did_account($c, $c->param('did') // q());
-    xrpc_error(404, 'HeadNotFound', 'Repository head was not found') unless $account;
-    assert_repo_readable($c, $account, error => 'HeadNotFound', message => 'Repository head was not found');
-    my $head = $c->store->get_repo_head($account->{did});
-    xrpc_error(404, 'HeadNotFound', 'Repository head was not found') unless $head;
+    my $account = _readable_repo_by_did(
+      $c,
+      missing_error    => 'HeadNotFound',
+      missing_message  => 'Repository head was not found',
+      readable_error   => 'HeadNotFound',
+      readable_message => 'Repository head was not found',
+    );
+    my $head = _repo_head_or_error(
+      $c,
+      $account->{did},
+      error   => 'HeadNotFound',
+      message => 'Repository head was not found',
+    );
     return {
       root => $head->{commit_cid},
     };
   });
 
   $registry->register('com.atproto.sync.getRepoStatus', sub ($c, $endpoint) {
-    my $account = resolve_did_account($c, $c->param('did') // q());
-    xrpc_error(404, 'RepoNotFound', 'Repository was not found') unless $account;
-    assert_repo_readable($c, $account, message => 'Could not find repo for DID: ' . ($c->param('did') // q()));
+    my $account = _readable_repo_by_did($c);
     return {
       did    => $account->{did},
       active => defined($account->{deactivated_at}) ? JSON::PP::false : JSON::PP::true,
@@ -56,45 +59,25 @@ sub register_sync_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.sync.getRepo', sub ($c, $endpoint) {
-    my $account = resolve_did_account($c, $c->param('did') // q());
-    xrpc_error(404, 'RepoNotFound', 'Repository was not found') unless $account;
-    assert_repo_readable($c, $account, message => 'Could not find repo for DID: ' . ($c->param('did') // q()));
-    my $car = $c->store->repo_car($account->{did});
-    xrpc_error(404, 'RepoNotFound', 'Repository was not found') unless defined $car;
-    $c->res->headers->content_type('application/vnd.ipld.car');
-    $c->render(data => $car);
-    return;
+    my $account = _readable_repo_by_did($c);
+    return _render_repo_car($c, $account->{did});
   });
 
   $registry->register('com.atproto.sync.getCheckout', sub ($c, $endpoint) {
-    my $account = resolve_did_account($c, $c->param('did') // q());
-    xrpc_error(404, 'RepoNotFound', 'Repository was not found') unless $account;
-    assert_repo_readable($c, $account, message => 'Could not find repo for DID: ' . ($c->param('did') // q()));
-    my $car = $c->store->repo_car($account->{did});
-    xrpc_error(404, 'RepoNotFound', 'Repository was not found') unless defined $car;
-    $c->res->headers->content_type('application/vnd.ipld.car');
-    $c->render(data => $car);
-    return;
+    my $account = _readable_repo_by_did($c);
+    return _render_repo_car($c, $account->{did});
   });
 
   $registry->register('com.atproto.sync.getRecord', sub ($c, $endpoint) {
-    my $account = resolve_did_account($c, $c->param('did') // q());
-    xrpc_error(404, 'RepoNotFound', 'Repository was not found') unless $account;
-    assert_repo_readable($c, $account, message => 'Could not find repo for DID: ' . ($c->param('did') // q()));
+    my $account = _readable_repo_by_did($c);
     my $record = $c->store->get_record($account->{did}, $c->param('collection'), $c->param('rkey'));
     xrpc_error(404, 'RecordNotFound', 'Record was not found') unless $record;
-    assert_record_readable($c, "at://$account->{did}/$record->{collection}/$record->{rkey}");
-    my $car = $c->store->repo_car($account->{did});
-    xrpc_error(404, 'RepoNotFound', 'Repository was not found') unless defined $car;
-    $c->res->headers->content_type('application/vnd.ipld.car');
-    $c->render(data => $car);
-    return;
+    assert_record_readable($c, _record_uri($account->{did}, $record->{collection}, $record->{rkey}));
+    return _render_repo_car($c, $account->{did});
   });
 
   $registry->register('com.atproto.sync.getBlocks', sub ($c, $endpoint) {
-    my $account = resolve_did_account($c, $c->param('did') // q());
-    xrpc_error(404, 'RepoNotFound', 'Repository was not found') unless $account;
-    assert_repo_readable($c, $account, message => 'Could not find repo for DID: ' . ($c->param('did') // q()));
+    my $account = _readable_repo_by_did($c);
     my @cids = flatten_params($c->every_param('cids'));
     xrpc_error(400, 'InvalidRequest', 'At least one CID is required') unless @cids;
     my $rows = $c->store->get_blocks(\@cids);
@@ -108,15 +91,11 @@ sub register_sync_handlers ($registry, $app) {
         bytes => $found{$_}{bytes},
       }
     } @cids;
-    my $car = write_car($blocks[0]{cid}, \@blocks);
-    $c->res->headers->content_type('application/vnd.ipld.car');
-    $c->render(data => $car);
-    return;
+    return _render_car($c, write_car($blocks[0]{cid}, \@blocks));
   });
 
   $registry->register('com.atproto.sync.getBlob', sub ($c, $endpoint) {
-    my $account = resolve_did_account($c, $c->param('did') // q());
-    xrpc_error(404, 'RepoNotFound', 'Repository was not found') unless $account;
+    my $account = _repo_by_did_or_error($c);
     my $blob = $c->store->get_blob($c->param('cid') // q());
     xrpc_error(404, 'BlobNotFound', 'Blob was not found')
       unless $blob && ($blob->{did} // q()) eq $account->{did};
@@ -157,9 +136,7 @@ sub register_sync_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.sync.listBlobs', sub ($c, $endpoint) {
-    my $account = resolve_did_account($c, $c->param('did') // q());
-    xrpc_error(404, 'RepoNotFound', 'Repository was not found') unless $account;
-    assert_repo_readable($c, $account, message => 'Could not find repo for DID: ' . ($c->param('did') // q()));
+    my $account = _readable_repo_by_did($c);
     my $page = $c->store->list_blobs_by_did(
       $account->{did},
       limit  => $c->param('limit') // 500,
@@ -249,6 +226,74 @@ sub _host_view ($c, $row) {
     accountCount => 0 + scalar(@{ $c->store->list_accounts }),
     status       => $row->{status}{status} || 'active',
   };
+}
+
+sub _did_param ($c) {
+  return $c->param('did') // q();
+}
+
+sub _repo_lookup_message ($did) {
+  return 'Could not find repo for DID: ' . $did;
+}
+
+sub _repo_by_did_or_error ($c, %args) {
+  my $did = $args{did} // _did_param($c);
+  my $account = resolve_did_account($c, $did);
+  xrpc_error(
+    $args{missing_status} // 404,
+    $args{missing_error} // 'RepoNotFound',
+    $args{missing_message} // 'Repository was not found',
+  ) unless $account;
+  return $account;
+}
+
+sub _readable_repo_by_did ($c, %args) {
+  my $did = $args{did} // _did_param($c);
+  my $account = _repo_by_did_or_error(
+    $c,
+    did             => $did,
+    missing_status  => $args{missing_status},
+    missing_error   => $args{missing_error},
+    missing_message => $args{missing_message},
+  );
+  assert_repo_readable(
+    $c,
+    $account,
+    (defined $args{readable_status} ? (status => $args{readable_status}) : ()),
+    (defined $args{readable_error} ? (error => $args{readable_error}) : ()),
+    message => $args{readable_message} // _repo_lookup_message($did),
+  );
+  return $account;
+}
+
+sub _repo_head_or_error ($c, $did, %args) {
+  my $head = $c->store->get_repo_head($did);
+  xrpc_error(
+    $args{status} // 404,
+    $args{error} // 'RepoNotFound',
+    $args{message} // 'Repository was not found',
+  ) unless $head;
+  return $head;
+}
+
+sub _render_repo_car ($c, $did, %args) {
+  my $car = $c->store->repo_car($did);
+  xrpc_error(
+    $args{status} // 404,
+    $args{error} // 'RepoNotFound',
+    $args{message} // 'Repository was not found',
+  ) unless defined $car;
+  return _render_car($c, $car);
+}
+
+sub _render_car ($c, $car) {
+  $c->res->headers->content_type('application/vnd.ipld.car');
+  $c->render(data => $car);
+  return;
+}
+
+sub _record_uri ($did, $collection, $rkey) {
+  return "at://$did/$collection/$rkey";
 }
 
 sub _event_frame ($event) {

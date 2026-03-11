@@ -98,6 +98,15 @@ $t->get_ok("/xrpc/com.atproto.sync.getRepo?did=$did")
   ->content_type_like(qr{application/vnd\.ipld\.car})
   ->content_like(qr/.+/s);
 
+$t->get_ok("/xrpc/com.atproto.sync.getCheckout?did=$did")
+  ->status_is(200)
+  ->content_type_like(qr{application/vnd\.ipld\.car})
+  ->content_like(qr/.+/s);
+
+$t->get_ok("/xrpc/com.atproto.sync.getHead?did=$did")
+  ->status_is(200)
+  ->json_like('/root' => qr/\Ab/);
+
 $t->post_ok('/xrpc/com.atproto.repo.deleteRecord' => { Authorization => "Bearer $access" } => json => {
   repo       => $did,
   collection => 'app.bsky.feed.post',
