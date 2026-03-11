@@ -10,7 +10,6 @@ use JSON::PP ();
 use MIME::Base64 qw(decode_base64);
 
 use ATProto::PDS::API::Util qw(xrpc_error);
-use ATProto::PDS::Auth::JWT qw(decode_jwt);
 use ATProto::PDS::Constants qw(
   SUBJECT_KEY_PREFIX_BLOB
   SUBJECT_KEY_PREFIX_RECORD
@@ -25,7 +24,6 @@ our @EXPORT_OK = qw(
   assert_repo_readable
   assert_repo_writable
   assert_report_allowed
-  can_read_private_blob
   current_record_subject
   current_subject_status
   is_blob_takedown
@@ -160,21 +158,8 @@ sub admin_authorization_status ($c, $auth = undef) {
   return (0, 1);
 }
 
-sub can_read_private_blob ($c, $did) {
-  my $auth = $c->req->headers->authorization // q();
-  my ($admin_ok) = admin_authorization_status($c, $auth);
-  return 1 if $admin_ok;
-  return 0 unless $auth =~ /\ABearer\s+(.+)\z/i;
-  my $token = $1;
-  my $decoded = eval { decode_jwt($token, $c->config_value('jwt_secret', 'perlsky-dev-secret')) };
-  return 0 unless $decoded && ref($decoded) eq 'HASH';
-  my $claims = $decoded->{claims} || {};
-  return (($claims->{sub} // q()) eq ($did // q())) ? 1 : 0;
-}
-
 sub assert_blob_readable ($c, $account, $blob) {
-  my $private_ok = can_read_private_blob($c, $account->{did});
-  if ((is_repo_takedown($c, $account->{did}) || is_blob_takedown($c, $account->{did}, $blob->{cid}) || defined $blob->{quarantined_at}) && !$private_ok) {
+  if (is_repo_takedown($c, $account->{did}) || is_blob_takedown($c, $account->{did}, $blob->{cid}) || defined $blob->{quarantined_at}) {
     xrpc_error(404, 'BlobNotFound', 'Blob was not found');
   }
   return 1;

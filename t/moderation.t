@@ -195,8 +195,8 @@ $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.getBlob')->query(
   cid => $blob_cid,
 ) => {
   Authorization => "Bearer $access",
-})->status_is(200);
-is($t->tx->res->body, 'blob-bytes', 'repo owner can still read quarantined blob');
+})->status_is(404)
+  ->json_is('/error', 'BlobNotFound');
 
 my $blocked_blob_upload = $t->ua->build_tx(
   POST => '/xrpc/com.atproto.repo.uploadBlob' => {
@@ -232,5 +232,20 @@ $t->get_ok('/xrpc/com.atproto.admin.getSubjectStatus' => {
 })->status_is(200)
   ->json_is('/subject/cid', $blob_cid)
   ->json_is('/takedown/applied', JSON::PP::true);
+
+$t->post_ok('/xrpc/com.atproto.admin.updateSubjectStatus' => {
+  Authorization => $admin_auth,
+} => json => {
+  subject  => { did => $did, cid => $blob_cid },
+  takedown => { applied => JSON::PP::false },
+})->status_is(200)
+  ->json_is('/subject/cid', $blob_cid)
+  ->json_is('/takedown/applied', JSON::PP::false);
+
+$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.getBlob')->query(
+  did => $did,
+  cid => $blob_cid,
+))->status_is(200);
+is($t->tx->res->body, 'blob-bytes', 'restored blob is served again');
 
 done_testing;
