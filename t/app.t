@@ -56,4 +56,31 @@ $t->post_ok('/xrpc/com.atproto.server.createSession' => json => { identifier => 
   ->status_is(401)
   ->json_is('/error' => 'AuthRequired');
 
+my $missing_secret_error = eval {
+  ATProto::PDS->new(
+    project_root => $root,
+    settings     => {
+      base_url              => 'http://127.0.0.1:7755',
+      service_did_method    => 'did:web',
+      service_handle_domain => 'localhost',
+    },
+  );
+  undef;
+};
+like("$@", qr/jwt_secret must be configured/, 'startup fails closed without jwt_secret');
+
+my $legacy_secret_error = eval {
+  ATProto::PDS->new(
+    project_root => $root,
+    settings     => {
+      base_url              => 'http://127.0.0.1:7755',
+      service_did_method    => 'did:web',
+      service_handle_domain => 'localhost',
+      jwt_secret            => 'perlsky-dev-secret',
+    },
+  );
+  undef;
+};
+like("$@", qr/jwt_secret must not use the legacy perlsky-dev-secret default/, 'startup fails closed on the legacy dev jwt secret');
+
 done_testing;

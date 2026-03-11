@@ -621,7 +621,7 @@ sub require_auth ($c, %opts) {
     unless $auth =~ /\ABearer\s+(.+)\z/i;
   my $token = $1;
 
-  my $decoded = eval { decode_jwt($token, $c->config_value('jwt_secret', 'perlsky-dev-secret')) };
+  my $decoded = eval { decode_jwt($token, _jwt_secret($c)) };
   if (my $err = $@) {
     my $message = "$err";
     my $code = $message =~ /expired/i ? 'ExpiredToken' : 'InvalidToken';
@@ -674,7 +674,7 @@ sub _issue_session ($c, $account, %opts) {
 
 sub _session_response ($c, $account, $session) {
   my $issuer = service_did($c->app->settings);
-  my $secret = $c->config_value('jwt_secret', 'perlsky-dev-secret');
+  my $secret = _jwt_secret($c);
   my $now    = time;
   my $scope  = _canonical_access_scope($session->{scope});
   my $refresh_exp = $session->{expires_at} // ($now + (30 * 24 * 60 * 60));
@@ -709,6 +709,15 @@ sub _canonical_access_scope ($scope = undef) {
   return TOKEN_AUD_ACCESS unless defined $scope && length $scope;
   return TOKEN_AUD_ACCESS if $scope eq 'atproto';
   return $scope;
+}
+
+sub _jwt_secret ($c) {
+  my $secret = $c->config_value('jwt_secret');
+  xrpc_error(500, 'ServerMisconfigured', 'jwt_secret is not configured')
+    unless defined $secret && length $secret;
+  xrpc_error(500, 'ServerMisconfigured', 'jwt_secret is using the legacy dev default')
+    if $secret eq 'perlsky-dev-secret';
+  return $secret;
 }
 
 sub _normalize_lxm ($lxm = q()) {

@@ -79,6 +79,7 @@ Important fields:
 - `base_url`: the public HTTPS origin for the PDS
 - `hostname`: the host relays should crawl
 - `service_handle_domain`: the suffix used for local handles
+- `jwt_secret`: required; the server now refuses to start if it is missing or still set to the old `perlsky-dev-secret` fallback
 - If you want users like `alice.pds.example.com`, set `service_handle_domain` to `pds.example.com`, not `example.com`.
 - Public handle resolution for `alice.pds.example.com` also requires wildcard DNS for `*.pds.example.com` and a reverse proxy/TLS setup that will answer those subdomains.
 - `invite_code_required`: if true, `createAccount` requires a valid invite code

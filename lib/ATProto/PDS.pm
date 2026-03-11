@@ -23,6 +23,7 @@ use ATProto::PDS::Repo::Manager;
 use ATProto::PDS::ServiceProxy;
 use ATProto::PDS::Store::SQLite;
 use ATProto::PDS::XRPC::Dispatcher;
+use Carp qw(croak);
 use File::Spec;
 
 has project_root => '';
@@ -31,6 +32,7 @@ has settings     => sub { {} };
 sub startup ($self) {
   my $config = $self->settings;
   my $root   = $self->project_root;
+  my $jwt_secret = _require_jwt_secret($config);
   my $public_url = Mojo::URL->new($config->{base_url} // 'http://127.0.0.1:7755');
   my $metrics = ATProto::PDS::Metrics->new(
     service => $config->{service_name} // 'perlsky',
@@ -42,7 +44,7 @@ sub startup ($self) {
     metrics      => $metrics,
   );
 
-  $self->secrets([$config->{jwt_secret} // 'perlsky-dev-secret']);
+  $self->secrets([$jwt_secret]);
   $self->hook(before_dispatch => sub ($c) {
     return unless _cors_path($c->req->url->path);
 
@@ -205,6 +207,15 @@ sub startup ($self) {
     routes  => $routes,
     catalog => endpoint_catalog($root),
   )->register_routes;
+}
+
+sub _require_jwt_secret ($config) {
+  my $jwt_secret = $config->{jwt_secret};
+  croak 'jwt_secret must be configured'
+    unless defined $jwt_secret && length $jwt_secret;
+  croak 'jwt_secret must not use the legacy perlsky-dev-secret default'
+    if $jwt_secret eq 'perlsky-dev-secret';
+  return $jwt_secret;
 }
 
 sub _cors_path ($path) {
