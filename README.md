@@ -58,8 +58,9 @@ Browser smoke:
 - DMs are intentionally deferred from the current browser-smoke tranche; see `docs/BROWSER_SMOKE.md` for current scope and rationale.
 - Fresh-account creation is still available through the explicit `bootstrap-*` commands, but it is no longer the normal path for repeated browser smoke runs.
 - Detailed browser-smoke workflow, current interaction coverage, and the env-gated `prove` wrapper live in `docs/BROWSER_SMOKE.md`.
-- Extraction work toward a cross-PDS standalone package now lives in `atproto-smoke/`, which owns the browser runtime, package CLI, example configs, and bring-your-own-account plus `perlsky` adapter helpers.
-- `script/perlsky-browser-smoke` now prefers an external sibling checkout at `../atproto-smoke` when present, and falls back to the in-repo `atproto-smoke/` copy. Set `PERLSKY_BROWSER_SUITE_ROOT` to point it at any other checkout explicitly.
+- Extraction work toward a cross-PDS standalone package now lives in the `atproto-smoke` repo, which owns the browser runtime, package CLI, example configs, and bring-your-own-account plus `perlsky` adapter helpers.
+- `script/perlsky-browser-smoke` expects a standalone checkout at `../atproto-smoke` by default. Set `PERLSKY_BROWSER_SUITE_ROOT` to point it at any other checkout explicitly.
+- The shared smoke runtime now applies a bounded per-step timeout (`stepTimeoutMs`, default `120000`) so late browser stalls fail with artifacts instead of hanging forever.
 
 Moderation and labels:
 

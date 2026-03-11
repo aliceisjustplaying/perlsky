@@ -73,6 +73,10 @@ Artifacts include screenshots plus `summary.json`, which captures:
 - HTTP failures
 - recent XRPC traffic
 
+The generic runtime also applies a per-step timeout (`stepTimeoutMs`, default
+`120000`) so late browser stalls fail as bounded smoke errors instead of
+hanging indefinitely.
+
 ## Test Suite Wrapper
 
 The browser smoke is available from `prove`, but it is intentionally opt-in:
@@ -86,7 +90,11 @@ It also fails the test run if the browser harness finishes with `summary.ok = fa
 
 ## Extraction
 
-The generic runtime now lives under [atproto-smoke](../atproto-smoke/README.md).
+The generic runtime now lives in the standalone `atproto-smoke` repo:
+
+- `https://github.com/aliceisjustplaying/atproto-smoke`
+- `https://tangled.org/alice.mosphere.at/atproto-smoke`
+
 `perlsky` still keeps [script/perlsky-browser-smoke](/Users/sarah/src/tries/2026-03-10-perlds/script/perlsky-browser-smoke)
 as the ergonomic adapter for this repo, but the standalone package now owns:
 
@@ -98,9 +106,8 @@ as the ergonomic adapter for this repo, but the standalone package now owns:
 This keeps the current `perlsky` workflow stable while making extraction to a
 repo-independent package much more straightforward.
 
-The wrapper now prefers an external sibling checkout at `../atproto-smoke`
-when present, and otherwise falls back to the in-repo `atproto-smoke/` copy.
-Set `PERLSKY_BROWSER_SUITE_ROOT` to force a specific checkout.
+The wrapper now expects a standalone `atproto-smoke` checkout, either at the
+default sibling path `../atproto-smoke` or via `PERLSKY_BROWSER_SUITE_ROOT`.
 
 ## Notes
 

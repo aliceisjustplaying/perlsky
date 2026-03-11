@@ -12,12 +12,10 @@ use Mojo::UserAgent;
 use POSIX qw(strftime);
 
 my $root = abs_path(File::Spec->catdir($Bin, '..'));
-my $embedded_suite_dir = File::Spec->catdir($root, 'atproto-smoke');
 my $adjacent_suite_dir = File::Spec->catdir($root, '..', 'atproto-smoke');
 my $suite_dir = _resolve_suite_dir(
   $ENV{PERLSKY_BROWSER_SUITE_ROOT},
   $adjacent_suite_dir,
-  $embedded_suite_dir,
 );
 my $cache_dir = File::Spec->catdir($root, '.cache', 'ms-playwright');
 my $default_pair_file = File::Spec->catfile($root, '.cache', 'browser-smoke', 'reusable-pair.json');
