@@ -153,6 +153,46 @@ $t->get_ok('/xrpc/app.bsky.actor.getPreferences' => {
   ->json_is('/preferences/0/$type' => 'app.bsky.actor.defs#savedFeedsPref')
   ->json_is('/preferences/0/pinned/0' => 'at://did:plc:feed/app.bsky.feed.generator/demo');
 
+$t->get_ok('/xrpc/app.bsky.notification.getPreferences' => {
+  Authorization => "Bearer $access",
+})->status_is(200)
+  ->json_is('/preferences/chat/include' => 'all')
+  ->json_is('/preferences/chat/push' => JSON::PP::true)
+  ->json_is('/preferences/like/include' => 'all')
+  ->json_is('/preferences/like/list' => JSON::PP::true)
+  ->json_is('/preferences/verified/list' => JSON::PP::true)
+  ->json_is('/preferences/verified/push' => JSON::PP::true);
+
+$t->post_ok('/xrpc/app.bsky.notification.putPreferencesV2' => {
+  Authorization => "Bearer $access",
+} => json => {
+  like => {
+    include => 'follows',
+    list    => JSON::PP::false,
+    push    => JSON::PP::false,
+  },
+  verified => {
+    list => JSON::PP::false,
+    push => JSON::PP::false,
+  },
+})->status_is(200)
+  ->json_is('/preferences/like/include' => 'follows')
+  ->json_is('/preferences/like/list' => JSON::PP::false)
+  ->json_is('/preferences/like/push' => JSON::PP::false)
+  ->json_is('/preferences/chat/include' => 'all')
+  ->json_is('/preferences/verified/list' => JSON::PP::false)
+  ->json_is('/preferences/verified/push' => JSON::PP::false);
+
+$t->get_ok('/xrpc/app.bsky.notification.getPreferences' => {
+  Authorization => "Bearer $access",
+})->status_is(200)
+  ->json_is('/preferences/like/include' => 'follows')
+  ->json_is('/preferences/like/list' => JSON::PP::false)
+  ->json_is('/preferences/like/push' => JSON::PP::false)
+  ->json_is('/preferences/chat/include' => 'all')
+  ->json_is('/preferences/verified/list' => JSON::PP::false)
+  ->json_is('/preferences/verified/push' => JSON::PP::false);
+
 $t->get_ok("/xrpc/app.bsky.actor.getProfile?actor=$did" => {
   Authorization => "Bearer $access",
 })->status_is(200)

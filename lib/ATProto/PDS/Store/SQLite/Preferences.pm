@@ -10,7 +10,9 @@ use Exporter 'import';
 use JSON::PP qw(decode_json encode_json);
 
 our @EXPORT_OK = qw(
+  get_notification_preferences
   list_preferences
+  put_notification_preferences
   put_preferences
 );
 
@@ -66,6 +68,58 @@ sub list_preferences ($self, $did, $namespace) {
     $namespace,
   );
   return [ map { decode_json($_->{pref_json}) } @$rows ];
+}
+
+sub put_notification_preferences ($self, $did, $preferences, %args) {
+  die 'did is required' unless defined $did && length $did;
+  die 'preferences must be a hashref' unless ref($preferences) eq 'HASH';
+
+  my $now = $args{updated_at} // time;
+  my $pref_type = 'app.bsky.notification.defs#preferences';
+  my $json = encode_json($preferences);
+  $self->txn(sub ($dbh) {
+    $dbh->do(
+      q{DELETE FROM preferences WHERE did = ? AND namespace = ?},
+      undef,
+      $did,
+      'app.bsky.notification',
+    );
+    $dbh->do(
+      q{
+        INSERT INTO preferences (
+          did, namespace, pref_type, pref_json, updated_at
+        ) VALUES (?, ?, ?, ?, ?)
+      },
+      undef,
+      $did,
+      'app.bsky.notification',
+      $pref_type,
+      $json,
+      $now,
+    );
+  });
+
+  return $self->get_notification_preferences($did);
+}
+
+sub get_notification_preferences ($self, $did) {
+  die 'did is required' unless defined $did && length $did;
+
+  my $row = $self->dbh->selectrow_hashref(
+    q{
+      SELECT pref_json
+      FROM preferences
+      WHERE did = ? AND namespace = ?
+      ORDER BY updated_at DESC, pref_type ASC
+      LIMIT 1
+    },
+    undef,
+    $did,
+    'app.bsky.notification',
+  );
+
+  return undef unless $row;
+  return decode_json($row->{pref_json});
 }
 
 1;

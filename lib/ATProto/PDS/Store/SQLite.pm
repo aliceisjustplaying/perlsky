@@ -58,7 +58,9 @@ use ATProto::PDS::Store::SQLite::Operations qw(
   touch_host_notice
 );
 use ATProto::PDS::Store::SQLite::Preferences qw(
+  get_notification_preferences
   list_preferences
+  put_notification_preferences
   put_preferences
 );
 use ATProto::PDS::Store::SQLite::Reservations qw(

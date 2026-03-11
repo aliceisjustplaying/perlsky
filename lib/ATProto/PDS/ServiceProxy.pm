@@ -33,6 +33,12 @@ sub proxy_xrpc_request ($self, $c, $nsid) {
   if ($nsid eq 'app.bsky.actor.putPreferences') {
     return $self->_put_preferences($c);
   }
+  if ($nsid eq 'app.bsky.notification.getPreferences') {
+    return $self->_get_notification_preferences($c);
+  }
+  if ($nsid eq 'app.bsky.notification.putPreferencesV2') {
+    return $self->_put_notification_preferences_v2($c);
+  }
   if ($nsid eq 'app.bsky.actor.getProfile') {
     my $status = $self->_get_local_profile($c);
     return $status if defined $status;
@@ -259,6 +265,69 @@ sub _put_preferences ($self, $c) {
   $c->store->put_preferences($account->{did}, 'app.bsky', $preferences);
   $c->render(json => {});
   return 200;
+}
+
+sub _get_notification_preferences ($self, $c) {
+  xrpc_error(405, 'MethodNotAllowed', 'app.bsky.notification.getPreferences expects GET')
+    unless $c->req->method eq 'GET';
+
+  my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS);
+  my $preferences = $self->_load_notification_preferences($c, $account->{did});
+  $c->render(json => { preferences => $preferences });
+  return 200;
+}
+
+sub _put_notification_preferences_v2 ($self, $c) {
+  xrpc_error(405, 'MethodNotAllowed', 'app.bsky.notification.putPreferencesV2 expects POST')
+    unless $c->req->method eq 'POST';
+
+  my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS);
+  my $body = $c->req->json || {};
+  xrpc_error(400, 'InvalidRequest', 'notification preferences body must be an object')
+    unless ref($body) eq 'HASH';
+
+  my $preferences = {
+    %{ $self->_load_notification_preferences($c, $account->{did}) },
+    %{$body},
+  };
+  $c->store->put_notification_preferences($account->{did}, $preferences);
+  $c->render(json => { preferences => $preferences });
+  return 200;
+}
+
+sub _load_notification_preferences ($self, $c, $did) {
+  my $stored = $c->store->get_notification_preferences($did);
+  return {
+    %{ _default_notification_preferences() },
+    %{ $stored // {} },
+  };
+}
+
+sub _default_notification_preferences () {
+  my $filterable = {
+    include => 'all',
+    list    => JSON::PP::true,
+    push    => JSON::PP::true,
+  };
+  my $plain = {
+    list => JSON::PP::true,
+    push => JSON::PP::true,
+  };
+  return {
+    chat             => { include => 'all', push => JSON::PP::true },
+    follow           => { %{$filterable} },
+    like             => { %{$filterable} },
+    likeViaRepost    => { %{$filterable} },
+    mention          => { %{$filterable} },
+    quote            => { %{$filterable} },
+    reply            => { %{$filterable} },
+    repost           => { %{$filterable} },
+    repostViaRepost  => { %{$filterable} },
+    starterpackJoined => { %{$plain} },
+    subscribedPost   => { %{$plain} },
+    unverified       => { %{$plain} },
+    verified         => { %{$plain} },
+  };
 }
 
 sub _get_local_profile ($self, $c) {
