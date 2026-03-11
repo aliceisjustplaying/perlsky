@@ -32,7 +32,6 @@ use ATProto::PDS::ServiceProxy::Profile qw(
   _blob_cid
   _blob_url
   _follow_index
-  _get_local_profile
   _profile_associated
   _profile_record_value
   _profile_view_basic
@@ -74,7 +73,6 @@ my %LOCAL_HANDLER_FOR = (
   'app.bsky.actor.putPreferences'         => '_put_preferences',
   'app.bsky.notification.getPreferences'  => '_get_notification_preferences',
   'app.bsky.notification.putPreferencesV2' => '_put_notification_preferences_v2',
-  'app.bsky.actor.getProfile'             => '_get_local_profile',
   'app.bsky.feed.getAuthorFeed'           => '_get_author_feed',
   'app.bsky.feed.getPosts'                => '_get_posts',
   'app.bsky.feed.getPostThread'           => '_get_post_thread',

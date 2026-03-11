@@ -87,10 +87,6 @@ $t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
   },
 })->status_is(200);
 
-$t->get_ok("/xrpc/app.bsky.actor.getProfile?actor=$did" => {
-  Authorization => "Bearer $access",
-})->status_is(200);
-
 $t->get_ok("/xrpc/app.bsky.feed.getAuthorFeed?actor=$did&limit=10" => {
   Authorization => "Bearer $access",
 })->status_is(200);
@@ -183,7 +179,7 @@ like(
 );
 like(
   $metrics,
-  qr/perlsky_service_proxy_requests_total\{nsid="app\.bsky\.actor\.getProfile",source="local",status="200"\} 1\b/,
+  qr/perlsky_service_proxy_requests_total\{nsid="app\.bsky\.feed\.getAuthorFeed",source="local",status="200"\} 1\b/,
   'local service-proxy request counters are exported',
 );
 like(

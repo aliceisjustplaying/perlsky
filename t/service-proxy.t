@@ -24,6 +24,7 @@ use Crypt::PK::ECC;
 use IO::Socket::INET;
 use Mojo::Server::Daemon;
 use Mojo::UserAgent;
+use Mojo::Util qw(url_unescape);
 use Mojolicious;
 use Test::Mojo;
 use ATProto::PDS;
@@ -42,6 +43,7 @@ remove_tree($tmp) if -d $tmp;
 
 my $appview_app = Mojolicious->new;
 my %appview_seen;
+my ($alice_profile, $bob_profile, $alice_did, $bob_did_value, $alice_handle, $bob_handle);
 $appview_app->routes->get('/ready')->to(cb => sub {
   my ($c) = @_;
   $c->render(text => 'ok');
@@ -53,6 +55,38 @@ $appview_app->routes->any('/xrpc/*nsid')->to(cb => sub {
     return $c->render(status => 500, json => {
       error   => 'UpstreamTemporaryFailure',
       message => 'try again',
+    });
+  }
+  if ($nsid eq 'app.bsky.actor.getProfile') {
+    my $actor = $c->param('actor') // q();
+    my $profile;
+    if (
+      defined($alice_profile)
+      && (
+        $actor eq ($alice_did // q())
+        || $actor eq url_unescape($alice_did // q())
+        || $actor eq ($alice_handle // q())
+      )
+    ) {
+      $profile = $alice_profile;
+    }
+    elsif (
+      defined($bob_profile)
+      && (
+        $actor eq ($bob_did_value // q())
+        || $actor eq url_unescape($bob_did_value // q())
+        || $actor eq ($bob_handle // q())
+      )
+    ) {
+      $profile = $bob_profile;
+    }
+    $profile //= {
+      did    => $actor,
+      handle => $actor,
+    };
+    return $c->render(json => {
+      %$profile,
+      auth => $c->req->headers->authorization,
     });
   }
   my %body = (
@@ -122,6 +156,31 @@ my $access  = $created->{accessJwt};
 my $did     = $created->{did};
 my $account = $app->store->get_account_by_did($did);
 my $handle  = $created->{handle};
+($alice_did, $alice_handle) = ($did, $handle);
+my $upstream_profile = sub {
+  my ($did, $handle, $extra) = @_;
+  $extra ||= {};
+  return {
+    did             => $did,
+    handle          => $handle,
+    associated      => {
+      activitySubscription => { allowSubscriptions => 'followers' },
+      chat                 => { allowIncoming => 'all' },
+    },
+    labels          => [],
+    createdAt       => '2026-03-10T18:00:00Z',
+    indexedAt       => '2026-03-10T18:00:00Z',
+    followersCount  => 0,
+    followsCount    => 0,
+    postsCount      => 0,
+    viewer          => {
+      muted     => JSON::PP::false,
+      blockedBy => JSON::PP::false,
+    },
+    %$extra,
+  };
+};
+$alice_profile = $upstream_profile->($did, $created->{handle});
 
 $t->post_ok('/xrpc/com.atproto.server.createAccount' => json => {
   handle   => 'bob',
@@ -134,6 +193,8 @@ $t->post_ok('/xrpc/com.atproto.server.createAccount' => json => {
 my $created_bob = $t->tx->res->json;
 my $bob_access  = $created_bob->{accessJwt};
 my $bob_did     = $created_bob->{did};
+($bob_did_value, $bob_handle) = ($bob_did, $created_bob->{handle});
+$bob_profile = $upstream_profile->($bob_did, $created_bob->{handle});
 
 $t->get_ok('/xrpc/app.bsky.ageassurance.getState?countryCode=GB&regionCode=ENG')
   ->status_is(200)
@@ -208,16 +269,8 @@ $t->get_ok('/xrpc/app.bsky.notification.getPreferences' => {
 $t->get_ok("/xrpc/app.bsky.actor.getProfile?actor=$did" => {
   Authorization => "Bearer $access",
 })->status_is(200)
-  ->json_is('/did' => $did)
-  ->json_is('/handle' => $created->{handle})
-  ->json_is('/associated/chat/allowIncoming' => 'all')
-  ->json_is('/associated/activitySubscription/allowSubscriptions' => 'followers')
-  ->json_is('/labels' => [])
-  ->json_has('/createdAt')
-  ->json_has('/indexedAt')
-  ->json_is('/followsCount' => 0)
-  ->json_is('/postsCount' => 0);
-ok(!exists($t->tx->res->json->{followersCount}), 'local profile omits non-authoritative followersCount');
+  ->json_is('/did' => url_unescape($did));
+ok($t->tx->res->json->{auth}, 'proxied getProfile forwards bearer auth upstream');
 
 $t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
   Authorization => "Bearer $access",
@@ -232,6 +285,9 @@ $t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
   },
 })->status_is(200)
   ->json_is('/uri' => "at://$did/app.bsky.graph.follow/follow-bob");
+$alice_profile->{followsCount} = 1;
+$bob_profile->{followersCount} = 1;
+$bob_profile->{viewer}{following} = "at://$did/app.bsky.graph.follow/follow-bob";
 
 $t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
   Authorization => "Bearer $bob_access",
@@ -246,21 +302,29 @@ $t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
   },
 })->status_is(200)
   ->json_is('/uri' => "at://$bob_did/app.bsky.graph.follow/follow-alice");
+$bob_profile->{followsCount} = 1;
+$alice_profile->{followersCount} = 1;
+$alice_profile->{viewer}{followedBy} = "at://$bob_did/app.bsky.graph.follow/follow-alice";
+$alice_profile->{viewer}{knownFollowers} = {
+  count => 1,
+  followers => [
+    {
+      did    => $bob_did,
+      handle => $created_bob->{handle},
+    },
+  ],
+};
+$bob_profile->{viewer}{followedBy} = "at://$bob_did/app.bsky.graph.follow/follow-alice";
 
 $t->get_ok("/xrpc/app.bsky.actor.getProfile?actor=$did" => {
   Authorization => "Bearer $access",
-})->status_is(200)
-  ->json_is('/followsCount' => 1)
-  ->json_hasnt('/viewer/knownFollowers');
-ok(!exists($t->tx->res->json->{followersCount}), 'local profile still omits followersCount after remote-follow-capable activity');
+})->status_is(200);
+ok($t->tx->res->json->{auth}, 'proxied getProfile keeps forwarding auth after follow activity');
 
 $t->get_ok("/xrpc/app.bsky.actor.getProfile?actor=$bob_did" => {
   Authorization => "Bearer $access",
-})->status_is(200)
-  ->json_is('/followsCount' => 1)
-  ->json_is('/viewer/following' => "at://$did/app.bsky.graph.follow/follow-bob")
-  ->json_is('/viewer/followedBy' => "at://$bob_did/app.bsky.graph.follow/follow-alice");
-ok(!exists($t->tx->res->json->{followersCount}), 'remote-follower-dependent followersCount is omitted for followed local profiles');
+})->status_is(200);
+ok($t->tx->res->json->{auth}, 'proxied getProfile works for other local actors too');
 
 $t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
   Authorization => "Bearer $bob_access",
@@ -302,8 +366,8 @@ my $post_uri = $root_post->{uri};
 
 $t->get_ok("/xrpc/app.bsky.actor.getProfile?actor=$did" => {
   Authorization => "Bearer $access",
-})->status_is(200)
-  ->json_is('/postsCount' => 1);
+})->status_is(200);
+ok($t->tx->res->json->{auth}, 'proxied getProfile stays available after local posts exist');
 
 $t->get_ok("/xrpc/app.bsky.feed.getAuthorFeed?actor=$did&limit=10" => {
   Authorization => "Bearer $access",
