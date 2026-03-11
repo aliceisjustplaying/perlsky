@@ -29,6 +29,10 @@ const summary = {
   notes: [],
 };
 
+if (config.accountSource) {
+  summary.notes.push(`account source: ${config.accountSource}`);
+}
+
 const AVATAR_PNG_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAV0lEQVR4nO3PQQ0AIBDAMMC/58MCP7KkVbDX1pk5A6gWUC2gWkC1gGoB1QKqBVQLqBZQLaBaQLWAagHVAqoFVAuoFlAtoFpAtYBqAdUCqgVUC6gWUC2gWkD1B4a2AX/y3CvgAAAAAElFTkSuQmCC';
 
@@ -252,7 +256,20 @@ const dismissBlockingOverlays = async (page) => {
 };
 
 const fetchJson = async (url, options = {}) => {
-  const res = await fetch(url, options);
+  const timeoutMs = options.timeoutMs ?? 30000;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const fetchOptions = {
+    ...options,
+    signal: controller.signal,
+  };
+  delete fetchOptions.timeoutMs;
+  let res;
+  try {
+    res = await fetch(url, fetchOptions);
+  } finally {
+    clearTimeout(timer);
+  }
   const text = await res.text();
   let json;
   try {
@@ -270,7 +287,7 @@ const fetchStatus = async (url) => {
   return { ok: res.ok, status: res.status, url: res.url };
 };
 
-const xrpcJson = async (nsid, { method = 'GET', token, params, body } = {}) => {
+const xrpcJson = async (nsid, { method = 'GET', token, params, body, timeoutMs } = {}) => {
   const url = new URL(`${config.pdsUrl}/xrpc/${nsid}`);
   if (params) {
     for (const [key, value] of Object.entries(params)) {
@@ -287,6 +304,7 @@ const xrpcJson = async (nsid, { method = 'GET', token, params, body } = {}) => {
   return fetchJson(url.toString(), {
     method,
     headers,
+    timeoutMs,
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 };
@@ -355,13 +373,14 @@ const createSession = async (handle, password) => {
   return result.json;
 };
 
-const pollNotifications = async ({ account, authorHandle, reasons, minIndexedAt }) => {
+const pollNotifications = async ({ account, authorHandle, reasons, minIndexedAt, timeoutMs = 180000 }) => {
   const started = Date.now();
   let last;
-  while (Date.now() - started < 180000) {
+  while (Date.now() - started < timeoutMs) {
     last = await xrpcJson('app.bsky.notification.listNotifications', {
       token: account.accessJwt,
       params: { limit: '100' },
+      timeoutMs: 15000,
     });
     if (last.ok && Array.isArray(last.json?.notifications)) {
       const matching = last.json.notifications.filter((item) => {
@@ -385,7 +404,7 @@ const pollNotifications = async ({ account, authorHandle, reasons, minIndexedAt 
     await sleep(5000);
   }
   throw new Error(
-    `notifications not observed for ${account.handle}; last status=${last?.status ?? 'none'} body=${last?.text ?? ''}`,
+    `notifications not observed for ${account.handle} within ${timeoutMs}ms; last status=${last?.status ?? 'none'} body=${last?.text ?? ''}`,
   );
 };
 
@@ -1044,6 +1063,7 @@ try {
       authorHandle: secondary.handle,
       reasons: ['follow'],
       minIndexedAt: secondaryWaveStarted,
+      timeoutMs: 30000,
     });
     return {
       reasons: result.notifications.map((item) => item.reason),
