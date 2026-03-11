@@ -6,6 +6,8 @@ use File::Spec;
 use File::Temp qw(tempdir);
 use FindBin qw($Bin);
 use JSON::PP ();
+use Mojo::IOLoop;
+use Time::HiRes qw(sleep time);
 use Test::More;
 
 BEGIN {
@@ -45,16 +47,153 @@ my $t = Test::Mojo->new($app);
 my $ws = Test::Mojo->new($app);
 my $admin_auth = 'Basic YWRtaW46YWRtaW4tc2VjcmV0';
 
+sub ws_quiet_ok {
+  my ($ws, $desc, $timeout) = @_;
+  $timeout //= 0.1;
+  my $deadline = time + $timeout;
+  while (time < $deadline) {
+    Mojo::IOLoop->one_tick;
+    if (@{ $ws->{messages} || [] }) {
+      $ws->message(shift @{ $ws->{messages} });
+      fail($desc);
+      diag('unexpected websocket frame arrived while the stream was expected to stay quiet');
+      return;
+    }
+    sleep 0.01;
+  }
+  pass($desc);
+  return;
+}
+
 $t->post_ok('/xrpc/com.atproto.server.createAccount' => json => {
   handle   => 'alice.example.test',
   email    => 'alice@example.test',
   password => 'hunter22',
 })->status_is(200);
 
-my $did = $t->tx->res->json->{did};
+my $created = $t->tx->res->json;
+my $did     = $created->{did};
+my $access  = $created->{accessJwt};
 
 $ws->websocket_ok('/xrpc/com.atproto.label.subscribeLabels');
-is($ws->message, undef, 'label stream is quiet without a backlog');
+ws_quiet_ok($ws, 'label stream stays quiet without a backlog');
+
+$t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
+  Authorization => "Bearer $access",
+} => json => {
+  repo       => $did,
+  collection => 'app.bsky.feed.post',
+  rkey       => 'labeled-post',
+  record     => {
+    '$type'   => 'app.bsky.feed.post',
+    text      => 'record moderation target',
+    createdAt => '2026-03-10T00:00:00Z',
+  },
+})->status_is(200)
+  ->json_is('/uri', "at://$did/app.bsky.feed.post/labeled-post");
+
+my $record_uri = $t->tx->res->json->{uri};
+my $record_cid = $t->tx->res->json->{cid};
+
+$t->post_ok('/xrpc/com.atproto.admin.updateSubjectStatus' => {
+  Authorization => $admin_auth,
+} => json => {
+  subject  => { uri => $record_uri, cid => $record_cid },
+  takedown => { applied => JSON::PP::true },
+})->status_is(200);
+
+$ws->message_ok('received a record label frame')
+  ->message_like({binary => qr/.+/}, 'record label frame is binary');
+
+my $record_frame = decode_frame($ws->message->[1]);
+is($record_frame->{body}{labels}[0]{uri}, $record_uri, 'record label targets the record URI');
+is($record_frame->{body}{labels}[0]{cid}, $record_cid, 'record label carries the record CID');
+is($record_frame->{body}{labels}[0]{val}, '!hide', 'record takedown emits !hide');
+ok(!$record_frame->{body}{labels}[0]{neg}, 'record takedown frame is a positive label');
+
+$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.label.queryLabels')->query(
+  uriPatterns => $record_uri,
+  sources     => $service_did,
+))->status_is(200)
+  ->json_is('/labels/0/uri', $record_uri)
+  ->json_is('/labels/0/cid', $record_cid)
+  ->json_is('/labels/0/val', '!hide');
+
+$t->post_ok('/xrpc/com.atproto.admin.updateSubjectStatus' => {
+  Authorization => $admin_auth,
+} => json => {
+  subject  => { uri => $record_uri, cid => $record_cid },
+  takedown => { applied => JSON::PP::false },
+})->status_is(200);
+
+$ws->message_ok('received a record label negation frame')
+  ->message_like({binary => qr/.+/}, 'record negation frame is binary');
+
+my $record_neg = decode_frame($ws->message->[1]);
+is($record_neg->{body}{labels}[0]{uri}, $record_uri, 'record negation targets the same record URI');
+is($record_neg->{body}{labels}[0]{cid}, $record_cid, 'record negation keeps the record CID');
+ok($record_neg->{body}{labels}[0]{neg}, 'record restore emits a negation label');
+
+$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.label.queryLabels')->query(
+  uriPatterns => $record_uri,
+  sources     => $service_did,
+))->status_is(200)
+  ->json_is('/labels', []);
+
+my $blob_tx = $t->ua->build_tx(
+  POST => '/xrpc/com.atproto.repo.uploadBlob' => {
+    Authorization => "Bearer $access",
+    'Content-Type' => 'image/png',
+  } => 'blob-bytes',
+);
+$t->request_ok($blob_tx)->status_is(200);
+
+my $blob_cid = $t->tx->res->json->{blob}{ref}{'$link'};
+
+$t->post_ok('/xrpc/com.atproto.admin.updateSubjectStatus' => {
+  Authorization => $admin_auth,
+} => json => {
+  subject  => { did => $did, cid => $blob_cid },
+  takedown => { applied => JSON::PP::true },
+})->status_is(200);
+
+$ws->message_ok('received a blob label frame')
+  ->message_like({binary => qr/.+/}, 'blob label frame is binary');
+
+my $blob_frame = decode_frame($ws->message->[1]);
+is($blob_frame->{body}{labels}[0]{uri}, "at://$did", 'blob label targets the repo URI');
+is($blob_frame->{body}{labels}[0]{cid}, $blob_cid, 'blob label carries the blob CID');
+is($blob_frame->{body}{labels}[0]{val}, '!hide', 'blob takedown emits !hide');
+ok(!$blob_frame->{body}{labels}[0]{neg}, 'blob takedown frame is a positive label');
+
+$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.label.queryLabels')->query(
+  uriPatterns => "at://$did",
+  sources     => $service_did,
+))->status_is(200)
+  ->json_is('/labels/0/uri', "at://$did")
+  ->json_is('/labels/0/cid', $blob_cid)
+  ->json_is('/labels/0/val', '!hide');
+
+$t->post_ok('/xrpc/com.atproto.admin.updateSubjectStatus' => {
+  Authorization => $admin_auth,
+} => json => {
+  subject  => { did => $did, cid => $blob_cid },
+  takedown => { applied => JSON::PP::false },
+})->status_is(200);
+
+$ws->message_ok('received a blob label negation frame')
+  ->message_like({binary => qr/.+/}, 'blob negation frame is binary');
+
+my $blob_neg = decode_frame($ws->message->[1]);
+is($blob_neg->{body}{labels}[0]{uri}, "at://$did", 'blob negation targets the repo URI');
+is($blob_neg->{body}{labels}[0]{cid}, $blob_cid, 'blob negation keeps the blob CID');
+ok($blob_neg->{body}{labels}[0]{neg}, 'blob restore emits a negation label');
+
+$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.label.queryLabels')->query(
+  uriPatterns => "at://$did",
+  sources     => $service_did,
+))->status_is(200)
+  ->json_is('/labels', []);
 
 $t->post_ok('/xrpc/com.atproto.admin.updateSubjectStatus' => {
   Authorization => $admin_auth,
@@ -157,7 +296,7 @@ my $label_latest = $app->store->latest_event_seq;
 
 my $exclusive = Test::Mojo->new($app);
 $exclusive->websocket_ok("/xrpc/com.atproto.label.subscribeLabels?cursor=$label_latest");
-is($exclusive->message, undef, 'label cursor replay is exclusive');
+ws_quiet_ok($exclusive, 'label cursor replay is exclusive');
 $exclusive->finish_ok;
 
 my $replay_start = $app->store->latest_event_seq;

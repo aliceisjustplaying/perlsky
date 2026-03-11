@@ -5,6 +5,8 @@ use Config ();
 use File::Spec;
 use File::Temp qw(tempdir);
 use FindBin qw($Bin);
+use Mojo::IOLoop;
+use Time::HiRes qw(sleep time);
 use Test::More;
 
 BEGIN {
@@ -41,6 +43,24 @@ my $app = ATProto::PDS->new(
 
 my $t  = Test::Mojo->new($app);
 my $ws = Test::Mojo->new($app);
+
+sub ws_quiet_ok {
+  my ($ws, $desc, $timeout) = @_;
+  $timeout //= 0.1;
+  my $deadline = time + $timeout;
+  while (time < $deadline) {
+    Mojo::IOLoop->one_tick;
+    if (@{ $ws->{messages} || [] }) {
+      $ws->message(shift @{ $ws->{messages} });
+      fail($desc);
+      diag('unexpected websocket frame arrived while the stream was expected to stay quiet');
+      return;
+    }
+    sleep 0.01;
+  }
+  pass($desc);
+  return;
+}
 
 $t->post_ok('/xrpc/com.atproto.server.createAccount' => json => {
   handle   => 'alice.example.test',
@@ -87,7 +107,7 @@ my $prior_head = $app->store->get_latest_commit($did);
 my $prior_rev = $prior_head->{rev};
 
 $ws->websocket_ok('/xrpc/com.atproto.sync.subscribeRepos');
-is($ws->message, undef, 'no backlog is emitted when no cursor is supplied');
+ws_quiet_ok($ws, 'no backlog is emitted when no cursor is supplied');
 
 $t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
   Authorization => "Bearer $access",
@@ -261,7 +281,7 @@ $delete_watch->finish_ok;
 my $firehose_latest = $app->store->latest_event_seq;
 my $exclusive = Test::Mojo->new($app);
 $exclusive->websocket_ok("/xrpc/com.atproto.sync.subscribeRepos?cursor=$firehose_latest");
-is($exclusive->message, undef, 'repo cursor replay is exclusive at the current latest event');
+ws_quiet_ok($exclusive, 'repo cursor replay is exclusive at the current latest event');
 $exclusive->finish_ok;
 
 my $future = Test::Mojo->new($app);
