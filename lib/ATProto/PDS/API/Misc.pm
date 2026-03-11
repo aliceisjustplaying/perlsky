@@ -126,15 +126,7 @@ sub register_misc_handlers ($registry, $app) {
     my $did_doc = refresh_plc_did_doc($c->app->settings, $account->{did});
     $c->store->update_account($account->{did}, did_doc => $did_doc);
     $account = $c->store->update_account($account->{did}, did_doc => $did_doc);
-    $c->append_event(
-      did     => $account->{did},
-      type    => 'identity',
-      rev     => $account->{repo_rev},
-      payload => {
-        did    => $account->{did},
-        handle => $account->{handle},
-      },
-    );
+    _append_identity_event($c, $account);
     return {};
   });
 
@@ -157,15 +149,7 @@ sub register_misc_handlers ($registry, $app) {
       handle  => $handle,
       did_doc => $did_doc,
     );
-    $c->append_event(
-      did     => $updated->{did},
-      type    => 'identity',
-      rev     => $updated->{repo_rev},
-      payload => {
-        did    => $updated->{did},
-        handle => $updated->{handle},
-      },
-    );
+    _append_identity_event($c, $updated);
     return {};
   });
 
@@ -213,10 +197,7 @@ sub register_misc_handlers ($registry, $app) {
       limit        => $c->param('limit') // 50,
       cursor       => $c->param('cursor'),
     );
-    return {
-      (defined $page->{cursor} ? (cursor => $page->{cursor}) : ()),
-      labels => [ map { _label_view($_) } @{ $page->{items} } ],
-    };
+    return _label_page($page);
   });
 
   $registry->register('com.atproto.temp.fetchLabels', sub ($c, $endpoint) {
@@ -224,10 +205,7 @@ sub register_misc_handlers ($registry, $app) {
       limit  => $c->param('limit') // 50,
       cursor => $c->param('cursor'),
     );
-    return {
-      (defined $page->{cursor} ? (cursor => $page->{cursor}) : ()),
-      labels => [ map { _label_view($_) } @{ $page->{items} } ],
-    };
+    return _label_page($page);
   });
 
   $registry->register('com.atproto.label.subscribeLabels', sub ($c, $endpoint) {
@@ -310,6 +288,26 @@ sub _label_view ($row) {
     cts => iso8601($row->{created_at}),
     (defined($row->{exp}) ? (exp => iso8601($row->{exp})) : ()),
     (defined($row->{sig}) ? (sig => $row->{sig}) : ()),
+  };
+}
+
+sub _append_identity_event ($c, $account) {
+  $c->append_event(
+    did     => $account->{did},
+    type    => 'identity',
+    rev     => $account->{repo_rev},
+    payload => {
+      did    => $account->{did},
+      handle => $account->{handle},
+    },
+  );
+  return;
+}
+
+sub _label_page ($page) {
+  return {
+    (defined $page->{cursor} ? (cursor => $page->{cursor}) : ()),
+    labels => [ map { _label_view($_) } @{ $page->{items} } ],
   };
 }
 

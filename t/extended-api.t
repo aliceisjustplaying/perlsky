@@ -200,6 +200,10 @@ $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.label.queryLabels')->query(
 ))->status_is(200)
   ->json_is('/labels/0/val', '!hide');
 
+$t->get_ok('/xrpc/com.atproto.temp.fetchLabels?limit=10')
+  ->status_is(200)
+  ->json_is('/labels/0/val', '!hide');
+
 $t->post_ok('/xrpc/com.atproto.sync.requestCrawl' => json => {
   hostname => 'relay.example.test',
 })->status_is(200);
