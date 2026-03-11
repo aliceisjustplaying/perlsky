@@ -46,6 +46,13 @@ Relay / crawler discovery:
 - `perlsky` will POST `com.atproto.sync.requestCrawl` to each configured crawler after local repo/account/identity activity, while throttling repeat notices with `crawler_notify_interval` (default `1200` seconds).
 - Local regression coverage for this path lives in `t/crawlers.t`.
 
+Browser smoke:
+
+- `script/perlsky-browser-smoke run-dual` now prefers a saved reusable account pair from `.cache/browser-smoke/reusable-pair.json`, so the default dual-account smoke does not create new actors.
+- Use `script/perlsky-browser-smoke bootstrap-pair` once to mint and save a dedicated smoke pair, then rerun `script/perlsky-browser-smoke run-dual` as often as you want against those same accounts.
+- Use `script/perlsky-browser-smoke show-pair` to inspect the saved pair metadata and `script/perlsky-browser-smoke clear-pair` to forget it locally.
+- Fresh-account creation is still available through the explicit `bootstrap-*` commands, but it is no longer the normal path for repeated browser smoke runs.
+
 Moderation and labels:
 
 - `com.atproto.admin.updateSubjectStatus` now enforces repo, record, and blob takedowns as real behavior instead of passive metadata.
