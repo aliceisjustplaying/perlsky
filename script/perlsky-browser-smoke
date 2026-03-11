@@ -7,7 +7,8 @@ use File::Path qw(make_path);
 use File::Spec;
 use FindBin qw($Bin);
 use Getopt::Long qw(GetOptionsFromArray);
-use JSON::PP qw(encode_json);
+use JSON::PP qw(decode_json encode_json);
+use Mojo::UserAgent;
 use POSIX qw(strftime);
 
 my $root = abs_path(File::Spec->catdir($Bin, '..'));
@@ -34,15 +35,23 @@ my %opt = (
   pds_url       => $ENV{PERLSKY_BROWSER_PDS_URL}    || 'https://perlsky.mosphere.at',
   handle        => $ENV{PERLSKY_BROWSER_HANDLE},
   password      => $ENV{PERLSKY_BROWSER_PASSWORD},
+  secondary_handle   => $ENV{PERLSKY_BROWSER_SECONDARY_HANDLE},
+  secondary_password => $ENV{PERLSKY_BROWSER_SECONDARY_PASSWORD},
+  secondary_email    => $ENV{PERLSKY_BROWSER_SECONDARY_EMAIL},
   target_handle => $ENV{PERLSKY_BROWSER_TARGET_HANDLE} || 'alice.mosphere.at',
   artifacts_dir => $ENV{PERLSKY_BROWSER_ARTIFACTS} || $default_artifacts,
   birthdate     => $ENV{PERLSKY_BROWSER_BIRTHDATE} || '1990-01-01',
+  secondary_birthdate => $ENV{PERLSKY_BROWSER_SECONDARY_BIRTHDATE} || '1990-01-01',
   public_api_url => $ENV{PERLSKY_BROWSER_PUBLIC_API_URL} || 'https://public.api.bsky.app',
   public_check_timeout_ms => $ENV{PERLSKY_BROWSER_PUBLIC_CHECK_TIMEOUT_MS} || 180_000,
   post_text     => $ENV{PERLSKY_BROWSER_POST_TEXT},
   quote_text    => $ENV{PERLSKY_BROWSER_QUOTE_TEXT},
   reply_text    => $ENV{PERLSKY_BROWSER_REPLY_TEXT},
   profile_note  => $ENV{PERLSKY_BROWSER_PROFILE_NOTE},
+  secondary_post_text => $ENV{PERLSKY_BROWSER_SECONDARY_POST_TEXT},
+  secondary_quote_text => $ENV{PERLSKY_BROWSER_SECONDARY_QUOTE_TEXT},
+  secondary_reply_text => $ENV{PERLSKY_BROWSER_SECONDARY_REPLY_TEXT},
+  secondary_profile_note => $ENV{PERLSKY_BROWSER_SECONDARY_PROFILE_NOTE},
   headful       => $ENV{PERLSKY_BROWSER_HEADFUL} ? 1 : 0,
   edit_profile  => $ENV{PERLSKY_BROWSER_EDIT_PROFILE} ? 1 : 0,
   public_checks => $ENV{PERLSKY_BROWSER_SKIP_PUBLIC_CHECKS} ? 0 : 1,
@@ -56,16 +65,25 @@ if ($cmd eq 'help' || $cmd eq '--help' || $cmd eq '-h') {
   print <<'USAGE';
 Usage:
   script/perlsky-browser-smoke install
+  script/perlsky-browser-smoke bootstrap-secondary [options]
+  script/perlsky-browser-smoke bootstrap-pair [options]
   script/perlsky-browser-smoke run [options]
+  script/perlsky-browser-smoke run-dual [options]
+  script/perlsky-browser-smoke run-dual-bootstrap [options]
+  script/perlsky-browser-smoke run-pair-bootstrap [options]
 
 Options:
   --handle HANDLE
   --password PASSWORD
+  --secondary-handle HANDLE
+  --secondary-password PASSWORD
+  --secondary-email EMAIL
   --target-handle HANDLE
   --app-url URL
   --pds-url URL
   --artifacts-dir DIR
   --birthdate YYYY-MM-DD
+  --secondary-birthdate YYYY-MM-DD
   --public-api-url URL
   --public-check-timeout-ms MS
   --browser-executable-path PATH
@@ -73,6 +91,10 @@ Options:
   --quote-text TEXT
   --reply-text TEXT
   --profile-note TEXT
+  --secondary-post-text TEXT
+  --secondary-quote-text TEXT
+  --secondary-reply-text TEXT
+  --secondary-profile-note TEXT
   --headful
   --edit-profile
   --public-checks
@@ -81,11 +103,15 @@ Options:
 Environment:
   PERLSKY_BROWSER_HANDLE
   PERLSKY_BROWSER_PASSWORD
+  PERLSKY_BROWSER_SECONDARY_HANDLE
+  PERLSKY_BROWSER_SECONDARY_PASSWORD
+  PERLSKY_BROWSER_SECONDARY_EMAIL
   PERLSKY_BROWSER_TARGET_HANDLE
   PERLSKY_BROWSER_APP_URL
   PERLSKY_BROWSER_PDS_URL
   PERLSKY_BROWSER_ARTIFACTS
   PERLSKY_BROWSER_BIRTHDATE
+  PERLSKY_BROWSER_SECONDARY_BIRTHDATE
   PERLSKY_BROWSER_PUBLIC_API_URL
   PERLSKY_BROWSER_PUBLIC_CHECK_TIMEOUT_MS
   PERLSKY_BROWSER_EXECUTABLE_PATH
@@ -93,6 +119,10 @@ Environment:
   PERLSKY_BROWSER_QUOTE_TEXT
   PERLSKY_BROWSER_REPLY_TEXT
   PERLSKY_BROWSER_PROFILE_NOTE
+  PERLSKY_BROWSER_SECONDARY_POST_TEXT
+  PERLSKY_BROWSER_SECONDARY_QUOTE_TEXT
+  PERLSKY_BROWSER_SECONDARY_REPLY_TEXT
+  PERLSKY_BROWSER_SECONDARY_PROFILE_NOTE
   PERLSKY_BROWSER_HEADFUL=1
   PERLSKY_BROWSER_EDIT_PROFILE=1
   PERLSKY_BROWSER_SKIP_PUBLIC_CHECKS=1
@@ -105,11 +135,15 @@ GetOptionsFromArray(
   \@ARGV,
   'handle=s'        => \$opt{handle},
   'password=s'      => \$opt{password},
+  'secondary-handle=s' => \$opt{secondary_handle},
+  'secondary-password=s' => \$opt{secondary_password},
+  'secondary-email=s' => \$opt{secondary_email},
   'target-handle=s' => \$opt{target_handle},
   'app-url=s'       => \$opt{app_url},
   'pds-url=s'       => \$opt{pds_url},
   'artifacts-dir=s' => \$opt{artifacts_dir},
   'birthdate=s'     => \$opt{birthdate},
+  'secondary-birthdate=s' => \$opt{secondary_birthdate},
   'public-api-url=s' => \$opt{public_api_url},
   'public-check-timeout-ms=i' => \$opt{public_check_timeout_ms},
   'browser-executable-path=s' => \$opt{browser_executable_path},
@@ -117,6 +151,10 @@ GetOptionsFromArray(
   'quote-text=s'    => \$opt{quote_text},
   'reply-text=s'    => \$opt{reply_text},
   'profile-note=s'  => \$opt{profile_note},
+  'secondary-post-text=s' => \$opt{secondary_post_text},
+  'secondary-quote-text=s' => \$opt{secondary_quote_text},
+  'secondary-reply-text=s' => \$opt{secondary_reply_text},
+  'secondary-profile-note=s' => \$opt{secondary_profile_note},
   'headful!'        => \$opt{headful},
   'edit-profile!'   => \$opt{edit_profile},
   'public-checks!'  => \$opt{public_checks},
@@ -141,31 +179,116 @@ $opt{post_text}    //= "perlsky browser smoke post $run_id";
 $opt{quote_text}   //= "perlsky browser smoke quote $run_id";
 $opt{reply_text}   //= "perlsky browser smoke reply $run_id";
 $opt{profile_note} //= "perlsky browser smoke profile edit $run_id";
+$opt{secondary_post_text}    //= "perlsky browser secondary post $run_id";
+$opt{secondary_quote_text}   //= "perlsky browser secondary quote $run_id";
+$opt{secondary_reply_text}   //= "perlsky browser secondary reply $run_id";
+$opt{secondary_profile_note} //= "perlsky browser secondary profile edit $run_id";
 
 my ($pds_host) = $opt{pds_url} =~ m{\Ahttps?://([^/]+)};
 $pds_host //= $opt{pds_url};
+
+if ($cmd eq 'bootstrap-secondary') {
+  $opt{secondary_handle} //= "smokee2eb$run_id";
+  $opt{secondary_handle} =~ s/[^a-z0-9-]//g;
+  $opt{secondary_password} //= 'E2e-2026-03-11';
+  $opt{secondary_email} //= sprintf('%s@example.com', $opt{secondary_handle});
+  my $account = bootstrap_secondary(\%opt);
+  print encode_json($account), "\n";
+  exit 0;
+}
+
+if ($cmd eq 'bootstrap-pair') {
+  my ($primary_account, $secondary_account) = bootstrap_pair(\%opt, $run_id);
+  print encode_json({
+    primary   => $primary_account,
+    secondary => $secondary_account,
+  }), "\n";
+  exit 0;
+}
 
 my $config = {
   appUrl       => $opt{app_url},
   pdsUrl       => $opt{pds_url},
   pdsHost      => $pds_host,
-  handle       => $opt{handle},
-  password     => $opt{password},
   targetHandle => $opt{target_handle},
   artifactsDir => $artifacts_dir,
-  birthdate    => $opt{birthdate},
   publicApiUrl => $opt{public_api_url},
   publicCheckTimeoutMs => 0 + $opt{public_check_timeout_ms},
   publicChecks => $opt{public_checks} ? JSON::PP::true : JSON::PP::false,
   strictErrors => $opt{strict_errors} ? JSON::PP::true : JSON::PP::false,
   browserExecutablePath => $opt{browser_executable_path},
-  postText     => $opt{post_text},
-  quoteText    => $opt{quote_text},
-  replyText    => $opt{reply_text},
-  profileNote  => $opt{profile_note},
   headless     => $opt{headful} ? JSON::PP::false : JSON::PP::true,
-  editProfile  => $opt{edit_profile} ? JSON::PP::true : JSON::PP::false,
 };
+
+if ($cmd eq 'run-dual-bootstrap') {
+  $opt{secondary_handle} //= "smokee2eb$run_id";
+  $opt{secondary_handle} =~ s/[^a-z0-9-]//g;
+  $opt{secondary_password} //= 'E2e-2026-03-11';
+  $opt{secondary_email} //= sprintf('%s@example.com', $opt{secondary_handle});
+  my $account = bootstrap_secondary(\%opt);
+  $opt{secondary_handle}   = $account->{handle};
+  $opt{secondary_password} = $account->{password};
+  $opt{secondary_email}    = $account->{email};
+  my $secondary_path = File::Spec->catfile($artifacts_dir, 'secondary-account.json');
+  open(my $fh, '>:raw', $secondary_path) or die "unable to write $secondary_path: $!";
+  print {$fh} encode_json($account);
+  close $fh;
+  $config->{secondaryAccount} = $account;
+  $cmd = 'run-dual';
+}
+
+if ($cmd eq 'run-pair-bootstrap') {
+  my ($primary_account, $secondary_account) = bootstrap_pair(\%opt, $run_id);
+  $opt{handle}              = $primary_account->{handle};
+  $opt{password}            = $primary_account->{password};
+  $opt{secondary_handle}    = $secondary_account->{handle};
+  $opt{secondary_password}  = $secondary_account->{password};
+  my $primary_path = File::Spec->catfile($artifacts_dir, 'primary-account.json');
+  open(my $pfh, '>:raw', $primary_path) or die "unable to write $primary_path: $!";
+  print {$pfh} encode_json($primary_account);
+  close $pfh;
+  my $secondary_path = File::Spec->catfile($artifacts_dir, 'secondary-account.json');
+  open(my $sfh, '>:raw', $secondary_path) or die "unable to write $secondary_path: $!";
+  print {$sfh} encode_json($secondary_account);
+  close $sfh;
+  $config->{primaryAccount} = $primary_account;
+  $config->{secondaryAccount} = $secondary_account;
+  $cmd = 'run-dual';
+}
+
+if ($cmd eq 'run-dual') {
+  die "--secondary-handle is required for run-dual\n"
+    unless defined $opt{secondary_handle} && length $opt{secondary_handle};
+  die "--secondary-password is required for run-dual\n"
+    unless defined $opt{secondary_password} && length $opt{secondary_password};
+  $config->{primary} = {
+    handle      => $opt{handle},
+    password    => $opt{password},
+    birthdate   => $opt{birthdate},
+    postText    => $opt{post_text},
+    quoteText   => $opt{quote_text},
+    replyText   => $opt{reply_text},
+    profileNote => $opt{profile_note},
+  };
+  $config->{secondary} = {
+    handle      => $opt{secondary_handle},
+    password    => $opt{secondary_password},
+    birthdate   => $opt{secondary_birthdate},
+    postText    => $opt{secondary_post_text},
+    quoteText   => $opt{secondary_quote_text},
+    replyText   => $opt{secondary_reply_text},
+    profileNote => $opt{secondary_profile_note},
+  };
+} else {
+  $config->{handle}      = $opt{handle};
+  $config->{password}    = $opt{password};
+  $config->{birthdate}   = $opt{birthdate};
+  $config->{postText}    = $opt{post_text};
+  $config->{quoteText}   = $opt{quote_text};
+  $config->{replyText}   = $opt{reply_text};
+  $config->{profileNote} = $opt{profile_note};
+  $config->{editProfile} = $opt{edit_profile} ? JSON::PP::true : JSON::PP::false;
+}
 
 my $config_path = File::Spec->catfile($artifacts_dir, 'config.json');
 open(my $cfg, '>:raw', $config_path) or die "unable to write $config_path: $!";
@@ -173,7 +296,7 @@ print {$cfg} encode_json($config);
 close $cfg;
 
 local $ENV{PLAYWRIGHT_BROWSERS_PATH} = $cache_dir;
-my $script = File::Spec->catfile($tools_dir, 'smoke.mjs');
+my $script = File::Spec->catfile($tools_dir, $cmd eq 'run-dual' ? 'dual-smoke.mjs' : 'smoke.mjs');
 my @cmdline = ('node', $script, $config_path);
 system(@cmdline) == 0 or die "browser smoke failed\n";
 
@@ -187,4 +310,96 @@ sub install_runtime {
 sub run_or_die {
   my @cmdline = @_;
   system(@cmdline) == 0 or die "command failed: @cmdline\n";
+}
+
+sub bootstrap_secondary {
+  my ($opt) = @_;
+  return _bootstrap_account(
+    $opt,
+    handle   => $opt->{secondary_handle},
+    email    => $opt->{secondary_email},
+    password => $opt->{secondary_password},
+  );
+}
+
+sub bootstrap_pair {
+  my ($opt, $run_id) = @_;
+  my $primary_handle = "smokee2ea$run_id";
+  my $secondary_handle = "smokee2eb$run_id";
+  $primary_handle =~ s/[^a-z0-9-]//g;
+  $secondary_handle =~ s/[^a-z0-9-]//g;
+  my $password = 'E2e-2026-03-11';
+  my $primary_account = _bootstrap_account(
+    $opt,
+    handle   => $primary_handle,
+    email    => sprintf('%s@example.com', $primary_handle),
+    password => $password,
+  );
+  my $secondary_account = _bootstrap_account(
+    $opt,
+    handle   => $secondary_handle,
+    email    => sprintf('%s@example.com', $secondary_handle),
+    password => $password,
+  );
+  return ($primary_account, $secondary_account);
+}
+
+sub _bootstrap_account {
+  my ($opt, %args) = @_;
+  my $ua = Mojo::UserAgent->new;
+  my $base = $opt->{pds_url};
+  $base =~ s{/\z}{};
+  my $session_tx = $ua->post(
+    "$base/xrpc/com.atproto.server.createSession" => {
+      'content-type' => 'application/json',
+    } => json => {
+      identifier => $opt->{handle},
+      password   => $opt->{password},
+    }
+  );
+  die _tx_error($session_tx, 'createSession for primary smoke account failed')
+    unless $session_tx->result->is_success;
+  my $access_jwt = $session_tx->result->json->{accessJwt}
+    or die "primary createSession response missing accessJwt\n";
+
+  my $invite_tx = $ua->post(
+    "$base/xrpc/com.atproto.server.createInviteCode" => {
+      'content-type'  => 'application/json',
+      authorization   => "Bearer $access_jwt",
+    } => json => {
+      useCount => 1,
+    }
+  );
+  die _tx_error($invite_tx, 'createInviteCode failed')
+    unless $invite_tx->result->is_success;
+  my $invite = $invite_tx->result->json->{code}
+    or die "createInviteCode response missing code\n";
+
+  my $account_tx = $ua->post(
+    "$base/xrpc/com.atproto.server.createAccount" => {
+      'content-type' => 'application/json',
+    } => json => {
+      handle     => $args{handle},
+      email      => $args{email},
+      password   => $args{password},
+      inviteCode => $invite,
+    }
+  );
+  die _tx_error($account_tx, "createAccount failed for $args{handle}")
+    unless $account_tx->result->is_success;
+  my $json = $account_tx->result->json;
+  return {
+    inviteCode => $invite,
+    handle     => $json->{handle},
+    did        => $json->{did},
+    email      => $json->{email},
+    password   => $args{password},
+  };
+}
+
+sub _tx_error {
+  my ($tx, $prefix) = @_;
+  my $res = $tx->result;
+  my $body = $res ? ($res->body // q()) : q();
+  return "$prefix: " . ($res ? $res->code : 'no-response') . " $body\n";
 }
