@@ -127,58 +127,23 @@ sub apply_writes ($self, $account, $writes, %opts) {
     };
   }
 
-  my %mst_input = map {
-    $_ => ATProto::PDS::Repo::CID->from_string($records->{$_}{cid})
-  } sort keys %$records;
-  my $mst = build_mst(\%mst_input);
-
-  my $rev = next_tid($latest ? $latest->{rev} : undef);
-  my $unsigned = {
-    did     => $did,
-    version => 3,
-    data    => $mst->{root},
-    rev     => $rev,
-    prev    => undef,
-  };
-  my $unsigned_bytes = encode_dag_cbor($unsigned);
-  my $sig = sign_compact_low_s($account->{private_key}, $unsigned_bytes);
-  my $commit = { %$unsigned, sig => ATProto::PDS::Repo::Bytes->new($sig) };
-  my $commit_bytes = encode_dag_cbor($commit);
-  my $commit_cid = ATProto::PDS::Repo::CID->for_dag_cbor($commit_bytes);
-
-  my @snapshot_blocks = (
-    { cid => $commit_cid, bytes => $commit_bytes },
-    @{ $mst->{blocks} },
-    map {
-      +{
-        cid   => ATProto::PDS::Repo::CID->from_string($_->{cid}),
-        bytes => $_->{record_bytes},
-      }
-    } values %$records,
+  my $artifacts = _build_commit_artifacts(
+    $account,
+    $records,
+    rev          => next_tid($latest ? $latest->{rev} : undef),
+    record_paths => [ sort keys %$records ],
+    firehose_paths => _firehose_record_paths(\@ops),
+    cars         => [ qw(snapshot firehose sync) ],
   );
-  my %firehose_paths = map {
-    my $path = $_->{path} // q();
-    (($_->{action} // q()) ne 'delete' && length $path) ? ($path => 1) : ();
-  } @ops;
-  my @firehose_blocks = (
-    { cid => $commit_cid, bytes => $commit_bytes },
-    @{ $mst->{blocks} },
-    map {
-      my $record = $records->{$_};
-      +{
-        cid   => ATProto::PDS::Repo::CID->from_string($record->{cid}),
-        bytes => $record->{record_bytes},
-      }
-    } sort keys %firehose_paths,
-  );
-  my $snapshot_car_bytes = write_car($commit_cid, \@snapshot_blocks);
-  my $car_bytes = write_car($commit_cid, \@firehose_blocks);
-  my $sync_car_bytes = write_car($commit_cid, [
-    { cid => $commit_cid, bytes => $commit_bytes },
-  ]);
+  my $rev = $artifacts->{rev};
+  my $commit_cid = $artifacts->{commit_cid};
+  my $commit_bytes = $artifacts->{commit_bytes};
+  my $snapshot_car_bytes = $artifacts->{snapshot_car_bytes};
+  my $car_bytes = $artifacts->{firehose_car_bytes};
+  my $sync_car_bytes = $artifacts->{sync_car_bytes};
 
   $store->txn(sub ($dbh) {
-    for my $block (@snapshot_blocks) {
+    for my $block (@{ $artifacts->{repo_blocks} }) {
       $store->put_block(
         cid   => $block->{cid}->to_string,
         codec => $block->{cid}->codec,
@@ -193,7 +158,7 @@ sub apply_writes ($self, $account, $writes, %opts) {
       did         => $did,
       rev         => $rev,
       cid         => $commit_cid->to_string,
-      root_cid    => $mst->{root}->to_string,
+      root_cid    => $artifacts->{root_cid},
       prev_cid    => $latest ? $latest->{cid} : undef,
       commit_bytes => $commit_bytes,
       car_bytes   => $snapshot_car_bytes,
@@ -219,7 +184,7 @@ sub apply_writes ($self, $account, $writes, %opts) {
   return {
     cid            => $commit_cid->to_string,
     rev            => $rev,
-    root_cid       => $mst->{root}->to_string,
+    root_cid       => $artifacts->{root_cid},
     car_bytes      => $car_bytes,
     sync_car_bytes => $sync_car_bytes,
     results        => \@results,
@@ -280,57 +245,26 @@ sub import_repo_car ($self, $account, $car_bytes) {
   my @ops = _diff_record_sets(\%previous, \%imported);
   my $latest = $store->get_latest_commit($did);
   my $prev_data = $latest ? $latest->{root_cid} : undef;
-  my %mst_input = map {
-    $_->{collection} . '/' . $_->{rkey} => ATProto::PDS::Repo::CID->from_string($_->{cid})
-  } @$records;
-  my $mst = build_mst(\%mst_input);
-  my $rev = next_tid($latest ? $latest->{rev} : undef);
-  my $unsigned = {
-    did     => $did,
-    version => 3,
-    data    => $mst->{root},
-    rev     => $rev,
-    prev    => undef,
-  };
-  my $unsigned_bytes = encode_dag_cbor($unsigned);
-  my $sig = sign_compact_low_s($account->{private_key}, $unsigned_bytes);
-  my $next_commit = { %$unsigned, sig => ATProto::PDS::Repo::Bytes->new($sig) };
-  my $commit_bytes = encode_dag_cbor($next_commit);
-  my $commit_cid = ATProto::PDS::Repo::CID->for_dag_cbor($commit_bytes);
-  my $root_cid = $mst->{root}->to_string;
-  my @repo_blocks = (
-    { cid => $commit_cid, bytes => $commit_bytes },
-    @{ $mst->{blocks} },
-    map {
-      +{
-        cid   => ATProto::PDS::Repo::CID->from_string($_->{cid}),
-        bytes => $_->{record_bytes},
-      }
-    } @$records,
-  );
-  my %firehose_paths = map {
-    my $path = $_->{path} // q();
-    (($_->{action} // q()) ne 'delete' && length $path) ? ($path => 1) : ();
-  } @ops;
   my %records_by_path = map {
     $_->{collection} . '/' . $_->{rkey} => $_
   } @$records;
-  my @firehose_blocks = (
-    { cid => $commit_cid, bytes => $commit_bytes },
-    @{ $mst->{blocks} },
-    map {
-      my $record = $records_by_path{$_};
-      +{
-        cid   => ATProto::PDS::Repo::CID->from_string($record->{cid}),
-        bytes => $record->{record_bytes},
-      }
-    } sort keys %firehose_paths,
+  my $artifacts = _build_commit_artifacts(
+    $account,
+    \%records_by_path,
+    rev            => next_tid($latest ? $latest->{rev} : undef),
+    record_paths   => [ sort keys %records_by_path ],
+    firehose_paths => _firehose_record_paths(\@ops),
+    cars           => [ qw(snapshot firehose) ],
   );
-  my $next_snapshot_car_bytes = write_car($commit_cid, \@repo_blocks);
-  my $next_car_bytes = write_car($commit_cid, \@firehose_blocks);
+  my $rev = $artifacts->{rev};
+  my $commit_cid = $artifacts->{commit_cid};
+  my $commit_bytes = $artifacts->{commit_bytes};
+  my $root_cid = $artifacts->{root_cid};
+  my $next_snapshot_car_bytes = $artifacts->{snapshot_car_bytes};
+  my $next_car_bytes = $artifacts->{firehose_car_bytes};
 
   $store->txn(sub ($dbh) {
-    for my $block (values %blocks, @repo_blocks) {
+    for my $block (values %blocks, @{ $artifacts->{repo_blocks} }) {
       $store->put_block(
         cid   => $block->{cid}->to_string,
         codec => $block->{cid}->codec,
@@ -517,16 +451,30 @@ sub _rewrite_owned_at_uris ($value, $hosts, $path_map, $counter_ref) {
 }
 
 sub _build_snapshot_car ($account, $records, $rev = undef) {
-  my $did = $account->{did};
-  my %mst_input = map {
-    $_->{collection} . '/' . $_->{rkey} => ATProto::PDS::Repo::CID->from_string($_->{cid})
+  my %records_by_path = map {
+    $_->{collection} . '/' . $_->{rkey} => $_
   } @$records;
+  my $artifacts = _build_commit_artifacts(
+    $account,
+    \%records_by_path,
+    rev          => $rev // next_tid(),
+    record_paths => [ sort keys %records_by_path ],
+    cars         => [ 'snapshot' ],
+  );
+  return $artifacts->{snapshot_car_bytes};
+}
+
+sub _build_commit_artifacts ($account, $records_by_path, %opts) {
+  my %mst_input = map {
+    $_ => ATProto::PDS::Repo::CID->from_string($records_by_path->{$_}{cid})
+  } sort keys %$records_by_path;
   my $mst = build_mst(\%mst_input);
+  my $rev = $opts{rev} // next_tid();
   my $unsigned = {
-    did     => $did,
+    did     => $account->{did},
     version => 3,
     data    => $mst->{root},
-    rev     => $rev // next_tid(),
+    rev     => $rev,
     prev    => undef,
   };
   my $unsigned_bytes = encode_dag_cbor($unsigned);
@@ -534,17 +482,56 @@ sub _build_snapshot_car ($account, $records, $rev = undef) {
   my $commit = { %$unsigned, sig => ATProto::PDS::Repo::Bytes->new($sig) };
   my $commit_bytes = encode_dag_cbor($commit);
   my $commit_cid = ATProto::PDS::Repo::CID->for_dag_cbor($commit_bytes);
-  my @blocks = (
+  my @record_paths = @{ $opts{record_paths} // [ sort keys %$records_by_path ] };
+  my @repo_blocks = (
     { cid => $commit_cid, bytes => $commit_bytes },
     @{ $mst->{blocks} },
     map {
+      my $record = $records_by_path->{$_};
       +{
-        cid   => ATProto::PDS::Repo::CID->from_string($_->{cid}),
-        bytes => $_->{record_bytes},
+        cid   => ATProto::PDS::Repo::CID->from_string($record->{cid}),
+        bytes => $record->{record_bytes},
       }
-    } @$records,
+    } @record_paths,
   );
-  return write_car($commit_cid, \@blocks);
+
+  my %cars = map { $_ => 1 } @{ $opts{cars} // [] };
+  my %artifacts = (
+    rev         => $rev,
+    root_cid    => $mst->{root}->to_string,
+    mst         => $mst,
+    commit_cid  => $commit_cid,
+    commit_bytes => $commit_bytes,
+    repo_blocks => \@repo_blocks,
+  );
+  $artifacts{snapshot_car_bytes} = write_car($commit_cid, \@repo_blocks)
+    if $cars{snapshot};
+  if ($cars{firehose}) {
+    my @firehose_blocks = (
+      { cid => $commit_cid, bytes => $commit_bytes },
+      @{ $mst->{blocks} },
+      map {
+        my $record = $records_by_path->{$_};
+        +{
+          cid   => ATProto::PDS::Repo::CID->from_string($record->{cid}),
+          bytes => $record->{record_bytes},
+        }
+      } @{ $opts{firehose_paths} // [] },
+    );
+    $artifacts{firehose_car_bytes} = write_car($commit_cid, \@firehose_blocks);
+  }
+  $artifacts{sync_car_bytes} = write_car($commit_cid, [
+    { cid => $commit_cid, bytes => $commit_bytes },
+  ]) if $cars{sync};
+  return \%artifacts;
+}
+
+sub _firehose_record_paths ($ops) {
+  my %paths = map {
+    my $path = $_->{path} // q();
+    (($_->{action} // q()) ne 'delete' && length $path) ? ($path => 1) : ();
+  } @$ops;
+  return [ sort keys %paths ];
 }
 
 sub _records_from_import ($root_cid, $blocks) {
