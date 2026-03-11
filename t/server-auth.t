@@ -32,6 +32,7 @@ my $config = {
   service_did_method    => 'did:web',
   service_handle_domain => 'localhost',
   jwt_secret            => 'test-secret',
+  admin_password        => 'admin-secret',
   data_dir              => $tmp,
   db_path               => File::Spec->catfile($tmp, 'perlsky.sqlite'),
 };
@@ -55,12 +56,23 @@ my $created = $t->tx->res->json;
 my $access  = $created->{accessJwt};
 my $refresh = $created->{refreshJwt};
 my $did     = $created->{did};
+my $admin_auth = 'Basic YWRtaW46YWRtaW4tc2VjcmV0';
 my ($account_id) = $did =~ /:users:([^:]+)\z/;
 
 $t->get_ok('/xrpc/com.atproto.server.getSession' => { Authorization => "Bearer $access" })
   ->status_is(200)
   ->json_is('/handle' => 'alice.localhost')
   ->json_is('/email' => 'alice@example.com');
+
+$t->get_ok('/xrpc/com.atproto.admin.getInviteCodes' => {
+  Authorization => 'Bearer admin-secret',
+})->status_is(403)
+  ->json_is('/error' => 'InvalidAdminToken');
+
+$t->get_ok('/xrpc/com.atproto.admin.getInviteCodes' => {
+  Authorization => $admin_auth,
+})->status_is(200)
+  ->json_is('/codes' => []);
 
 $t->get_ok("/xrpc/com.atproto.identity.resolveHandle?handle=alice.localhost")
   ->status_is(200)
@@ -232,6 +244,23 @@ ok(
   $pk->verify_message_rfc7518(_b64url_decode($sig_b64), "$header_b64.$claims_b64", 'SHA256'),
   'service auth signature verifies',
 );
+
+my $legacy_tmp  = File::Spec->catdir($root, 'data', 'tmp-tests', 'server-auth-legacy');
+remove_tree($legacy_tmp) if -d $legacy_tmp;
+my $legacy_t = Test::Mojo->new(ATProto::PDS->new(
+  project_root => $root,
+  settings     => {
+    %$config,
+    data_dir                  => $legacy_tmp,
+    db_path                   => File::Spec->catfile($legacy_tmp, 'perlsky.sqlite'),
+    legacy_admin_bearer_auth  => 1,
+  },
+));
+
+$legacy_t->get_ok('/xrpc/com.atproto.admin.getInviteCodes' => {
+  Authorization => 'Bearer admin-secret',
+})->status_is(200)
+  ->json_is('/codes' => []);
 
 done_testing;
 

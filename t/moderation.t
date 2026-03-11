@@ -40,6 +40,7 @@ my $app = ATProto::PDS->new(
 );
 
 my $t = Test::Mojo->new($app);
+my $admin_auth = 'Basic YWRtaW46YWRtaW4tc2VjcmV0';
 
 $t->post_ok('/xrpc/com.atproto.server.createAccount' => json => {
   handle   => 'alice.example.test',
@@ -68,7 +69,7 @@ $t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
 my $record_cid = $t->tx->res->json->{cid};
 
 $t->post_ok('/xrpc/com.atproto.admin.updateSubjectStatus' => {
-  Authorization => 'Bearer admin-secret',
+  Authorization => $admin_auth,
 } => json => {
   subject  => { uri => "at://$did/app.bsky.feed.post/visible-post", cid => $record_cid },
   takedown => { applied => JSON::PP::true },
@@ -98,7 +99,7 @@ ok(
 );
 
 $t->post_ok('/xrpc/com.atproto.admin.updateSubjectStatus' => {
-  Authorization => 'Bearer admin-secret',
+  Authorization => $admin_auth,
 } => json => {
   subject  => { did => $did },
   takedown => { applied => JSON::PP::true },
@@ -158,7 +159,7 @@ $t->post_ok('/xrpc/com.atproto.moderation.createReport' => {
   ->json_is('/reasonType', 'com.atproto.moderation.defs#reasonAppeal');
 
 $t->post_ok('/xrpc/com.atproto.admin.updateSubjectStatus' => {
-  Authorization => 'Bearer admin-secret',
+  Authorization => $admin_auth,
 } => json => {
   subject  => { did => $did },
   takedown => { applied => JSON::PP::false },
@@ -176,7 +177,7 @@ my $blob = $t->tx->res->json->{blob};
 my $blob_cid = $blob->{ref}{'$link'};
 
 $t->post_ok('/xrpc/com.atproto.admin.updateSubjectStatus' => {
-  Authorization => 'Bearer admin-secret',
+  Authorization => $admin_auth,
 } => json => {
   subject  => { did => $did, cid => $blob_cid },
   takedown => { applied => JSON::PP::true },
@@ -224,7 +225,7 @@ $t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
   ->json_is('/error', 'BlobTakenDown');
 
 $t->get_ok('/xrpc/com.atproto.admin.getSubjectStatus' => {
-  Authorization => 'Bearer admin-secret',
+  Authorization => $admin_auth,
 } => form => {
   did  => $did,
   blob => $blob_cid,

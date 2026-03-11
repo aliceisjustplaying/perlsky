@@ -34,12 +34,14 @@ my $app = ATProto::PDS->new(
     jwt_secret            => 'extended-secret',
     admin_password        => 'admin-secret',
     self_service_invite_codes => 1,
+    testing_auto_confirm_email => 1,
     data_dir              => $tmp,
     db_path               => File::Spec->catfile($tmp, 'perlsky.sqlite'),
   },
 );
 
 my $t = Test::Mojo->new($app);
+my $admin_auth = 'Basic YWRtaW46YWRtaW4tc2VjcmV0';
 
 $t->post_ok('/xrpc/com.atproto.server.createAccount' => json => {
   handle   => 'alice.example.test',
@@ -99,7 +101,7 @@ $t->get_ok('/xrpc/com.atproto.server.getAccountInviteCodes' => {
   ->json_is('/codes/0/code', $invite_code);
 
 $t->get_ok('/xrpc/com.atproto.admin.getAccountInfo' => {
-  Authorization => 'Bearer admin-secret',
+  Authorization => $admin_auth,
 } => form => {
   did => $did,
 })->status_is(200)
@@ -107,7 +109,7 @@ $t->get_ok('/xrpc/com.atproto.admin.getAccountInfo' => {
   ->json_is('/handle', 'alice.example.test');
 
 $t->post_ok('/xrpc/com.atproto.temp.addReservedHandle' => {
-  Authorization => 'Bearer admin-secret',
+  Authorization => $admin_auth,
 } => json => {
   handle => 'reserved.example.test',
 })->status_is(200);
@@ -197,7 +199,7 @@ $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.getBlocks')->query(
 like($t->tx->res->headers->content_type // '', qr{application/vnd\.ipld\.car}, 'block export is a CAR');
 
 $t->post_ok('/xrpc/com.atproto.admin.updateSubjectStatus' => {
-  Authorization => 'Bearer admin-secret',
+  Authorization => $admin_auth,
 } => json => {
   subject  => { did => $did },
   takedown => { applied => JSON::PP::true, ref => 'unit-test' },

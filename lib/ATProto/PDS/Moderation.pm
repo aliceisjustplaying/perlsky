@@ -7,11 +7,13 @@ no warnings 'experimental::signatures';
 
 use Exporter 'import';
 use JSON::PP ();
+use MIME::Base64 qw(decode_base64);
 
 use ATProto::PDS::API::Util qw(xrpc_error);
 use ATProto::PDS::Auth::JWT qw(decode_jwt);
 
 our @EXPORT_OK = qw(
+  admin_authorization_status
   assert_blob_readable
   assert_login_allowed
   assert_record_readable
@@ -129,10 +131,34 @@ sub assert_repo_writable ($c, $account) {
   return 1;
 }
 
+sub admin_authorization_status ($c, $auth = undef) {
+  my $configured = $c->config_value('admin_password');
+  return (0, 0) unless defined $configured && length $configured;
+
+  $auth //= $c->req->headers->authorization // q();
+  return (0, 0) unless defined $auth && length $auth;
+
+  if ($auth =~ /\ABearer\s+(.+)\z/i) {
+    return (0, 1) unless $c->config_value('legacy_admin_bearer_auth', 0);
+    return (($1 eq $configured) ? 1 : 0, 1);
+  }
+
+  if ($auth =~ /\ABasic\s+(.+)\z/i) {
+    my $decoded = decode_base64($1);
+    my ($username, $password) = split /:/, $decoded, 2;
+    return (
+      (defined($username) && defined($password) && $username eq 'admin' && $password eq $configured) ? 1 : 0,
+      1,
+    );
+  }
+
+  return (0, 1);
+}
+
 sub can_read_private_blob ($c, $did) {
   my $auth = $c->req->headers->authorization // q();
-  return 1 if defined($c->config_value('admin_password')) && length($c->config_value('admin_password'))
-    && $auth =~ /\ABearer\s+\Q@{[$c->config_value('admin_password')]}\E\z/;
+  my ($admin_ok) = admin_authorization_status($c, $auth);
+  return 1 if $admin_ok;
   return 0 unless $auth =~ /\ABearer\s+(.+)\z/i;
   my $token = $1;
   my $decoded = eval { decode_jwt($token, $c->config_value('jwt_secret', 'perlsky-dev-secret')) };

@@ -7,11 +7,10 @@ no warnings 'experimental::signatures';
 
 use Exporter 'import';
 use JSON::PP ();
-use MIME::Base64 qw(decode_base64);
 
 use ATProto::PDS::API::Util qw(iso8601 xrpc_error);
 use ATProto::PDS::Auth::Password qw(verify_password);
-use ATProto::PDS::Moderation qw(subject_key);
+use ATProto::PDS::Moderation qw(admin_authorization_status subject_key);
 
 our @EXPORT_OK = qw(
   account_view
@@ -28,20 +27,11 @@ sub require_admin ($c) {
   xrpc_error(503, 'AdminAuthUnavailable', 'Admin password is not configured')
     unless defined $configured && length $configured;
 
-  my $auth = $c->req->headers->authorization // q();
-  my $provided;
-  if ($auth =~ /\ABearer\s+(.+)\z/i) {
-    $provided = $1;
-  } elsif ($auth =~ /\ABasic\s+(.+)\z/i) {
-    my $decoded = decode_base64($1);
-    my (undef, $password) = split /:/, $decoded, 2;
-    $provided = $password;
-  }
-
+  my ($valid, $supplied) = admin_authorization_status($c);
   xrpc_error(401, 'AuthRequired', 'Admin authorization is required')
-    unless defined $provided && length $provided;
+    unless $supplied;
   xrpc_error(403, 'InvalidAdminToken', 'Invalid admin authorization')
-    unless $provided eq $configured;
+    unless $valid;
   return 1;
 }
 

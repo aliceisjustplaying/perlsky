@@ -30,6 +30,7 @@ my $app = ATProto::PDS->new(
     service_handle_domain => 'example.test',
     service_did_method    => 'did:web',
     jwt_secret            => 'email-confirm-secret',
+    testing_auto_confirm_email => 0,
     data_dir              => $tmp,
     db_path               => File::Spec->catfile($tmp, 'perlsky.sqlite'),
   },
@@ -44,7 +45,12 @@ $t->post_ok('/xrpc/com.atproto.server.createAccount' => json => {
 })->status_is(200);
 my $alice = $t->tx->res->json;
 
-$app->store->update_account($alice->{did}, email_confirmed_at => undef);
+ok(!$alice->{emailConfirmed}, 'new account email stays unconfirmed when testing auto-confirm is disabled');
+
+$t->post_ok('/xrpc/com.atproto.server.requestEmailUpdate' => {
+  Authorization => "Bearer $alice->{accessJwt}",
+} => json => {})->status_is(200);
+ok(!$t->tx->res->json->{tokenRequired}, 'unconfirmed email does not require an update token');
 
 $t->post_ok('/xrpc/com.atproto.server.requestEmailConfirmation' => {
   Authorization => "Bearer $alice->{accessJwt}",
@@ -58,8 +64,7 @@ ok($token, 'email confirmation token was created');
 
 $app->store->update_account(
   $alice->{did},
-  email              => 'alice+new@example.test',
-  email_confirmed_at => undef,
+  email => 'alice+new@example.test',
 );
 
 $t->post_ok('/xrpc/com.atproto.server.confirmEmail' => json => {

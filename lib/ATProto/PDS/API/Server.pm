@@ -103,7 +103,7 @@ sub register_server_handlers ($registry, $app) {
       did                   => $did,
       handle                => $handle,
       email                 => $body->{email},
-      email_confirmed_at    => $body->{email} ? time : undef,
+      email_confirmed_at    => _initial_email_confirmed_at($c, $body->{email}),
       password_hash         => $password_record->{hash},
       password_salt         => $password_record->{salt},
       did_doc               => $did_doc,
@@ -779,9 +779,16 @@ sub _invite_code_targets ($c, $body, %opts) {
 sub _uses_admin_authorization ($c) {
   my $auth = $c->req->headers->authorization // q();
   return 1 if $auth =~ /\ABasic\s+/i;
+  return 0 unless $c->config_value('legacy_admin_bearer_auth', 0);
   return 0 unless $auth =~ /\ABearer\s+(\S+)\z/i;
   my $token = $1;
   return $token !~ /\A[^.]+\.[^.]+\.[^.]+\z/;
+}
+
+sub _initial_email_confirmed_at ($c, $email) {
+  return undef unless defined $email && length $email;
+  return undef unless $c->config_value('testing_auto_confirm_email', 1);
+  return time;
 }
 
 sub _require_action_token ($c, %args) {

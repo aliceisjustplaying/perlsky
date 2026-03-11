@@ -39,6 +39,7 @@ my $app = ATProto::PDS->new(
 );
 
 my $t = Test::Mojo->new($app);
+my $admin_auth = 'Basic YWRtaW46YWRtaW4tc2VjcmV0';
 
 for my $endpoint (@{ $app->endpoint_catalog }) {
   ok($app->api_registry->handler_for($endpoint->{id}), "$endpoint->{id} has a handler");
@@ -175,12 +176,12 @@ $t->get_ok('/xrpc/com.atproto.server.checkAccountStatus' => {
 $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.admin.getAccountInfo')->query(
   did => $did,
 ) => {
-  Authorization => 'Bearer admin-secret',
+  Authorization => $admin_auth,
 })->status_is(200)
   ->json_is('/handle' => 'alice.example.test');
 
 $t->post_ok('/xrpc/com.atproto.admin.updateSubjectStatus' => {
-  Authorization => 'Bearer admin-secret',
+  Authorization => $admin_auth,
 } => json => {
   subject  => { uri => $record_uri, cid => $record_cid },
   takedown => { applied => JSON::PP::true },

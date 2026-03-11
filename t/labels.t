@@ -43,6 +43,7 @@ my $app = ATProto::PDS->new(
 my $service_did = service_did($app->settings);
 my $t = Test::Mojo->new($app);
 my $ws = Test::Mojo->new($app);
+my $admin_auth = 'Basic YWRtaW46YWRtaW4tc2VjcmV0';
 
 $t->post_ok('/xrpc/com.atproto.server.createAccount' => json => {
   handle   => 'alice.example.test',
@@ -56,7 +57,7 @@ $ws->websocket_ok('/xrpc/com.atproto.label.subscribeLabels');
 is($ws->message, undef, 'label stream is quiet without a backlog');
 
 $t->post_ok('/xrpc/com.atproto.admin.updateSubjectStatus' => {
-  Authorization => 'Bearer admin-secret',
+  Authorization => $admin_auth,
 } => json => {
   subject  => { did => $did },
   takedown => { applied => JSON::PP::true },
@@ -97,7 +98,7 @@ $t->post_ok('/xrpc/com.atproto.server.createAccount' => json => {
 my $bob_did = $t->tx->res->json->{did};
 
 $t->post_ok('/xrpc/com.atproto.admin.updateSubjectStatus' => {
-  Authorization => 'Bearer admin-secret',
+  Authorization => $admin_auth,
 } => json => {
   subject  => { did => $bob_did },
   takedown => { applied => JSON::PP::true },
@@ -135,7 +136,7 @@ is_deeply(
 );
 
 $t->post_ok('/xrpc/com.atproto.admin.updateSubjectStatus' => {
-  Authorization => 'Bearer admin-secret',
+  Authorization => $admin_auth,
 } => json => {
   subject  => { did => $did },
   takedown => { applied => JSON::PP::false },
@@ -167,7 +168,7 @@ $app->store->append_event(
 );
 
 $t->post_ok('/xrpc/com.atproto.admin.updateSubjectStatus' => {
-  Authorization => 'Bearer admin-secret',
+  Authorization => $admin_auth,
 } => json => {
   subject  => { did => $bob_did },
   takedown => { applied => JSON::PP::false },
@@ -194,7 +195,7 @@ $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.label.queryLabels')->query(
 $app->store->dbh->do(q{DELETE FROM events WHERE seq <= ?}, undef, $app->store->latest_event_seq);
 
 $t->post_ok('/xrpc/com.atproto.admin.updateSubjectStatus' => {
-  Authorization => 'Bearer admin-secret',
+  Authorization => $admin_auth,
 } => json => {
   subject  => { did => $did },
   takedown => { applied => JSON::PP::true },
