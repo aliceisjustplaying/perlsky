@@ -123,6 +123,18 @@ my $did     = $created->{did};
 my $account = $app->store->get_account_by_did($did);
 my $handle  = $created->{handle};
 
+$t->post_ok('/xrpc/com.atproto.server.createAccount' => json => {
+  handle   => 'bob',
+  email    => 'bob@example.com',
+  password => 'password123',
+})->status_is(200)
+  ->json_has('/accessJwt')
+  ->json_has('/did');
+
+my $created_bob = $t->tx->res->json;
+my $bob_access  = $created_bob->{accessJwt};
+my $bob_did     = $created_bob->{did};
+
 $t->get_ok('/xrpc/app.bsky.ageassurance.getState?countryCode=GB&regionCode=ENG')
   ->status_is(200)
   ->json_is('/nsid' => 'app.bsky.ageassurance.getState')
@@ -203,7 +215,71 @@ $t->get_ok("/xrpc/app.bsky.actor.getProfile?actor=$did" => {
   ->json_is('/labels' => [])
   ->json_has('/createdAt')
   ->json_has('/indexedAt')
+  ->json_is('/followersCount' => 0)
+  ->json_is('/followsCount' => 0)
   ->json_is('/postsCount' => 0);
+
+$t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
+  Authorization => "Bearer $access",
+} => json => {
+  repo       => $did,
+  collection => 'app.bsky.graph.follow',
+  rkey       => 'follow-bob',
+  record     => {
+    '$type'   => 'app.bsky.graph.follow',
+    subject   => $bob_did,
+    createdAt => '2026-03-10T18:00:00Z',
+  },
+})->status_is(200)
+  ->json_is('/uri' => "at://$did/app.bsky.graph.follow/follow-bob");
+
+$t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
+  Authorization => "Bearer $bob_access",
+} => json => {
+  repo       => $bob_did,
+  collection => 'app.bsky.graph.follow',
+  rkey       => 'follow-alice',
+  record     => {
+    '$type'   => 'app.bsky.graph.follow',
+    subject   => $did,
+    createdAt => '2026-03-10T18:01:00Z',
+  },
+})->status_is(200)
+  ->json_is('/uri' => "at://$bob_did/app.bsky.graph.follow/follow-alice");
+
+$t->get_ok("/xrpc/app.bsky.actor.getProfile?actor=$did" => {
+  Authorization => "Bearer $access",
+})->status_is(200)
+  ->json_is('/followersCount' => 1)
+  ->json_is('/followsCount' => 1);
+
+$t->get_ok("/xrpc/app.bsky.actor.getProfile?actor=$bob_did" => {
+  Authorization => "Bearer $access",
+})->status_is(200)
+  ->json_is('/followersCount' => 1)
+  ->json_is('/followsCount' => 1)
+  ->json_is('/viewer/following' => "at://$did/app.bsky.graph.follow/follow-bob")
+  ->json_is('/viewer/followedBy' => "at://$bob_did/app.bsky.graph.follow/follow-alice");
+
+$t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
+  Authorization => "Bearer $bob_access",
+} => json => {
+  repo       => $bob_did,
+  collection => 'app.bsky.feed.post',
+  rkey       => 'bob-post',
+  record     => {
+    '$type'   => 'app.bsky.feed.post',
+    text      => 'hello from bob',
+    createdAt => '2026-03-10T18:02:00Z',
+  },
+})->status_is(200)
+  ->json_is('/uri' => "at://$bob_did/app.bsky.feed.post/bob-post");
+
+$t->get_ok("/xrpc/app.bsky.feed.getAuthorFeed?actor=$bob_did&limit=10" => {
+  Authorization => "Bearer $access",
+})->status_is(200)
+  ->json_is('/feed/0/post/author/viewer/following' => "at://$did/app.bsky.graph.follow/follow-bob")
+  ->json_is('/feed/0/post/author/viewer/followedBy' => "at://$bob_did/app.bsky.graph.follow/follow-alice");
 
 $t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
   Authorization => "Bearer $access",

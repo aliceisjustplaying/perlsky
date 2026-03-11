@@ -113,7 +113,7 @@ sub _post_view ($self, $c, $account, $row, $profile_value = undef, $viewer = und
   my $post = {
     uri           => $uri,
     cid           => $row->{cid},
-    author        => $self->_profile_view_basic($c, $account, $profile_value),
+    author        => $self->_profile_view_basic($c, $account, $profile_value, $viewer),
     record        => $row->{value},
     bookmarkCount => 0,
     replyCount    => $counts->{replyCount},

@@ -270,4 +270,59 @@ is($cache_store->{list_records_by_collections_calls}, 2, 'new events invalidate 
 is($cache_store->{get_accounts_by_dids_calls}, 2, 'new events trigger a fresh account batch lookup');
 isnt($third_index, $first_index, 'new events rebuild the cached index');
 
+my $follow_store = LocalTestStore->new(
+  latest_event_seq => 10,
+  list_records_by_collections => [
+    {
+      did        => $did,
+      collection => 'app.bsky.graph.follow',
+      rkey       => 'follow-bob',
+      cid        => 'bafyreifollow1',
+      value      => { subject => 'did:plc:bob' },
+    },
+    {
+      did        => 'did:plc:bob',
+      collection => 'app.bsky.graph.follow',
+      rkey       => 'follow-alice',
+      cid        => 'bafyreifollow2',
+      value      => { subject => $did },
+    },
+  ],
+);
+
+my $follow_proxy = ATProto::PDS::ServiceProxy->new;
+my $follow_context = LocalTestContext->new($follow_store);
+my $follow_index = $follow_proxy->_follow_index($follow_context);
+is($follow_store->{list_records_by_collections_calls}, 1, 'first follow index build scans follow records once');
+is_deeply(
+  $follow_store->{list_records_by_collections_args},
+  ['app.bsky.graph.follow'],
+  'follow index only requests follow records',
+);
+is($follow_index->{follows_by_actor}{$did}, 1, 'follow index counts outgoing follows');
+is($follow_index->{followers_by_subject}{$did}, 1, 'follow index counts inbound followers');
+is(
+  $follow_index->{follow_uris}{$did}{'did:plc:bob'},
+  "at://$did/app.bsky.graph.follow/follow-bob",
+  'follow index records follow URIs for viewer state',
+);
+
+my $follow_context_again = LocalTestContext->new($follow_store);
+my $cached_follow_index = $follow_proxy->_follow_index($follow_context_again);
+is($follow_store->{latest_event_seq_calls}, 2, 'follow index still checks the latest event seq on reuse');
+is($follow_store->{list_records_by_collections_calls}, 1, 'unchanged event seq reuses the cached follow index');
+is($cached_follow_index, $follow_index, 'unchanged event seq returns the cached follow index reference');
+
+my $viewer = $follow_proxy->_profile_viewer($follow_context_again, { did => 'did:plc:bob' }, { did => $did });
+is(
+  $viewer->{following},
+  "at://$did/app.bsky.graph.follow/follow-bob",
+  'profile viewer includes the outgoing follow URI',
+);
+is(
+  $viewer->{followedBy},
+  "at://did:plc:bob/app.bsky.graph.follow/follow-alice",
+  'profile viewer includes the reciprocal follow URI',
+);
+
 done_testing;

@@ -31,11 +31,13 @@ use ATProto::PDS::ServiceProxy::Preferences qw(
 use ATProto::PDS::ServiceProxy::Profile qw(
   _blob_cid
   _blob_url
+  _follow_index
   _get_local_profile
   _profile_associated
   _profile_record_value
   _profile_view_basic
   _profile_view_detailed
+  _profile_viewer
 );
 use ATProto::PDS::ServiceProxy::Threads qw(
   _get_author_feed
@@ -58,6 +60,7 @@ use ATProto::PDS::ServiceProxy::Upstream qw(
 );
 
 has settings => sub { {} };
+has local_follow_index_cache => sub { undef };
 has local_post_index_cache => sub { undef };
 has ua => sub {
   my $ua = Mojo::UserAgent->new(max_redirects => 0);
