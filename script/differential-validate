@@ -29,6 +29,8 @@ use Mojo::JSON qw(decode_json encode_json true false);
 use Mojo::URL;
 use Mojo::UserAgent;
 use ATProto::PDS::EventStream qw(decode_frame);
+use ATProto::PDS::Repo::CAR qw(read_car);
+use ATProto::PDS::Repo::DagCbor qw(decode_dag_cbor);
 
 my $root = File::Spec->rel2abs(File::Spec->catdir(dirname(__FILE__), '..'));
 my $tmp  = tempdir(CLEANUP => 1);
@@ -356,16 +358,31 @@ sub normalize_commit_frame ($frame, $did) {
   my $header = $frame->{header} || {};
   my $body   = $frame->{body}   || {};
   my $first  = $body->{ops}[0] || {};
+  my $commit_prev_is_null = 0;
+
+  if (defined $body->{commit} && defined $body->{blocks}) {
+    my $car = read_car($body->{blocks});
+    my ($commit_block) = grep {
+      $_->{cid}->to_string eq $body->{commit}->to_string
+    } @{ $car->{blocks} || [] };
+    if ($commit_block) {
+      my $commit = decode_dag_cbor($commit_block->{bytes});
+      $commit_prev_is_null = exists($commit->{prev}) && !defined($commit->{prev}) ? 1 : 0;
+    }
+  }
 
   return {
-    op         => $header->{op},
-    type       => $header->{t},
-    repo_match => (($body->{repo} // q()) eq $did) ? 1 : 0,
-    action     => $first->{action},
-    path       => $first->{path},
-    has_blocks => length($body->{blocks} // q()) > 0 ? 1 : 0,
-    has_commit => defined $body->{commit} ? 1 : 0,
-    seq_is_int => defined($body->{seq}) && $body->{seq} =~ /\A\d+\z/ ? 1 : 0,
+    op                  => $header->{op},
+    type                => $header->{t},
+    repo_match          => (($body->{repo} // q()) eq $did) ? 1 : 0,
+    action              => $first->{action},
+    path                => $first->{path},
+    has_blocks          => length($body->{blocks} // q()) > 0 ? 1 : 0,
+    has_commit          => defined $body->{commit} ? 1 : 0,
+    has_since           => exists($body->{since}) ? 1 : 0,
+    since_is_stringish  => !defined($body->{since}) || !ref($body->{since}) ? 1 : 0,
+    seq_is_int          => defined($body->{seq}) && $body->{seq} =~ /\A\d+\z/ ? 1 : 0,
+    commit_prev_is_null => $commit_prev_is_null,
   };
 }
 

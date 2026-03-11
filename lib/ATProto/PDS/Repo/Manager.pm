@@ -135,7 +135,7 @@ sub apply_writes ($self, $account, $writes, %opts) {
     version => 3,
     data    => $mst->{root},
     rev     => $rev,
-    prev    => $latest ? ATProto::PDS::Repo::CID->from_string($latest->{cid}) : undef,
+    prev    => undef,
   };
   my $unsigned_bytes = encode_dag_cbor($unsigned);
   my $sig = sign_compact_low_s($account->{private_key}, $unsigned_bytes);
@@ -183,7 +183,7 @@ sub apply_writes ($self, $account, $writes, %opts) {
       commit_cid => $commit_cid->to_string,
       payload    => {
         ops      => \@ops,
-        since    => undef,
+        since    => $latest ? $latest->{rev} : undef,
         prevData => $latest ? $latest->{root_cid} : undef,
       },
       car_bytes  => $car_bytes,
@@ -265,7 +265,7 @@ sub import_repo_car ($self, $account, $car_bytes) {
     version => 3,
     data    => $mst->{root},
     rev     => $rev,
-    prev    => $latest ? ATProto::PDS::Repo::CID->from_string($latest->{cid}) : undef,
+    prev    => undef,
   };
   my $unsigned_bytes = encode_dag_cbor($unsigned);
   my $sig = sign_compact_low_s($account->{private_key}, $unsigned_bytes);
@@ -310,7 +310,7 @@ sub import_repo_car ($self, $account, $car_bytes) {
       commit_cid => $commit_cid->to_string,
       payload    => {
         ops      => \@ops,
-        since    => undef,
+        since    => $latest ? $latest->{rev} : undef,
         prevData => $prev_data,
       },
       car_bytes  => $next_car_bytes,
