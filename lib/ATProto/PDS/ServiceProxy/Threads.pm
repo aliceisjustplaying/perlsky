@@ -207,7 +207,26 @@ sub _local_post_index ($self, $c) {
   my $index = $c->stash('local_post_index');
   return $index if $index;
 
-  $index = {
+  my $event_seq = $c->store->latest_event_seq;
+  my $cache = $self->local_post_index_cache;
+  if ($cache && (($cache->{event_seq} // -1) == $event_seq)) {
+    $c->stash(local_post_index => $cache->{index});
+    return $cache->{index};
+  }
+
+  $index = _build_local_post_index($self, $c);
+  $self->local_post_index_cache({
+    event_seq => $event_seq,
+    index     => $index,
+  });
+  $c->stash(local_post_index => $index);
+  return $index;
+}
+
+# Local appview reads can hit this repeatedly across requests, so keep the
+# expensive scan isolated behind an event-seq keyed cache.
+sub _build_local_post_index ($self, $c) {
+  my $index = {
     replies => {},
     stats   => {},
     viewer  => {},
@@ -258,7 +277,6 @@ sub _local_post_index ($self, $c) {
     $index->{replies}{$parent_uri} = \@sorted;
   }
 
-  $c->stash(local_post_index => $index);
   return $index;
 }
 

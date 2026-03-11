@@ -57,6 +57,7 @@ use ATProto::PDS::ServiceProxy::Upstream qw(
 );
 
 has settings => sub { {} };
+has local_post_index_cache => sub { undef };
 has ua => sub {
   my $ua = Mojo::UserAgent->new(max_redirects => 0);
   $ua->request_timeout(15);

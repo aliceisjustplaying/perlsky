@@ -38,7 +38,20 @@ use ATProto::PDS::ServiceProxy;
 
   sub list_accounts {
     my ($self) = @_;
+    $self->{list_accounts_calls}++;
     return $self->{list_accounts} // [];
+  }
+
+  sub all_records_for_did {
+    my ($self, $did) = @_;
+    $self->{all_records_for_did_calls}{$did}++;
+    return $self->{all_records_for_did}{$did} // [];
+  }
+
+  sub latest_event_seq {
+    my ($self) = @_;
+    $self->{latest_event_seq_calls}++;
+    return $self->{latest_event_seq} // 0;
   }
 
   sub get_record {
@@ -63,6 +76,17 @@ use ATProto::PDS::ServiceProxy;
   sub config_value {
     my ($self, $name, $default) = @_;
     return $default;
+  }
+
+  sub stash {
+    my ($self, @args) = @_;
+    $self->{stash} //= {};
+    return $self->{stash}{$args[0]} if @args == 1;
+    if (@args == 2) {
+      $self->{stash}{$args[0]} = $args[1];
+      return $self;
+    }
+    die 'unsupported stash arity';
   }
 }
 
@@ -119,5 +143,46 @@ is(
   undef,
   'remote posts still fall back to upstream handling',
 );
+
+my $cache_store = LocalTestStore->new(
+  latest_event_seq => 1,
+  list_accounts => [
+    {
+      did    => $did,
+      handle => 'alice.test',
+    },
+  ],
+  all_records_for_did => {
+    $did => [
+      {
+        collection => 'app.bsky.feed.post',
+        rkey       => 'cached-post',
+        cid        => 'bafyreicached',
+        value      => { text => 'cached' },
+      },
+    ],
+  },
+);
+
+my $cached_proxy = ATProto::PDS::ServiceProxy->new;
+my $first_cache_context = LocalTestContext->new($cache_store);
+my $second_cache_context = LocalTestContext->new($cache_store);
+my $third_cache_context = LocalTestContext->new($cache_store);
+
+my $first_index = $cached_proxy->_local_post_index($first_cache_context);
+is($cache_store->{list_accounts_calls}, 1, 'first local post index build scans accounts once');
+is($cache_store->{all_records_for_did_calls}{$did}, 1, 'first local post index build scans records once');
+
+my $second_index = $cached_proxy->_local_post_index($second_cache_context);
+is($cache_store->{latest_event_seq_calls}, 2, 'subsequent requests still check the latest event seq');
+is($cache_store->{list_accounts_calls}, 1, 'unchanged event seq reuses the cached global post index');
+is($cache_store->{all_records_for_did_calls}{$did}, 1, 'unchanged event seq avoids rescanning records');
+is($second_index, $first_index, 'unchanged event seq returns the cached index reference');
+
+$cache_store->{latest_event_seq} = 2;
+my $third_index = $cached_proxy->_local_post_index($third_cache_context);
+is($cache_store->{list_accounts_calls}, 2, 'new events invalidate the cached global post index');
+is($cache_store->{all_records_for_did_calls}{$did}, 2, 'new events trigger a rebuild scan');
+isnt($third_index, $first_index, 'new events rebuild the cached index');
 
 done_testing;
