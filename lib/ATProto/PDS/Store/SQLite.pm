@@ -14,6 +14,19 @@ use ATProto::PDS::Repo::CAR qw(read_car);
 use ATProto::PDS::Repo::CID qw(CID_CODEC_DAG_CBOR CID_CODEC_RAW);
 use ATProto::PDS::Repo::DagCbor qw(decode_dag_cbor);
 use ATProto::PDS::Metrics::Store qw(observe_store_operation);
+use ATProto::PDS::Store::SQLite::Events qw(
+  append_event
+  earliest_event_seq_after_time
+  latest_event_seq
+  list_events_after
+  list_events_from
+  next_event_after_seq
+);
+use ATProto::PDS::Store::SQLite::Labels qw(
+  get_label
+  list_labels
+  put_label
+);
 
 our @EXPORT_OK = qw(default_migrations);
 
@@ -930,82 +943,6 @@ sub search_accounts ($self, %args) {
   return $page;
 }
 
-sub append_event ($self, %args) {
-  return observe_store_operation($self->{metrics}, 'append_event', sub {
-    my $now = $args{created_at} // time;
-    _execute_sql(
-      $self->dbh,
-      q{
-        INSERT INTO events (
-          did, type, rev, commit_cid, payload_json, car_bytes, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?)
-      },
-      [
-        $args{did},
-        $args{type},
-        $args{rev},
-        $args{commit_cid},
-        _maybe_json($args{payload}),
-        $args{car_bytes},
-        $now,
-      ],
-      _blob_bind_positions_for_names(
-        [qw(did type rev commit_cid payload_json car_bytes created_at)],
-        qw(car_bytes),
-      ),
-    );
-    return $self->dbh->sqlite_last_insert_rowid;
-  });
-}
-
-sub list_events_after ($self, $cursor, %args) {
-  my $limit = $args{limit} // 100;
-  my $sql = q{SELECT * FROM events WHERE seq > ? ORDER BY seq LIMIT ?};
-  my $rows = $self->dbh->selectall_arrayref($sql, { Slice => {} }, $cursor // 0, $limit);
-  return [ map { _row_from_blob_columns(_row_from_json_columns($_, qw(payload_json)), qw(car_bytes)) } @$rows ];
-}
-
-sub list_events_from ($self, $cursor, %args) {
-  return observe_store_operation($self->{metrics}, 'list_events_from', sub {
-    my $limit = $args{limit} // 100;
-    my $sql = q{SELECT * FROM events WHERE seq >= ? ORDER BY seq LIMIT ?};
-    my $rows = $self->dbh->selectall_arrayref($sql, { Slice => {} }, $cursor // 0, $limit);
-    return [ map { _row_from_blob_columns(_row_from_json_columns($_, qw(payload_json)), qw(car_bytes)) } @$rows ];
-  });
-}
-
-sub next_event_after_seq ($self, $cursor) {
-  return observe_store_operation($self->{metrics}, 'next_event_after_seq', sub {
-    return _row_from_blob_columns(_row_from_json_columns(
-      $self->dbh->selectrow_hashref(
-        q{SELECT * FROM events WHERE seq > ? ORDER BY seq LIMIT 1},
-        undef,
-        $cursor // 0,
-      ),
-      qw(payload_json),
-    ), qw(car_bytes));
-  });
-}
-
-sub latest_event_seq ($self) {
-  return observe_store_operation($self->{metrics}, 'latest_event_seq', sub {
-    return $self->dbh->selectrow_array(
-      q{SELECT COALESCE(MAX(seq), 0) FROM events},
-    ) // 0;
-  });
-}
-
-sub earliest_event_seq_after_time ($self, $created_at) {
-  return observe_store_operation($self->{metrics}, 'earliest_event_seq_after_time', sub {
-    my $value = $self->dbh->selectrow_array(
-      q{SELECT MIN(seq) FROM events WHERE created_at >= ?},
-      undef,
-      $created_at,
-    );
-    return $value;
-  });
-}
-
 sub create_action_token ($self, %args) {
   my $token   = $args{token}   // _random_id();
   my $purpose = $args{purpose} // die 'purpose is required';
@@ -1335,110 +1272,6 @@ sub list_preferences ($self, $did, $namespace) {
     $namespace,
   );
   return [ map { decode_json($_->{pref_json}) } @$rows ];
-}
-
-sub put_label ($self, %args) {
-  return observe_store_operation($self->{metrics}, 'put_label', sub {
-    my $subject_key = $args{subject_key} // die 'subject_key is required';
-    my $src         = $args{src}         // die 'src is required';
-    my $uri         = $args{uri}         // die 'uri is required';
-    my $val         = $args{val}         // die 'val is required';
-    my $now         = $args{created_at}  // time;
-    _execute_sql(
-      $self->dbh,
-      q{
-        INSERT INTO labels (
-          subject_key, src, uri, cid, val, neg, exp, sig, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(subject_key, src, val) DO UPDATE SET
-          id = excluded.id,
-          uri = excluded.uri,
-          cid = excluded.cid,
-          neg = excluded.neg,
-          exp = excluded.exp,
-          sig = excluded.sig,
-          created_at = excluded.created_at,
-          updated_at = excluded.updated_at
-      },
-      [
-        $subject_key,
-        $src,
-        $uri,
-        $args{cid},
-        $val,
-        ($args{neg} ? 1 : 0),
-        $args{exp},
-        $args{sig},
-        $now,
-        $args{updated_at} // $now,
-      ],
-      _blob_bind_positions_for_names(
-        [qw(subject_key src uri cid val neg exp sig created_at updated_at)],
-        qw(sig),
-      ),
-    );
-    return $self->get_label(
-      subject_key => $subject_key,
-      src         => $src,
-      val         => $val,
-    );
-  });
-}
-
-sub get_label ($self, %args) {
-  return _row_from_blob_columns($self->dbh->selectrow_hashref(
-    q{
-      SELECT * FROM labels
-      WHERE subject_key = ? AND src = ? AND val = ?
-    },
-    undef,
-    $args{subject_key},
-    $args{src},
-    $args{val},
-  ), qw(sig));
-}
-
-sub list_labels ($self, %args) {
-  return observe_store_operation($self->{metrics}, 'list_labels', sub {
-    my $limit = $args{limit} // 50;
-    $limit = 250 if $limit > 250;
-    my $cursor = $args{cursor};
-    my @where;
-    my @bind;
-    if (my $sources = $args{sources}) {
-      if (@$sources) {
-        my $placeholders = join(', ', ('?') x @$sources);
-        push @where, "src IN ($placeholders)";
-        push @bind, @$sources;
-      }
-    }
-    if (defined $cursor && length $cursor) {
-      push @where, q{id > ?};
-      push @bind, int($cursor);
-    }
-    if (my $uri_patterns = $args{uri_patterns}) {
-      my ($sql, @sql_bind) = _uri_pattern_where($uri_patterns);
-      if (defined $sql) {
-        push @where, $sql;
-        push @bind, @sql_bind;
-      }
-    }
-    my $sql = q{SELECT * FROM labels};
-    $sql .= q{ WHERE } . join(q{ AND }, @where) if @where;
-    $sql .= q{ ORDER BY id ASC LIMIT ?};
-    push @bind, $limit + 1;
-    my $rows = $self->dbh->selectall_arrayref($sql, { Slice => {} }, @bind);
-    my @items = @$rows;
-    my $next_cursor;
-    if (@items > $limit) {
-      @items = @items[0 .. $limit - 1];
-      $next_cursor = $items[-1]{id};
-    }
-    return {
-      items  => [ map { _row_from_blob_columns($_, qw(sig)) } @items ],
-      cursor => $next_cursor,
-    };
-  });
 }
 
 sub reserve_signing_key ($self, %args) {
