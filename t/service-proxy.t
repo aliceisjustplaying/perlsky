@@ -150,6 +150,11 @@ $t->get_ok("/xrpc/app.bsky.actor.getProfile?actor=$did" => {
 })->status_is(200)
   ->json_is('/did' => $did)
   ->json_is('/handle' => $created->{handle})
+  ->json_is('/associated/chat/allowIncoming' => 'all')
+  ->json_is('/associated/activitySubscription/allowSubscriptions' => 'followers')
+  ->json_is('/labels' => [])
+  ->json_has('/createdAt')
+  ->json_has('/indexedAt')
   ->json_is('/postsCount' => 0);
 
 $t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
@@ -177,7 +182,12 @@ $t->get_ok("/xrpc/app.bsky.feed.getAuthorFeed?actor=$did&limit=10" => {
   Authorization => "Bearer $access",
 })->status_is(200)
   ->json_is('/feed/0/post/uri' => $post_uri)
-  ->json_is('/feed/0/post/record/text' => 'browser smoke post');
+  ->json_is('/feed/0/post/record/text' => 'browser smoke post')
+  ->json_is('/feed/0/post/bookmarkCount' => 0)
+  ->json_is('/feed/0/post/author/associated/chat/allowIncoming' => 'all')
+  ->json_is('/feed/0/post/author/associated/activitySubscription/allowSubscriptions' => 'followers')
+  ->json_is('/feed/0/post/author/labels' => [])
+  ->json_has('/feed/0/post/author/createdAt');
 
 $t->get_ok('/xrpc/app.bsky.feed.getPostThread?uri=' . _uri_escape($post_uri) => {
   Authorization => "Bearer $access",

@@ -225,13 +225,11 @@ sub _get_local_profile ($self, $c) {
   my $result = {
     %{ $self->_profile_view_detailed($c, $account, $profile_value) },
     associated => {
+      %{ $self->_profile_associated },
       lists                => 0,
       feedgens             => 0,
       starterPacks         => 0,
       labeler              => JSON::PP::false,
-      activitySubscription => {
-        allowSubscriptions => 'followers',
-      },
     },
     viewer => {
       muted     => JSON::PP::false,
@@ -335,8 +333,14 @@ sub _profile_view_basic ($self, $c, $account, $profile_value = undef) {
   my $view = {
     did    => $account->{did},
     handle => $account->{handle},
+    associated => $self->_profile_associated,
+    labels     => [],
+    createdAt  => iso8601($account->{created_at}),
   };
-  $view->{displayName} = $profile_value->{displayName} if defined $profile_value->{displayName};
+  $view->{displayName} = $profile_value->{displayName}
+    if defined($profile_value->{displayName}) && length($profile_value->{displayName});
+  $view->{pronouns} = $profile_value->{pronouns}
+    if defined($profile_value->{pronouns}) && length($profile_value->{pronouns});
   if (my $avatar_cid = $self->_blob_cid($profile_value->{avatar})) {
     $view->{avatar} = $self->_blob_url($c, $account->{did}, $avatar_cid);
   }
@@ -347,17 +351,31 @@ sub _profile_view_detailed ($self, $c, $account, $profile_value = undef) {
   $profile_value //= $self->_profile_record_value($c, $account);
   my $view = {
     %{ $self->_profile_view_basic($c, $account, $profile_value) },
-    labels         => [],
     createdAt      => iso8601($account->{created_at}),
+    indexedAt      => iso8601($account->{created_at}),
     followersCount => 0,
     followsCount   => 0,
     postsCount     => 0 + $c->store->count_records_by_collection($account->{did}, 'app.bsky.feed.post'),
   };
-  $view->{description} = $profile_value->{description} if defined $profile_value->{description};
+  $view->{description} = $profile_value->{description}
+    if defined($profile_value->{description}) && length($profile_value->{description});
+  $view->{website} = $profile_value->{website}
+    if defined($profile_value->{website}) && length($profile_value->{website});
   if (my $banner_cid = $self->_blob_cid($profile_value->{banner})) {
     $view->{banner} = $self->_blob_url($c, $account->{did}, $banner_cid);
   }
   return $view;
+}
+
+sub _profile_associated ($self) {
+  return {
+    chat => {
+      allowIncoming => 'all',
+    },
+    activitySubscription => {
+      allowSubscriptions => 'followers',
+    },
+  };
 }
 
 sub _blob_cid ($self, $blob) {
@@ -393,7 +411,7 @@ sub _post_indexed_at ($self, $row) {
   return iso8601($row->{created_at} // $row->{updated_at});
 }
 
-sub _post_view ($self, $c, $account, $row, $profile_value = undef, $viewer = undef) {
+sub _post_view ($self, $c, $account, $row, $profile_value = undef, $viewer = undef, $depth = 0) {
   my $uri = $self->_post_uri($account, $row);
   my $counts = $self->_post_counts_and_viewer($c, $uri, $viewer);
   my $post = {
@@ -401,6 +419,7 @@ sub _post_view ($self, $c, $account, $row, $profile_value = undef, $viewer = und
     cid        => $row->{cid},
     author     => $self->_profile_view_basic($c, $account, $profile_value),
     record     => $row->{value},
+    bookmarkCount => 0,
     replyCount => $counts->{replyCount},
     repostCount => $counts->{repostCount},
     likeCount  => $counts->{likeCount},
@@ -408,6 +427,10 @@ sub _post_view ($self, $c, $account, $row, $profile_value = undef, $viewer = und
     indexedAt  => $self->_post_indexed_at($row),
     labels     => [],
   };
+  if ($depth < 2) {
+    my $embed = $self->_post_embed_view($c, $account, $row->{value}, $viewer, $depth + 1);
+    $post->{embed} = $embed if defined $embed;
+  }
   $post->{viewer} = $counts->{viewer} if %{ $counts->{viewer} };
   return $post;
 }
@@ -510,6 +533,107 @@ sub _quoted_uri ($self, $value) {
       && ref($embed->{record}) eq 'HASH'
       && ref($embed->{record}{record}) eq 'HASH';
   return undef;
+}
+
+sub _post_embed_view ($self, $c, $account, $value, $viewer = undef, $depth = 0) {
+  return undef unless ref($value) eq 'HASH';
+  my $embed = $value->{embed};
+  return undef unless ref($embed) eq 'HASH';
+
+  my $type = $embed->{'$type'} // q();
+  if ($type eq 'app.bsky.embed.images') {
+    my @images = map {
+      my $cid = $self->_blob_cid($_->{image});
+      +{
+        thumb    => $self->_blob_url($c, $account->{did}, $cid),
+        fullsize => $self->_blob_url($c, $account->{did}, $cid),
+        alt      => $_->{alt} // q(),
+        (ref($_->{aspectRatio}) eq 'HASH' ? (aspectRatio => $_->{aspectRatio}) : ()),
+      }
+    } grep { ref($_) eq 'HASH' && $self->_blob_cid($_->{image}) } @{ $embed->{images} // [] };
+
+    return undef unless @images;
+    return {
+      '$type' => 'app.bsky.embed.images#view',
+      images  => \@images,
+    };
+  }
+
+  if ($type eq 'app.bsky.embed.external' && ref($embed->{external}) eq 'HASH') {
+    my $external = $embed->{external};
+    my %view = (
+      uri         => $external->{uri} // q(),
+      title       => $external->{title} // q(),
+      description => $external->{description} // q(),
+    );
+    if (my $cid = $self->_blob_cid($external->{thumb})) {
+      $view{thumb} = $self->_blob_url($c, $account->{did}, $cid);
+    }
+    return {
+      '$type'    => 'app.bsky.embed.external#view',
+      external   => \%view,
+    };
+  }
+
+  if ($type eq 'app.bsky.embed.record' && ref($embed->{record}) eq 'HASH') {
+    return {
+      '$type' => 'app.bsky.embed.record#view',
+      record  => $self->_record_embed_view($c, $embed->{record}, $viewer, $depth),
+    };
+  }
+
+  if ($type eq 'app.bsky.embed.recordWithMedia'
+      && ref($embed->{record}) eq 'HASH'
+      && ref($embed->{media}) eq 'HASH') {
+    my $record = $self->_record_embed_view($c, $embed->{record}{record} // $embed->{record}, $viewer, $depth);
+    my $media = $self->_post_embed_view(
+      $c,
+      $account,
+      { embed => $embed->{media} },
+      $viewer,
+      $depth,
+    );
+    return undef unless defined $record && defined $media;
+    return {
+      '$type'  => 'app.bsky.embed.recordWithMedia#view',
+      record   => {
+        '$type' => 'app.bsky.embed.record#view',
+        record  => $record,
+      },
+      media => $media,
+    };
+  }
+
+  return undef;
+}
+
+sub _record_embed_view ($self, $c, $record_ref, $viewer = undef, $depth = 0) {
+  my $uri = $record_ref->{uri} // q();
+  my $resolved = $self->_resolve_local_post_uri($c, $uri);
+  return {
+    '$type'    => 'app.bsky.embed.record#viewNotFound',
+    uri        => $uri,
+    notFound   => JSON::PP::true,
+  } unless $resolved;
+
+  my ($account, $row) = @$resolved;
+  my $profile_value = $self->_profile_record_value($c, $account);
+  my $post_view = $self->_post_view($c, $account, $row, $profile_value, $viewer, $depth);
+  my %record_view = (
+    '$type'     => 'app.bsky.embed.record#viewRecord',
+    uri         => $post_view->{uri},
+    cid         => $post_view->{cid},
+    author      => $post_view->{author},
+    value       => $post_view->{record},
+    indexedAt   => $post_view->{indexedAt},
+  );
+  $record_view{labels} = $post_view->{labels} if $post_view->{labels};
+  $record_view{replyCount} = $post_view->{replyCount} if defined $post_view->{replyCount};
+  $record_view{repostCount} = $post_view->{repostCount} if defined $post_view->{repostCount};
+  $record_view{likeCount} = $post_view->{likeCount} if defined $post_view->{likeCount};
+  $record_view{quoteCount} = $post_view->{quoteCount} if defined $post_view->{quoteCount};
+  $record_view{embeds} = [ $post_view->{embed} ] if defined $post_view->{embed};
+  return \%record_view;
 }
 
 1;
