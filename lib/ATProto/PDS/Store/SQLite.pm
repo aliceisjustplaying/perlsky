@@ -1391,12 +1391,19 @@ sub list_labels ($self, %args) {
       push @where, q{id > ?};
       push @bind, int($cursor);
     }
+    if (my $uri_patterns = $args{uri_patterns}) {
+      my ($sql, @sql_bind) = _uri_pattern_where($uri_patterns);
+      if (defined $sql) {
+        push @where, $sql;
+        push @bind, @sql_bind;
+      }
+    }
     my $sql = q{SELECT * FROM labels};
     $sql .= q{ WHERE } . join(q{ AND }, @where) if @where;
-    $sql .= q{ ORDER BY id ASC};
+    $sql .= q{ ORDER BY id ASC LIMIT ?};
+    push @bind, $limit + 1;
     my $rows = $self->dbh->selectall_arrayref($sql, { Slice => {} }, @bind);
-    my @filtered = grep { _matches_uri_patterns($_->{uri}, $args{uri_patterns}) } @$rows;
-    my @items = @filtered;
+    my @items = @$rows;
     my $next_cursor;
     if (@items > $limit) {
       @items = @items[0 .. $limit - 1];
@@ -2247,15 +2254,25 @@ sub _maybe_json ($value) {
   return ref($value) ? encode_json($value) : $value;
 }
 
-sub _matches_uri_patterns ($uri, $patterns = undef) {
-  return 1 unless $patterns && @$patterns;
+sub _uri_pattern_where ($patterns) {
+  return unless $patterns && @$patterns;
+  my (@clauses, @bind);
   for my $pattern (@$patterns) {
-    return 1 if $pattern eq $uri;
-    if ($pattern =~ /\A(.+)\*\z/ && index($uri, $1) == 0) {
-      return 1;
+    if ($pattern =~ /\A(.+)\*\z/) {
+      push @clauses, q{uri LIKE ? ESCAPE '\'};
+      push @bind, _escape_like_pattern($1) . '%';
+      next;
     }
+    push @clauses, q{uri = ?};
+    push @bind, $pattern;
   }
-  return 0;
+  return unless @clauses;
+  return '(' . join(' OR ', @clauses) . ')', @bind;
+}
+
+sub _escape_like_pattern ($pattern) {
+  $pattern =~ s/([%_\\])/\\$1/g;
+  return $pattern;
 }
 
 sub _random_id {
