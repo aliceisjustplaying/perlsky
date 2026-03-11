@@ -84,10 +84,16 @@ $appview_app->routes->any('/xrpc/*nsid')->to(cb => sub {
       did    => $actor,
       handle => $actor,
     };
+    $c->res->headers->header('Cache-Control' => 'public, max-age=30');
+    $c->res->headers->header('ETag' => 'W/"profile-mock"');
     return $c->render(json => {
       %$profile,
       auth => $c->req->headers->authorization,
     });
+  }
+  if ($nsid eq 'app.bsky.actor.getProfiles') {
+    $c->res->headers->header('Cache-Control' => 'public, max-age=30');
+    $c->res->headers->header('ETag' => 'W/"profiles-mock"');
   }
   my %body = (
     nsid => $nsid,
@@ -269,7 +275,9 @@ $t->get_ok('/xrpc/app.bsky.notification.getPreferences' => {
 $t->get_ok("/xrpc/app.bsky.actor.getProfile?actor=$did" => {
   Authorization => "Bearer $access",
 })->status_is(200)
-  ->json_is('/did' => url_unescape($did));
+  ->json_is('/did' => url_unescape($did))
+  ->header_is('Cache-Control' => 'public, max-age=30')
+  ->header_is('ETag' => 'W/"profile-mock"');
 ok($t->tx->res->json->{auth}, 'proxied getProfile forwards bearer auth upstream');
 
 $t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
@@ -318,12 +326,16 @@ $bob_profile->{viewer}{followedBy} = "at://$bob_did/app.bsky.graph.follow/follow
 
 $t->get_ok("/xrpc/app.bsky.actor.getProfile?actor=$did" => {
   Authorization => "Bearer $access",
-})->status_is(200);
+})->status_is(200)
+  ->header_is('Cache-Control' => 'public, max-age=30')
+  ->header_is('ETag' => 'W/"profile-mock"');
 ok($t->tx->res->json->{auth}, 'proxied getProfile keeps forwarding auth after follow activity');
 
 $t->get_ok("/xrpc/app.bsky.actor.getProfile?actor=$bob_did" => {
   Authorization => "Bearer $access",
-})->status_is(200);
+})->status_is(200)
+  ->header_is('Cache-Control' => 'public, max-age=30')
+  ->header_is('ETag' => 'W/"profile-mock"');
 ok($t->tx->res->json->{auth}, 'proxied getProfile works for other local actors too');
 
 $t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
@@ -366,7 +378,9 @@ my $post_uri = $root_post->{uri};
 
 $t->get_ok("/xrpc/app.bsky.actor.getProfile?actor=$did" => {
   Authorization => "Bearer $access",
-})->status_is(200);
+})->status_is(200)
+  ->header_is('Cache-Control' => 'public, max-age=30')
+  ->header_is('ETag' => 'W/"profile-mock"');
 ok($t->tx->res->json->{auth}, 'proxied getProfile stays available after local posts exist');
 
 $t->get_ok("/xrpc/app.bsky.feed.getAuthorFeed?actor=$did&limit=10" => {

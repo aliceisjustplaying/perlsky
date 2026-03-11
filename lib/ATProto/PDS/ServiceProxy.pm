@@ -159,6 +159,10 @@ sub proxy_xrpc_request ($self, $c, $nsid) {
     qw(
       Content-Type
       Content-Language
+      Cache-Control
+      ETag
+      Last-Modified
+      Expires
       Atproto-Repo-Rev
       Atproto-Content-Labelers
       Retry-After
