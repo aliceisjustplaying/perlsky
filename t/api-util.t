@@ -28,16 +28,19 @@ use ATProto::PDS::API::Util qw(flatten_params resolve_did_account resolve_repo);
 
   sub get_account_by_handle {
     my ($self, $handle) = @_;
+    $self->{get_account_by_handle_calls}{$handle}++;
     return $self->{accounts_by_handle}{$handle};
   }
 
   sub get_account_by_did {
     my ($self, $did) = @_;
+    $self->{get_account_by_did_calls}{$did}++;
     return $self->{accounts_by_did}{$did};
   }
 
   sub list_accounts {
     my ($self) = @_;
+    $self->{list_accounts_calls}++;
     return $self->{list_accounts} // [];
   }
 }
@@ -58,6 +61,17 @@ use ATProto::PDS::API::Util qw(flatten_params resolve_did_account resolve_repo);
   sub config_value {
     my ($self, $key, $default) = @_;
     return exists $self->{config}{$key} ? $self->{config}{$key} : $default;
+  }
+
+  sub stash {
+    my ($self, @args) = @_;
+    $self->{stash} //= {};
+    return $self->{stash}{$args[0]} if @args == 1;
+    if (@args == 2) {
+      $self->{stash}{$args[0]} = $args[1];
+      return $self;
+    }
+    die 'unsupported stash arity';
   }
 }
 
@@ -86,7 +100,17 @@ my $c = ApiUtilTestContext->new($store, config => {
 is(resolve_repo($c, 'alice.test')->{did}, 'did:plc:alice', 'resolve_repo finds handles directly');
 is(resolve_repo($c, 'Alice.Test')->{did}, 'did:plc:alice', 'resolve_repo normalizes mixed-case handles');
 is(resolve_repo($c, 'did:plc:alice')->{handle}, 'alice.test', 'resolve_repo finds plain DIDs directly');
-is(resolve_did_account($c, 'did%3Aplc%3Aalice')->{handle}, 'alice.test', 'resolve_did_account accepts percent-encoded DIDs');
 is(resolve_repo($c, undef), undef, 'resolve_repo returns undef for empty input');
+is(resolve_repo($c, 'alice.test')->{did}, 'did:plc:alice', 'repeat resolve_repo handle lookup still resolves');
+is($store->{get_account_by_handle_calls}{'alice.test'}, 1, 'repeat resolve_repo handle lookup reuses the request cache');
+
+$store->{list_accounts_calls} = 0;
+my $encoded_c = ApiUtilTestContext->new($store, config => {
+  service_handle_domain => 'test',
+});
+is(resolve_did_account($encoded_c, 'did%3Aplc%3Aalice')->{handle}, 'alice.test', 'resolve_did_account accepts percent-encoded DIDs');
+is(resolve_did_account($encoded_c, 'did%3Aplc%3Aalice')->{handle}, 'alice.test', 'repeat resolve_did_account still resolves percent-encoded DIDs');
+is($store->{get_account_by_did_calls}{'did%3Aplc%3Aalice'}, 1, 'repeat percent-encoded DID lookup avoids another exact DID miss');
+is($store->{list_accounts_calls}, 1, 'repeat percent-encoded DID lookup reuses the request cache');
 
 done_testing;

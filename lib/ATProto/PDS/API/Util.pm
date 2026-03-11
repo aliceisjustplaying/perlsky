@@ -53,26 +53,59 @@ sub iso8601 ($epoch = undef) {
 }
 
 sub resolve_did_account ($c, $did) {
-  my $account = $c->store->get_account_by_did($did);
-  return $account if $account;
   my $target = lc($did // q());
   $target =~ s/%3a/:/ig;
+  my $cache = $c->can('stash') ? ($c->stash('resolve_did_account_cache') || {}) : {};
+  return $cache->{$target} if exists $cache->{$target};
+
+  my $account = $c->store->get_account_by_did($did);
+  if ($account) {
+    $cache->{$target} = $account if $c->can('stash');
+    $c->stash(resolve_did_account_cache => $cache) if $c->can('stash');
+    return $account;
+  }
+
   for my $row (@{ $c->store->list_accounts }) {
     my $candidate = lc($row->{did} // q());
     $candidate =~ s/%3a/:/ig;
-    return $row if $candidate eq $target;
+    if ($candidate eq $target) {
+      if ($c->can('stash')) {
+        $cache->{$target} = $row;
+        $c->stash(resolve_did_account_cache => $cache);
+      }
+      return $row;
+    }
+  }
+  if ($c->can('stash')) {
+    $cache->{$target} = undef;
+    $c->stash(resolve_did_account_cache => $cache);
   }
   return undef;
 }
 
 sub resolve_repo ($c, $repo) {
   return undef unless defined $repo && length $repo;
+  my $cache = $c->can('stash') ? ($c->stash('resolve_repo_cache') || {}) : {};
+  my $cache_key = lc($repo);
+  return $cache->{$cache_key} if exists $cache->{$cache_key};
+
   if ($repo !~ /\Adid:/i) {
     my $normalized = normalize_handle($repo, $c->config_value('service_handle_domain', 'localhost'));
-    return $c->store->get_account_by_handle($repo)
+    my $account = $c->store->get_account_by_handle($repo)
       || (defined($normalized) ? $c->store->get_account_by_handle($normalized) : undef);
+    if ($c->can('stash')) {
+      $cache->{$cache_key} = $account;
+      $cache->{ lc($normalized) } = $account if defined $normalized && length $normalized;
+      $c->stash(resolve_repo_cache => $cache);
+    }
+    return $account;
   }
-  return resolve_did_account($c, $repo);
+  my $account = resolve_did_account($c, $repo);
+  if ($c->can('stash')) {
+    $cache->{$cache_key} = $account;
+    $c->stash(resolve_repo_cache => $cache);
+  }
+  return $account;
 }
 
 sub subscription_start_seq ($c, %args) {
