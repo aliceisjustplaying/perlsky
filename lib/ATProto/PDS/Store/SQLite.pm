@@ -362,6 +362,7 @@ sub revoke_app_passwords_by_did ($self, $did, %args) {
 sub put_blob ($self, %args) {
   return observe_store_operation($self->{metrics}, 'put_blob', sub {
     my $cid = $args{cid} // die 'cid is required';
+    my $did = $args{did} // die 'did is required';
     my $now = $args{created_at} // time;
     $self->dbh->do(
       q{
@@ -370,7 +371,7 @@ sub put_blob ($self, %args) {
           created_at, referenced_at, quarantined_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(cid) DO UPDATE SET
-          did = excluded.did,
+          did = COALESCE(blobs.did, excluded.did),
           mime_type = excluded.mime_type,
           byte_size = excluded.byte_size,
           storage_path = excluded.storage_path,
@@ -380,7 +381,7 @@ sub put_blob ($self, %args) {
       },
       undef,
       $cid,
-      $args{did},
+      $did,
       $args{mime_type},
       $args{byte_size},
       $args{storage_path},
@@ -388,6 +389,19 @@ sub put_blob ($self, %args) {
       $now,
       $args{referenced_at},
       $args{quarantined_at},
+    );
+    $self->dbh->do(
+      q{
+        INSERT INTO blob_owners (cid, did, created_at, referenced_at)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(cid, did) DO UPDATE SET
+          referenced_at = COALESCE(excluded.referenced_at, blob_owners.referenced_at)
+      },
+      undef,
+      $cid,
+      $did,
+      $now,
+      $args{referenced_at},
     );
     return $self->get_blob($cid);
   });
@@ -421,7 +435,21 @@ sub update_blob ($self, $cid, %args) {
   return $self->get_blob($cid);
 }
 
-sub mark_blobs_referenced ($self, @cids) {
+sub blob_owned_by_did ($self, $cid, $did) {
+  return 0 unless defined $cid && length $cid && defined $did && length $did;
+  return !!($self->dbh->selectrow_array(
+    q{SELECT 1 FROM blob_owners WHERE cid = ? AND did = ?},
+    undef,
+    $cid,
+    $did,
+  ) // 0);
+}
+
+sub mark_blobs_referenced ($self, $did, @cids) {
+  if (!defined($did) || ref($did) || (!length($did) && @cids)) {
+    unshift @cids, $did if defined $did;
+    undef $did;
+  }
   return 0 unless @cids;
   my $now = time;
   my %seen;
@@ -432,6 +460,21 @@ sub mark_blobs_referenced ($self, @cids) {
       $now,
       $cid,
     );
+    if (defined $did && length $did) {
+      $self->dbh->do(
+        q{
+          INSERT INTO blob_owners (cid, did, created_at, referenced_at)
+          VALUES (?, ?, ?, ?)
+          ON CONFLICT(cid, did) DO UPDATE SET
+            referenced_at = excluded.referenced_at
+        },
+        undef,
+        $cid,
+        $did,
+        $now,
+        $now,
+      );
+    }
   }
   return scalar keys %seen;
 }
@@ -440,12 +483,17 @@ sub list_blobs_by_did ($self, $did, %args) {
   my $limit = $args{limit} // 500;
   my $cursor = $args{cursor};
   my @bind = ($did);
-  my $sql = q{SELECT * FROM blobs WHERE did = ?};
+  my $sql = q{
+    SELECT b.*
+    FROM blobs b
+    JOIN blob_owners bo ON bo.cid = b.cid
+    WHERE bo.did = ?
+  };
   if (defined $cursor && length $cursor) {
-    $sql .= q{ AND cid > ?};
+    $sql .= q{ AND b.cid > ?};
     push @bind, $cursor;
   }
-  $sql .= q{ ORDER BY cid LIMIT ?};
+  $sql .= q{ ORDER BY b.cid LIMIT ?};
   push @bind, $limit + 1;
   my $rows = $self->dbh->selectall_arrayref($sql, { Slice => {} }, @bind);
   return _paginate($rows, $limit, 'cid');
@@ -453,7 +501,7 @@ sub list_blobs_by_did ($self, $did, %args) {
 
 sub count_blobs_by_did ($self, $did) {
   return $self->dbh->selectrow_array(
-    q{SELECT COUNT(*) FROM blobs WHERE did = ?},
+    q{SELECT COUNT(*) FROM blob_owners WHERE did = ?},
     undef,
     $did,
   ) // 0;
@@ -1632,6 +1680,18 @@ sub default_migrations {
         },
         q{CREATE INDEX IF NOT EXISTS blobs_by_did ON blobs (did, created_at DESC)},
         q{
+          CREATE TABLE IF NOT EXISTS blob_owners (
+            cid TEXT NOT NULL,
+            did TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            referenced_at INTEGER,
+            PRIMARY KEY (cid, did),
+            FOREIGN KEY (cid) REFERENCES blobs(cid),
+            FOREIGN KEY (did) REFERENCES accounts(did)
+          )
+        },
+        q{CREATE INDEX IF NOT EXISTS blob_owners_by_did ON blob_owners (did, created_at DESC)},
+        q{
           CREATE TABLE IF NOT EXISTS repo_heads (
             did TEXT PRIMARY KEY,
             commit_cid TEXT,
@@ -1848,6 +1908,29 @@ sub default_migrations {
           )
         },
         q{CREATE INDEX IF NOT EXISTS preferences_lookup_idx ON preferences (did, namespace, pref_type)},
+      ],
+    },
+    {
+      version => 7,
+      statements => [
+        q{
+          CREATE TABLE IF NOT EXISTS blob_owners (
+            cid TEXT NOT NULL,
+            did TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            referenced_at INTEGER,
+            PRIMARY KEY (cid, did),
+            FOREIGN KEY (cid) REFERENCES blobs(cid),
+            FOREIGN KEY (did) REFERENCES accounts(did)
+          )
+        },
+        q{CREATE INDEX IF NOT EXISTS blob_owners_by_did ON blob_owners (did, created_at DESC)},
+        q{
+          INSERT OR IGNORE INTO blob_owners (cid, did, created_at, referenced_at)
+          SELECT cid, did, created_at, referenced_at
+          FROM blobs
+          WHERE did IS NOT NULL
+        },
       ],
     },
   );

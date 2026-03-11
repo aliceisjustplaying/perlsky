@@ -95,7 +95,7 @@ sub apply_writes ($self, $account, $writes, %opts) {
         status  => 400,
         error   => 'InvalidBlob',
         message => "Could not find blob: $blob_cid",
-      } unless $blob && ($blob->{did} // q()) eq $did;
+      } unless $blob && $store->blob_owned_by_did($blob_cid, $did);
       die {
         status  => 400,
         error   => 'BlobTakenDown',
@@ -187,7 +187,7 @@ sub apply_writes ($self, $account, $writes, %opts) {
     }
     $store->replace_records_for_did($did, [ values %$records ]);
     for my $record (values %$records) {
-      $store->mark_blobs_referenced(_blob_cids($record->{value}));
+      $store->mark_blobs_referenced($did, _blob_cids($record->{value}));
     }
     $store->put_commit(
       did         => $did,

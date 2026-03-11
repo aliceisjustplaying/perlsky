@@ -120,6 +120,39 @@ $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.getBlob')->query(
   ->content_type_is('text/plain')
   ->content_is('blob-bytes');
 
+$t->post_ok('/xrpc/com.atproto.server.createAccount' => json => {
+  handle   => 'bob.example.test',
+  email    => 'bob@example.test',
+  password => 'hunter22',
+})->status_is(200);
+
+my $second = $t->tx->res->json;
+my $second_did = $second->{did};
+my $second_access = $second->{accessJwt};
+
+$t->post_ok('/xrpc/com.atproto.repo.uploadBlob' => {
+  Authorization => "Bearer $second_access",
+  'Content-Type' => 'text/plain',
+} => 'blob-bytes')->status_is(200)
+  ->json_is('/blob/ref/$link' => $blob_cid);
+
+$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.listBlobs')->query(
+  did => $did,
+))->status_is(200)
+  ->json_is('/cids/0' => $blob_cid);
+
+$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.listBlobs')->query(
+  did => $second_did,
+))->status_is(200)
+  ->json_is('/cids/0' => $blob_cid);
+
+$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.getBlob')->query(
+  did => $second_did,
+  cid => $blob_cid,
+))->status_is(200)
+  ->content_type_is('text/plain')
+  ->content_is('blob-bytes');
+
 $t->get_ok('/xrpc/com.atproto.server.checkAccountStatus' => {
   Authorization => "Bearer $access",
 })->status_is(200)
@@ -130,6 +163,12 @@ $t->get_ok('/xrpc/com.atproto.server.checkAccountStatus' => {
   ->json_has('/indexedRecords')
   ->json_has('/expectedBlobs')
   ->json_has('/importedBlobs');
+
+$t->get_ok('/xrpc/com.atproto.server.checkAccountStatus' => {
+  Authorization => "Bearer $second_access",
+})->status_is(200)
+  ->json_is('/expectedBlobs' => 1)
+  ->json_is('/importedBlobs' => 1);
 
 $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.admin.getAccountInfo')->query(
   did => $did,

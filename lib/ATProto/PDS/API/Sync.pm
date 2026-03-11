@@ -104,7 +104,7 @@ sub register_sync_handlers ($registry, $app) {
     my $account = _repo_by_did_or_error($c);
     my $blob = $c->store->get_blob($c->param('cid') // q());
     xrpc_error(404, 'BlobNotFound', 'Blob was not found')
-      unless $blob && ($blob->{did} // q()) eq $account->{did};
+      unless $blob && $c->store->blob_owned_by_did($c->param('cid') // q(), $account->{did});
     assert_blob_readable($c, $account, $blob);
     xrpc_error(404, 'BlobNotFound', 'Blob content is not available')
       unless $blob->{storage_path} && -f $blob->{storage_path};

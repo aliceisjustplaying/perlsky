@@ -286,7 +286,7 @@ sub _validated_subject ($c, $subject) {
   if (exists($subject->{did}) && exists($subject->{cid})) {
     my $blob = $c->store->get_blob($subject->{cid});
     xrpc_error(404, 'NotFound', 'Subject not found')
-      unless $blob && ($blob->{did} // q()) eq ($subject->{did} // q());
+      unless $blob && $c->store->blob_owned_by_did($subject->{cid}, $subject->{did});
     return {
       %{$subject},
       '$type' => ($subject->{'$type'} // 'com.atproto.admin.defs#repoBlobRef'),
