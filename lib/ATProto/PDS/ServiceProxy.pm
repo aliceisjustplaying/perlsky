@@ -11,6 +11,11 @@ use JSON::PP ();
 use ATProto::PDS::API::Server qw(require_auth);
 use ATProto::PDS::API::Util qw(iso8601 resolve_repo xrpc_error);
 use ATProto::PDS::Auth::JWT qw(encode_service_jwt);
+use ATProto::PDS::Constants qw(
+  SERVICE_ID_BSKY_APPVIEW
+  SERVICE_ID_BSKY_CHAT
+  TOKEN_AUD_ACCESS
+);
 use ATProto::PDS::Moderation qw(parse_at_uri);
 
 has settings => sub { {} };
@@ -77,7 +82,7 @@ sub proxy_xrpc_request ($self, $c, $nsid) {
 
   my $auth = $c->req->headers->authorization;
   if (defined $auth && length $auth) {
-    my (undef, $account) = require_auth($c, audience => 'access');
+    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS);
     xrpc_error(500, 'SigningKeyUnavailable', 'Account signing key is unavailable')
       unless defined($account->{private_key}) && length($account->{private_key});
     $headers{Authorization} = 'Bearer ' . encode_service_jwt(
@@ -209,13 +214,13 @@ sub _target_from_proxy_header ($self, $proxy_to) {
   return {
     did => $appview_did,
     url => $self->_config('bsky_appview_url', 'https://api.bsky.app'),
-  } if $did eq $appview_did && $service_id eq 'bsky_appview';
+  } if $did eq $appview_did && $service_id eq SERVICE_ID_BSKY_APPVIEW;
 
   my $chat_did = $self->_config('chat_service_did', 'did:web:api.bsky.chat');
   return {
     did => $chat_did,
     url => $self->_config('chat_service_url', 'https://api.bsky.chat'),
-  } if $did eq $chat_did && $service_id eq 'bsky_chat';
+  } if $did eq $chat_did && $service_id eq SERVICE_ID_BSKY_CHAT;
 
   xrpc_error(400, 'InvalidRequest', "Unsupported proxy target $proxy_to");
 }
@@ -228,7 +233,7 @@ sub _get_preferences ($self, $c) {
   xrpc_error(405, 'MethodNotAllowed', 'app.bsky.actor.getPreferences expects GET')
     unless $c->req->method eq 'GET';
 
-  my (undef, $account) = require_auth($c, audience => 'access');
+  my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS);
   my $preferences = $c->store->list_preferences($account->{did}, 'app.bsky');
   $c->render(json => { preferences => $preferences });
   return 200;
@@ -238,7 +243,7 @@ sub _put_preferences ($self, $c) {
   xrpc_error(405, 'MethodNotAllowed', 'app.bsky.actor.putPreferences expects POST')
     unless $c->req->method eq 'POST';
 
-  my (undef, $account) = require_auth($c, audience => 'access');
+  my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS);
   my $body = $c->req->json || {};
   my $preferences = $body->{preferences};
   xrpc_error(400, 'InvalidRequest', 'preferences must be an array')
@@ -360,7 +365,7 @@ sub _get_post_thread ($self, $c) {
 sub _optional_auth_account ($self, $c) {
   my $auth = $c->req->headers->authorization;
   return undef unless defined $auth && length $auth;
-  my (undef, $account) = require_auth($c, audience => 'access');
+  my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS);
   return $account;
 }
 

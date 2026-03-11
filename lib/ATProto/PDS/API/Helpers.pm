@@ -10,6 +10,7 @@ use JSON::PP ();
 
 use ATProto::PDS::API::Util qw(iso8601 xrpc_error);
 use ATProto::PDS::Auth::Password qw(verify_password);
+use ATProto::PDS::Constants qw(TOKEN_AUD_ACCESS);
 use ATProto::PDS::Moderation qw(admin_authorization_status subject_key);
 
 our @EXPORT_OK = qw(
@@ -52,7 +53,7 @@ sub verify_login_password ($c, $account, $password) {
   return undef unless $account && defined $password;
   return {
     kind  => 'account',
-    scope => 'access',
+    scope => TOKEN_AUD_ACCESS,
   } if verify_account_password($c, $account, $password);
 
   for my $app_password (@{ $c->store->list_app_passwords_by_did($account->{did}) }) {

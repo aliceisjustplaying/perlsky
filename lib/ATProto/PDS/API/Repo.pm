@@ -12,6 +12,7 @@ use JSON::PP ();
 
 use ATProto::PDS::API::Server qw(require_auth);
 use ATProto::PDS::API::Util qw(blob_ref resolve_repo xrpc_error);
+use ATProto::PDS::Constants qw(TOKEN_AUD_ACCESS);
 use ATProto::PDS::Moderation qw(assert_record_readable assert_repo_readable assert_repo_writable is_record_takedown parse_at_uri);
 use ATProto::PDS::Repo::CID;
 
@@ -105,7 +106,7 @@ sub register_repo_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.repo.uploadBlob', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => 'access');
+    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS);
     assert_repo_writable($c, $account);
     my $bytes = $c->req->body // q();
     my $cid = ATProto::PDS::Repo::CID->for_raw($bytes)->to_string;
@@ -141,7 +142,7 @@ sub register_repo_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.repo.listMissingBlobs', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => 'access');
+    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS);
     assert_repo_writable($c, $account);
     my $page = {
       items  => [],
@@ -153,7 +154,7 @@ sub register_repo_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.repo.importRepo', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => 'access', required_scope => 'full');
+    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS, required_scope => 'full');
     assert_repo_writable($c, $account);
     xrpc_error(400, 'InvalidRequest', 'Service is not accepting repo imports')
       unless $c->config_value('accepting_imports', 1);
@@ -166,7 +167,7 @@ sub register_repo_handlers ($registry, $app) {
 }
 
 sub _require_repo_owner ($c, $repo) {
-  my ($claims) = require_auth($c, audience => 'access');
+  my ($claims) = require_auth($c, audience => TOKEN_AUD_ACCESS);
   my $account = resolve_repo($c, $repo);
   xrpc_error(404, 'RepoNotFound', 'Repository was not found') unless $account;
   xrpc_error(401, 'AuthRequired', 'Token is not authorized for that repo') unless ($claims->{sub} // '') eq $account->{did};
