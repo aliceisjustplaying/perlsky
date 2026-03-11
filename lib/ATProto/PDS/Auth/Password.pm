@@ -8,7 +8,7 @@ no warnings 'experimental::signatures';
 use Exporter 'import';
 use Digest::SHA qw(sha256 sha256_hex);
 
-our @EXPORT_OK = qw(hash_password random_bytes random_hex verify_password);
+our @EXPORT_OK = qw(hash_password random_bytes random_hex timing_safe_eq verify_password);
 
 sub random_bytes ($length = 16) {
   open(my $fh, '<:raw', '/dev/urandom') or die "open(/dev/urandom): $!";
@@ -40,10 +40,10 @@ sub hash_password ($password, $salt = undef, %opts) {
 
 sub verify_password ($password, $salt, $expected_hash, %opts) {
   my $actual = hash_password($password, $salt, %opts);
-  return _timing_safe_eq($actual->{hash}, $expected_hash);
+  return timing_safe_eq($actual->{hash}, $expected_hash);
 }
 
-sub _timing_safe_eq ($left, $right) {
+sub timing_safe_eq ($left, $right) {
   return 0 unless defined $left && defined $right;
   return 0 unless length($left) == length($right);
   my $diff = 0;
