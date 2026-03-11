@@ -117,6 +117,7 @@ $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.getBlob')->query(
   did => $did,
   cid => $blob_cid,
 ))->status_is(200)
+  ->header_is('Cross-Origin-Resource-Policy' => 'cross-origin')
   ->content_type_is('text/plain')
   ->content_is('blob-bytes');
 
@@ -150,6 +151,7 @@ $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.getBlob')->query(
   did => $second_did,
   cid => $blob_cid,
 ))->status_is(200)
+  ->header_is('Cross-Origin-Resource-Policy' => 'cross-origin')
   ->content_type_is('text/plain')
   ->content_is('blob-bytes');
 

@@ -113,6 +113,7 @@ sub register_sync_handlers ($registry, $app) {
     my $bytes = <$fh>;
     close($fh);
     $c->res->headers->content_type($blob->{mime_type} || 'application/octet-stream');
+    $c->res->headers->header('Cross-Origin-Resource-Policy' => 'cross-origin');
     $c->observe_blob_egress($blob->{mime_type}, length($bytes));
     $c->render(data => $bytes);
     return;
