@@ -5,7 +5,7 @@ use warnings;
 use feature 'signatures';
 no warnings 'experimental::signatures';
 
-use JSON::PP qw(decode_json);
+use JSON::PP qw(encode_json);
 use Scalar::Util qw(blessed);
 
 use ATProto::PDS::Crypto::Secp256k1 qw(generate_keypair sign_compact_low_s);
@@ -15,7 +15,7 @@ use ATProto::PDS::Repo::CAR qw(read_car write_car);
 use ATProto::PDS::Repo::CID;
 use ATProto::PDS::Repo::DagCbor qw(decode_dag_cbor encode_dag_cbor);
 use ATProto::PDS::Repo::MST qw(build_mst);
-use ATProto::PDS::Util::TID qw(next_tid);
+use ATProto::PDS::Util::TID qw(is_valid_tid next_tid repair_tid);
 
 sub new ($class, %args) {
   die 'store is required' unless $args{store};
@@ -366,6 +366,182 @@ sub import_repo_car ($self, $account, $car_bytes) {
     root_cid => $root_cid,
     records  => $records,
   };
+}
+
+sub repair_invalid_tids ($self, $account, %opts) {
+  my $store   = $self->store;
+  my $did     = $account->{did};
+  my $latest  = $store->get_latest_commit($did);
+  my $records = $store->all_records_for_did($did);
+
+  my $repaired = _repair_records_for_repo($account, $records);
+  my $rev_needs_repair = defined($latest->{rev}) && !is_valid_tid($latest->{rev}) && defined(repair_tid($latest->{rev}));
+  my $needs_repair = $repaired->{changed} || $rev_needs_repair || ($opts{force} // 0);
+
+  return {
+    changed         => 0,
+    repaired_paths  => $repaired->{repaired_paths},
+    rewritten_refs  => $repaired->{rewritten_refs},
+    rev_repaired    => $rev_needs_repair ? 1 : 0,
+    imported        => undef,
+  } unless $needs_repair;
+
+  my $snapshot_car = _build_snapshot_car(
+    $account,
+    $repaired->{records},
+    $latest ? (repair_tid($latest->{rev}) // $latest->{rev}) : undef,
+  );
+  my $imported = $self->import_repo_car($account, $snapshot_car);
+
+  return {
+    changed         => 1,
+    repaired_paths  => $repaired->{repaired_paths},
+    rewritten_refs  => $repaired->{rewritten_refs},
+    rev_repaired    => $rev_needs_repair ? 1 : 0,
+    imported        => $imported,
+  };
+}
+
+sub _repair_records_for_repo ($account, $records) {
+  my $did    = $account->{did};
+  my $handle = $account->{handle};
+  my %path_map;
+  my %occupied = map {
+    $_->{collection} . '/' . $_->{rkey} => 1
+  } @$records;
+
+  my $repaired_paths = 0;
+  for my $record (@$records) {
+    my $old_path = $record->{collection} . '/' . $record->{rkey};
+    my $repaired_rkey = repair_tid($record->{rkey});
+    next unless defined $repaired_rkey && $repaired_rkey ne $record->{rkey};
+
+    my $new_path = $record->{collection} . '/' . $repaired_rkey;
+    die {
+      status  => 500,
+      error   => 'RepoRepairCollision',
+      message => "repair would collide at '$new_path'",
+    } if $occupied{$new_path} && $new_path ne $old_path;
+
+    delete $occupied{$old_path};
+    $occupied{$new_path} = 1;
+    $path_map{$old_path} = $new_path;
+    $repaired_paths++;
+  }
+
+  my $rewritten_refs = 0;
+  my @repaired;
+  for my $record (@$records) {
+    my $old_path = $record->{collection} . '/' . $record->{rkey};
+    my $new_path = $path_map{$old_path} // $old_path;
+    my ($collection, $rkey) = split m{/}, $new_path, 2;
+
+    my $counter = 0;
+    my $value = _rewrite_owned_at_uris(
+      $record->{value},
+      {
+        $did    => 1,
+        ($handle ? ($handle => 1) : ()),
+      },
+      \%path_map,
+      \$counter,
+    );
+    $rewritten_refs += $counter;
+
+    my $record_bytes = encode_dag_cbor($value);
+    my $cid = ATProto::PDS::Repo::CID->for_dag_cbor($record_bytes)->to_string;
+    push @repaired, {
+      %$record,
+      collection   => $collection,
+      rkey         => $rkey,
+      value        => $value,
+      cid          => $cid,
+      record_bytes => $record_bytes,
+    };
+  }
+
+  my $changed = $repaired_paths || $rewritten_refs;
+  if (!$changed) {
+    for my $idx (0 .. $#repaired) {
+      my $before = $records->[$idx];
+      my $after  = $repaired[$idx];
+      if (($before->{collection} // q()) ne ($after->{collection} // q())
+        || ($before->{rkey} // q()) ne ($after->{rkey} // q())
+        || ($before->{cid} // q()) ne ($after->{cid} // q())
+      ) {
+        $changed = 1;
+        last;
+      }
+    }
+  }
+
+  return {
+    changed        => $changed ? 1 : 0,
+    repaired_paths => $repaired_paths,
+    rewritten_refs => $rewritten_refs,
+    records        => \@repaired,
+    path_map       => \%path_map,
+  };
+}
+
+sub _rewrite_owned_at_uris ($value, $hosts, $path_map, $counter_ref) {
+  return undef unless defined $value;
+
+  if (!ref($value)) {
+    if ($value =~ m{\Aat://([^/]+)/([^/]+/[^/?#]+)\z}) {
+      my ($host, $path) = ($1, $2);
+      if ($hosts->{$host} && defined $path_map->{$path}) {
+        $$counter_ref++ if $counter_ref;
+        return "at://$host/$path_map->{$path}";
+      }
+    }
+    return $value;
+  }
+
+  if (ref($value) eq 'ARRAY') {
+    return [ map { _rewrite_owned_at_uris($_, $hosts, $path_map, $counter_ref) } @$value ];
+  }
+
+  if (ref($value) eq 'HASH') {
+    return {
+      map {
+        $_ => _rewrite_owned_at_uris($value->{$_}, $hosts, $path_map, $counter_ref)
+      } sort keys %$value
+    };
+  }
+
+  return $value;
+}
+
+sub _build_snapshot_car ($account, $records, $rev = undef) {
+  my $did = $account->{did};
+  my %mst_input = map {
+    $_->{collection} . '/' . $_->{rkey} => ATProto::PDS::Repo::CID->from_string($_->{cid})
+  } @$records;
+  my $mst = build_mst(\%mst_input);
+  my $unsigned = {
+    did     => $did,
+    version => 3,
+    data    => $mst->{root},
+    rev     => $rev // next_tid(),
+    prev    => undef,
+  };
+  my $unsigned_bytes = encode_dag_cbor($unsigned);
+  my $sig = sign_compact_low_s($account->{private_key}, $unsigned_bytes);
+  my $commit = { %$unsigned, sig => ATProto::PDS::Repo::Bytes->new($sig) };
+  my $commit_bytes = encode_dag_cbor($commit);
+  my $commit_cid = ATProto::PDS::Repo::CID->for_dag_cbor($commit_bytes);
+  my @blocks = (
+    { cid => $commit_cid, bytes => $commit_bytes },
+    @{ $mst->{blocks} },
+    map {
+      +{
+        cid   => ATProto::PDS::Repo::CID->from_string($_->{cid}),
+        bytes => $_->{record_bytes},
+      }
+    } @$records,
+  );
+  return write_car($commit_cid, \@blocks);
 }
 
 sub _records_from_import ($root_cid, $blocks) {

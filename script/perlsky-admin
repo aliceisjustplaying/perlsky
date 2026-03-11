@@ -34,6 +34,7 @@ use ATProto::PDS::Config qw(load_config);
 use ATProto::PDS::Store::SQLite;
 use ATProto::PDS::Auth::Password qw(random_hex);
 use ATProto::PDS::Identity qw(service_did);
+use ATProto::PDS::Repo::Manager;
 
 my $root        = File::Spec->rel2abs(File::Spec->catdir($FindBin::RealBin, '..'));
 my $config_path = $ENV{PERLSKY_CONFIG} || File::Spec->catfile($root, 'etc', 'perlsky.example.json');
@@ -78,6 +79,44 @@ if ($command eq 'repair-binary-columns') {
   exit 0;
 }
 
+if ($command eq 'repair-invalid-tids') {
+  my $did;
+  my $force = 0;
+  GetOptionsFromArray(
+    \@ARGV,
+    'did=s'  => \$did,
+    'force!' => \$force,
+  ) or die usage();
+
+  my $store = ATProto::PDS::Store::SQLite->new(
+    path => $config->{db_path} || File::Spec->catfile($root, 'data', 'runtime', 'perlsky.sqlite'),
+  )->bootstrap;
+  my $manager = ATProto::PDS::Repo::Manager->new(store => $store);
+
+  my @accounts = $did
+    ? do {
+        my $account = $store->get_account_by_did($did)
+          or die "account not found for did=$did\n";
+        ($account);
+      }
+    : @{ $store->list_accounts };
+
+  for my $account (@accounts) {
+    my $result = $manager->repair_invalid_tids($account, force => $force);
+    my $label = $account->{handle} // $account->{did};
+    print join(
+      q{ },
+      $label,
+      'changed=' . ($result->{changed} // 0),
+      'repaired_paths=' . ($result->{repaired_paths} // 0),
+      'rewritten_refs=' . ($result->{rewritten_refs} // 0),
+      'rev_repaired=' . ($result->{rev_repaired} // 0),
+      (defined($result->{imported}{rev}) ? ('new_rev=' . $result->{imported}{rev}) : ()),
+    ), "\n";
+  }
+  exit 0;
+}
+
 die usage();
 
 sub _new_invite_code {
@@ -89,5 +128,6 @@ sub usage {
 usage:
   perlsky-admin create-invite [--use-count N] [--for-account DID] [--created-by DID]
   perlsky-admin repair-binary-columns
+  perlsky-admin repair-invalid-tids [--did DID] [--force]
 EOF
 }

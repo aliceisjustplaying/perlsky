@@ -237,7 +237,7 @@ sub register_sync_handlers ($registry, $app) {
       $next_seq = $latest + 1;
     } else {
       my $cursor = int($cursor_param);
-      if ($cursor > $latest + 1) {
+      if ($cursor > $latest) {
         $c->subscription_send(
           binary     => encode_error_frame('FutureCursor', 'Cursor is ahead of the local event stream'),
           frame_type => 'error',
@@ -252,7 +252,9 @@ sub register_sync_handlers ($registry, $app) {
         );
         $next_seq = $oldest;
       } else {
-        $next_seq = $cursor || ($oldest || ($latest + 1));
+        $next_seq = defined($cursor_param) && length($cursor_param)
+          ? ($cursor + 1)
+          : ($oldest || ($latest + 1));
       }
     }
 

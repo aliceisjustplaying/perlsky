@@ -133,11 +133,11 @@ $ws->finish_ok;
 
 my $latest_seq = $app->store->latest_event_seq;
 my $replay = Test::Mojo->new($app);
-$replay->websocket_ok("/xrpc/com.atproto.sync.subscribeRepos?cursor=$latest_seq")
-  ->message_ok('replayed current cursor event');
+$replay->websocket_ok("/xrpc/com.atproto.sync.subscribeRepos?cursor=$baseline_seq");
 
+$replay->message_ok('replayed event after the cursor');
 my $replayed = decode_frame($replay->message->[1]);
-is($replayed->{body}{seq}, $latest_seq, 'cursor replay is inclusive');
+is($replayed->{body}{seq}, $baseline_seq + 1, 'cursor replay is exclusive');
 $replay->finish_ok;
 
 my $follow = Test::Mojo->new($app);
