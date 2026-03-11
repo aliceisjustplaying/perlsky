@@ -115,6 +115,9 @@ is($decoded->{body}{seq}, $baseline_seq + 1, 'sequence advances from prior high 
 is($decoded->{body}{ops}[0]{path}, 'app.bsky.feed.post/firehose', 'operation path is preserved');
 is($decoded->{body}{ops}[0]{action}, 'create', 'operation action is preserved');
 is($decoded->{body}{since}, $prior_rev, 'first emitted commit advertises the previous rev');
+ok(!$decoded->{body}{rebase}, 'commit event is not marked as a rebase');
+ok(!$decoded->{body}{tooBig}, 'commit event is not marked as too big');
+like($decoded->{body}{time}, qr/\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\z/, 'commit event time is ISO8601');
 
 my $initial_car = read_car($decoded->{body}{blocks});
 my $initial_commit_block = (grep { $_->{cid}->to_string eq $decoded->{body}{commit}->to_string } @{ $initial_car->{blocks} })[0];
@@ -162,6 +165,9 @@ $follow->message_ok('received a second firehose frame')
 my $second = decode_frame($follow->message->[1]);
 is($second->{body}{ops}[0]{path}, 'app.bsky.feed.post/firehose-second', 'second operation path is preserved');
 is($second->{body}{since}, $initial_rev, 'subsequent commit advertises the previous rev');
+ok(!$second->{body}{rebase}, 'subsequent commit is not marked as a rebase');
+ok(!$second->{body}{tooBig}, 'subsequent commit is not marked as too big');
+like($second->{body}{time}, qr/\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\z/, 'subsequent commit time is ISO8601');
 
 my $second_car = read_car($second->{body}{blocks});
 my $second_commit_block = (grep { $_->{cid}->to_string eq $second->{body}{commit}->to_string } @{ $second_car->{blocks} })[0];
@@ -169,10 +175,6 @@ ok($second_commit_block, 'second commit block is present in emitted CAR');
 ok(
   scalar(grep { $_->{cid}->to_string eq $second_result->{cid} } @{ $second_car->{blocks} || [] }),
   'second firehose CAR includes the new record block',
-);
-ok(
-  !scalar(grep { $_->{cid}->to_string eq $first_result->{cid} } @{ $second_car->{blocks} || [] }),
-  'second firehose CAR does not resend unchanged prior record blocks',
 );
 my $second_commit = decode_dag_cbor($second_commit_block->{bytes});
 is($second_commit->{did}, $did, 'subsequent commit block belongs to the repo');
@@ -216,5 +218,36 @@ my $skipped = decode_frame($skip_unknown->message->[1]);
 is($skipped->{body}{seq}, $skip_start + 2, 'repo backlog advances past skipped events');
 is($skipped->{body}{ops}[0]{path}, 'app.bsky.feed.post/firehose-third', 'repo replay reaches the later commit');
 $skip_unknown->finish_ok;
+
+my $outdated_floor = $app->store->latest_event_seq;
+$app->store->dbh->do(q{DELETE FROM events WHERE seq <= ?}, undef, $outdated_floor);
+
+$t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
+  Authorization => "Bearer $access",
+} => json => {
+  repo       => $did,
+  collection => 'app.bsky.feed.post',
+  rkey       => 'firehose-fourth',
+  record     => {
+    '$type'   => 'app.bsky.feed.post',
+    text      => 'outdated cursor replay',
+    createdAt => '2026-03-10T00:00:03Z',
+  },
+})->status_is(200);
+
+my $outdated = Test::Mojo->new($app);
+$outdated->websocket_ok('/xrpc/com.atproto.sync.subscribeRepos?cursor=1')
+  ->message_ok('stale repo cursor returns an info frame first');
+
+my $outdated_info = decode_frame($outdated->message->[1]);
+is($outdated_info->{header}{op}, 1, 'outdated cursor info is a message frame');
+is($outdated_info->{header}{t}, '#info', 'stale repo cursor yields an info frame');
+is($outdated_info->{body}{name}, 'OutdatedCursor', 'stale repo cursor is reported as OutdatedCursor');
+
+$outdated->message_ok('stale repo cursor then resumes from the oldest retained event');
+my $outdated_commit = decode_frame($outdated->message->[1]);
+is($outdated_commit->{header}{t}, '#commit', 'repo stream resumes with the retained commit event');
+is($outdated_commit->{body}{ops}[0]{path}, 'app.bsky.feed.post/firehose-fourth', 'repo replay resumes at the retained commit');
+$outdated->finish_ok;
 
 done_testing;

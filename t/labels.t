@@ -67,9 +67,11 @@ $ws->message_ok('received a label frame')
 
 my $frame = decode_frame($ws->message->[1]);
 is($frame->{header}{t}, '#labels', 'frame type is labels');
+is($frame->{body}{labels}[0]{ver}, 1, 'label frame advertises version 1');
 is($frame->{body}{labels}[0]{src}, $service_did, 'label source is the local service DID');
 is($frame->{body}{labels}[0]{uri}, "at://$did", 'repo labels target the repo URI');
 is($frame->{body}{labels}[0]{val}, '!hide', 'repo takedown emits !hide');
+like($frame->{body}{labels}[0]{cts}, qr/\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\z/, 'label frame carries an ISO8601 timestamp');
 ok(!$frame->{body}{labels}[0]{neg}, 'takedown frame is a positive label');
 
 $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.label.queryLabels')->query(
@@ -114,6 +116,7 @@ $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.label.queryLabels')->query(
   ->json_has('/cursor')
   ->json_is('/labels/0/src', $service_did);
 
+my $first_page = $t->tx->res->json;
 my $cursor = $t->tx->res->json->{cursor};
 
 $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.label.queryLabels')->query(
@@ -122,6 +125,14 @@ $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.label.queryLabels')->query(
   limit       => 1,
 ))->status_is(200)
   ->json_has('/labels/0');
+
+my $second_page = $t->tx->res->json;
+isnt($second_page->{labels}[0]{uri}, $first_page->{labels}[0]{uri}, 'cursor pagination does not repeat the same label');
+is_deeply(
+  [ sort map { $_->{uri} } @{ $first_page->{labels} }, @{ $second_page->{labels} } ],
+  [ sort "at://$did", "at://$bob_did" ],
+  'cursor pagination covers the expected label subjects without overlap',
+);
 
 $t->post_ok('/xrpc/com.atproto.admin.updateSubjectStatus' => {
   Authorization => 'Bearer admin-secret',
@@ -135,8 +146,10 @@ $ws->message_ok('received a label negation frame')
 
 my $neg = decode_frame($ws->message->[1]);
 is($neg->{header}{t}, '#labels', 'negation frame type is labels');
+is($neg->{body}{labels}[0]{ver}, 1, 'negation frame keeps label version metadata');
 is($neg->{body}{labels}[0]{uri}, "at://$did", 'negation targets the same repo URI');
 is($neg->{body}{labels}[0]{val}, '!hide', 'negation is for !hide');
+like($neg->{body}{labels}[0]{cts}, qr/\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\z/, 'negation frame carries an ISO8601 timestamp');
 ok($neg->{body}{labels}[0]{neg}, 'restore emits a negation label');
 
 my $label_latest = $app->store->latest_event_seq;
@@ -177,6 +190,30 @@ $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.label.queryLabels')->query(
   sources     => $service_did,
 ))->status_is(200)
   ->json_is('/labels', []);
+
+$app->store->dbh->do(q{DELETE FROM events WHERE seq <= ?}, undef, $app->store->latest_event_seq);
+
+$t->post_ok('/xrpc/com.atproto.admin.updateSubjectStatus' => {
+  Authorization => 'Bearer admin-secret',
+} => json => {
+  subject  => { did => $did },
+  takedown => { applied => JSON::PP::true },
+})->status_is(200);
+
+my $outdated = Test::Mojo->new($app);
+$outdated->websocket_ok('/xrpc/com.atproto.label.subscribeLabels?cursor=1')
+  ->message_ok('stale label cursor returns an info frame first');
+
+my $outdated_info = decode_frame($outdated->message->[1]);
+is($outdated_info->{header}{t}, '#info', 'stale label cursor yields an info frame');
+is($outdated_info->{body}{name}, 'OutdatedCursor', 'stale label cursor is reported as OutdatedCursor');
+
+$outdated->message_ok('stale label cursor then resumes from the oldest retained label event');
+my $outdated_label = decode_frame($outdated->message->[1]);
+is($outdated_label->{header}{t}, '#labels', 'label stream resumes with a labels frame');
+is($outdated_label->{body}{labels}[0]{uri}, "at://$did", 'stale label replay resumes at the retained label event');
+is($outdated_label->{body}{labels}[0]{val}, '!hide', 'retained label replay carries the expected moderation label');
+$outdated->finish_ok;
 
 $ws->finish_ok;
 
