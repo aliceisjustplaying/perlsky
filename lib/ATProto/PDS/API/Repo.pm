@@ -184,10 +184,11 @@ sub _readable_repo ($c, $repo, %args) {
 }
 
 sub _proxy_remote_get_record ($c) {
+  my $appview_url = $c->service_proxy->_config('bsky_appview_url', 'https://api.bsky.app');
   xrpc_error(404, 'RepoNotFound', 'Repository was not found')
-    unless defined($c->config_value('bsky_appview_url')) && length($c->config_value('bsky_appview_url'));
+    unless defined($appview_url) && length($appview_url);
 
-  my $url = Mojo::URL->new($c->config_value('bsky_appview_url'));
+  my $url = Mojo::URL->new($appview_url);
   $url->path($c->req->url->path->to_string);
   $url->query($c->req->url->query->clone);
 
