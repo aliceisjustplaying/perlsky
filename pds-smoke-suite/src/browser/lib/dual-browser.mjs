@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { chromium } from 'playwright';
+import { chromium } from './playwright-runtime.mjs';
 
 const ignoredConsole = [
   /events\.bsky\.app\/.*ERR_BLOCKED_BY_CLIENT/i,

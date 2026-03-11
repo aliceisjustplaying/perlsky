@@ -84,6 +84,20 @@ PERLSKY_RUN_BROWSER_SMOKE=1 prove -lv t/browser-smoke.t
 That wrapper still uses `script/perlsky-browser-smoke`, so the script remains the canonical entrypoint.
 It also fails the test run if the browser harness finishes with `summary.ok = false`, so late browser/runtime regressions are no longer silently accepted.
 
+## Extraction
+
+The generic runtime now lives under [pds-smoke-suite](../pds-smoke-suite/README.md).
+`perlsky` still keeps [script/perlsky-browser-smoke](/Users/sarah/src/tries/2026-03-10-perlds/script/perlsky-browser-smoke)
+as the ergonomic adapter for this repo, but the standalone package now owns:
+
+- browser runtime entrypoints
+- reusable generic config builders
+- bring-your-own and `perlsky` adapter helpers
+- package-owned examples and README
+
+This keeps the current `perlsky` workflow stable while making extraction to a
+repo-independent package much more straightforward.
+
 ## Notes
 
 - The reusable dual-account path is intentionally conservative about account creation. Fresh actors are only created through explicit `bootstrap-*` commands.
@@ -92,3 +106,4 @@ It also fails the test run if the browser harness finishes with `summary.ok = fa
 - The current broad smoke automates only dedicated smoke accounts. It does not log into `@alice.mosphere.at`.
 - The smoke accounts can still visit and interact with `@alice.mosphere.at` as a public target, but the harness does not authenticate as that account.
 - DMs are intentionally out of scope for now. If we revisit them later, they should be added as a separate documented tranche rather than silently folded into the existing smoke.
+- V2 should add direct PDS/AppView contract checks under this browser layer rather than replacing the browser layer outright.

@@ -43,6 +43,15 @@ const normalizeCleanupPrefixes = (prefixes) => {
     .filter(Boolean);
 };
 
+const derivePdsHost = (pdsUrl) => {
+  try {
+    return new URL(pdsUrl).host;
+  } catch {
+    const match = String(pdsUrl).match(/^https?:\/\/([^/]+)/);
+    return match?.[1];
+  }
+};
+
 export const createAccountConfig = ({
   handle,
   password,
@@ -90,6 +99,7 @@ export const createAccountConfig = ({
 
 export const createSuiteConfig = ({
   pdsUrl,
+  pdsHost,
   artifactsDir,
   appUrl = DEFAULTS.appUrl,
   publicApiUrl = DEFAULTS.publicApiUrl,
@@ -113,6 +123,11 @@ export const createSuiteConfig = ({
     publicChecks: !!publicChecks,
     ...rest,
   };
+
+  normalized.pdsHost = optionalString(pdsHost) || derivePdsHost(normalized.pdsUrl);
+  if (!normalized.pdsHost) {
+    throw new Error('pdsHost could not be derived from pdsUrl');
+  }
 
   const maybeTarget = optionalString(targetHandle);
   if (maybeTarget) {

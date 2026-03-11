@@ -2,7 +2,9 @@
 
 This directory is the extraction staging area for a standalone `bsky.app`
 compatibility smoke suite that can be used by multiple PDS implementations, not
-just `perlsky`.
+just `perlsky`. The browser runtime now lives here, while the old
+`tools/browser-automation/*` paths remain as thin compatibility wrappers for
+the current `perlsky` workflow.
 
 ## Current Scope
 
@@ -29,9 +31,25 @@ The target standalone project shape is:
 2. A bring-your-own-accounts mode with minimal configuration
 3. Thin per-PDS adapters for provisioning and implementation-specific defaults
 
-Right now, the runtime still lives under `tools/browser-automation/`, while this
-directory captures the neutral config and adapter surface we want to preserve
-during extraction.
+The generic runtime, config builders, and adapter helpers now live here. The
+older `tools/browser-automation/` entrypoints simply forward into this package
+so the existing repo scripts keep working during the extraction.
+
+## Current CLI
+
+The package now has its own CLI entrypoint:
+
+```sh
+node pds-smoke-suite/bin/pds-smoke-suite.mjs print-example --mode dual
+node pds-smoke-suite/bin/pds-smoke-suite.mjs validate --mode dual --config pds-smoke-suite/examples/bring-your-own-dual.json
+node pds-smoke-suite/bin/pds-smoke-suite.mjs run-dual --config pds-smoke-suite/examples/bring-your-own-dual.json
+```
+
+Examples live in [examples/](./examples):
+
+- `bring-your-own-single.json`
+- `bring-your-own-dual.json`
+- `perlsky-dual.json`
 
 ## Minimal Configuration Goal
 
@@ -65,12 +83,29 @@ The current config contract is intentionally small:
   `handle`, `password`, `birthdate`, `postText`, `mediaPostText`, `quoteText`,
   `replyText`, `profileNote`, `cleanupPostPrefixes`
 
+`pdsHost` is derived automatically from `pdsUrl`, so callers do not need any
+perlsky-specific host-setting knowledge just to point the browser at a custom
+PDS.
+
+## V2 Ideas
+
+The long-term direction is a test pyramid, not a browser-only harness and not a
+pure endpoint-only harness:
+
+1. direct PDS/AppView contract tests
+2. cross-service integration checks
+3. a thinner `bsky.app` smoke on top
+
+The browser layer stays because it catches real `social-app` assumptions and
+AppView proxying issues. The direct API/AppView layers belong underneath it so
+regressions become easier to debug and less brittle when the UI changes.
+
 ## Planned Next Steps
 
-- move the actual browser runtime from `tools/browser-automation/` into this
-  package
-- add package-owned CLI entrypoints for single-account and dual-account runs
-- keep `script/perlsky-browser-smoke` as a thin `perlsky` adapter over the
+- keep `script/perlsky-browser-smoke` as a thin `perlsky` adapter over this
   generic package
+- add a repo-independent install story once the extracted package boundary
+  settles
+- add direct API/AppView contract tests as the first major v2 expansion
 - revisit a JS-to-TS migration later, after the standalone package boundary is
   stable
