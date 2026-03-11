@@ -17,6 +17,9 @@ our @EXPORT_OK = qw(
   EVENT_TYPE_SYNC
   SERVICE_ID_BSKY_APPVIEW
   SERVICE_ID_BSKY_CHAT
+  SUBJECT_KEY_PREFIX_BLOB
+  SUBJECT_KEY_PREFIX_RECORD
+  SUBJECT_KEY_PREFIX_REPO
   TOKEN_AUD_ACCESS
   TOKEN_AUD_REFRESH
 );
@@ -37,5 +40,9 @@ use constant EVENT_TYPE_SYNC     => 'sync';
 
 use constant SERVICE_ID_BSKY_APPVIEW => 'bsky_appview';
 use constant SERVICE_ID_BSKY_CHAT    => 'bsky_chat';
+
+use constant SUBJECT_KEY_PREFIX_REPO   => 'repo:';
+use constant SUBJECT_KEY_PREFIX_RECORD => 'record:';
+use constant SUBJECT_KEY_PREFIX_BLOB   => 'blob:';
 
 1;

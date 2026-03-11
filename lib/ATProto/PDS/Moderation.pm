@@ -11,6 +11,11 @@ use MIME::Base64 qw(decode_base64);
 
 use ATProto::PDS::API::Util qw(xrpc_error);
 use ATProto::PDS::Auth::JWT qw(decode_jwt);
+use ATProto::PDS::Constants qw(
+  SUBJECT_KEY_PREFIX_BLOB
+  SUBJECT_KEY_PREFIX_RECORD
+  SUBJECT_KEY_PREFIX_REPO
+);
 
 our @EXPORT_OK = qw(
   admin_authorization_status
@@ -31,11 +36,11 @@ our @EXPORT_OK = qw(
 );
 
 sub subject_key ($subject) {
-  return 'repo:' . ($subject->{did} // q())
+  return SUBJECT_KEY_PREFIX_REPO . ($subject->{did} // q())
     if ref($subject) eq 'HASH' && exists $subject->{did} && !exists $subject->{uri} && !exists $subject->{cid};
-  return 'record:' . ($subject->{uri} // q())
+  return SUBJECT_KEY_PREFIX_RECORD . ($subject->{uri} // q())
     if ref($subject) eq 'HASH' && exists $subject->{uri};
-  return 'blob:' . ($subject->{did} // q()) . ':' . ($subject->{cid} // q())
+  return SUBJECT_KEY_PREFIX_BLOB . ($subject->{did} // q()) . ':' . ($subject->{cid} // q())
     if ref($subject) eq 'HASH' && exists $subject->{did} && exists $subject->{cid};
   xrpc_error(400, 'InvalidRequest', 'Unsupported subject payload');
 }
@@ -76,17 +81,17 @@ sub current_subject_status ($c, $subject) {
 }
 
 sub is_repo_takedown ($c, $did) {
-  my $status = $c->store->get_subject_status('repo:' . ($did // q()));
+  my $status = $c->store->get_subject_status(SUBJECT_KEY_PREFIX_REPO . ($did // q()));
   return ($status && $status->{takedown} && $status->{takedown}{applied}) ? 1 : 0;
 }
 
 sub is_record_takedown ($c, $uri) {
-  my $status = $c->store->get_subject_status('record:' . ($uri // q()));
+  my $status = $c->store->get_subject_status(SUBJECT_KEY_PREFIX_RECORD . ($uri // q()));
   return ($status && $status->{takedown} && $status->{takedown}{applied}) ? 1 : 0;
 }
 
 sub is_blob_takedown ($c, $did, $cid) {
-  my $status = $c->store->get_subject_status('blob:' . ($did // q()) . ':' . ($cid // q()));
+  my $status = $c->store->get_subject_status(SUBJECT_KEY_PREFIX_BLOB . ($did // q()) . ':' . ($cid // q()));
   return ($status && $status->{takedown} && $status->{takedown}{applied}) ? 1 : 0;
 }
 
