@@ -23,13 +23,17 @@ our @EXPORT_OK = qw(
 
 sub service_host ($config_or_url) {
   my $config = _coerce_config($config_or_url);
-  my $url = Mojo::URL->new($config->{base_url} // 'http://127.0.0.1:7755');
-  my $host = lc($url->host // 'localhost');
-  my $scheme = $url->scheme // 'http';
-  my $port = $url->port;
-  my $default = $scheme eq 'https' ? 443 : 80;
-  $host .= ':' . $port if defined $port && $port != $default;
-  return $host;
+  state %host_for;
+  my $base_url = $config->{base_url} // 'http://127.0.0.1:7755';
+  return $host_for{$base_url} ||= do {
+    my $url = Mojo::URL->new($base_url);
+    my $host = lc($url->host // 'localhost');
+    my $scheme = $url->scheme // 'http';
+    my $port = $url->port;
+    my $default = $scheme eq 'https' ? 443 : 80;
+    $host .= ':' . $port if defined $port && $port != $default;
+    $host;
+  };
 }
 
 sub service_did ($config_or_url) {
