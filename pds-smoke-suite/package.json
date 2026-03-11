@@ -1,0 +1,11 @@
+{
+  "name": "pds-smoke-suite",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.mjs",
+    "./config": "./src/config.mjs",
+    "./adapters/bring-your-own": "./src/adapters/bring-your-own.mjs",
+    "./adapters/perlsky": "./src/adapters/perlsky.mjs"
+  }
+}

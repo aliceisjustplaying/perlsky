@@ -58,6 +58,8 @@ Browser smoke:
 - DMs are intentionally deferred from the current browser-smoke tranche; see `docs/BROWSER_SMOKE.md` for current scope and rationale.
 - Fresh-account creation is still available through the explicit `bootstrap-*` commands, but it is no longer the normal path for repeated browser smoke runs.
 - Detailed browser-smoke workflow, current interaction coverage, and the env-gated `prove` wrapper live in `docs/BROWSER_SMOKE.md`.
+- Extraction work toward a cross-PDS standalone package now starts in `pds-smoke-suite/`, with bring-your-own-account and `perlsky` adapter helpers defining the neutral config boundary.
+- For now, `script/perlsky-browser-smoke` remains the active `perlsky` adapter and runtime entrypoint while the generic package boundary stabilizes.
 
 Moderation and labels:
 
