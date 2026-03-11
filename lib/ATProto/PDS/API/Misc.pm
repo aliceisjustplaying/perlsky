@@ -12,6 +12,10 @@ use ATProto::PDS::API::Helpers qw(find_account issue_account_action_token requir
 use ATProto::PDS::API::Server qw(require_auth);
 use ATProto::PDS::API::Util qw(flatten_params iso8601 pump_event_subscription subscription_start_seq xrpc_error);
 use ATProto::PDS::Auth::Password qw(hash_password random_hex);
+use ATProto::PDS::Constants qw(
+  ACTION_TOKEN_PLC_OPERATION
+  TOKEN_AUD_ACCESS
+);
 use ATProto::PDS::EventStream qw(encode_message_frame);
 use ATProto::PDS::Identity qw(account_did_doc normalize_handle service_did service_did_doc);
 use ATProto::PDS::Moderation qw(assert_report_allowed);
@@ -23,7 +27,7 @@ our @EXPORT_OK = qw(register_misc_handlers);
 
 sub register_misc_handlers ($registry, $app) {
   $registry->register('com.atproto.identity.getRecommendedDidCredentials', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => 'access');
+    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS);
     return recommended_did_credentials($c->app->settings, $account);
   });
 
@@ -56,13 +60,13 @@ sub register_misc_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.identity.requestPlcOperationSignature', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => 'access');
+    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS);
     xrpc_error(400, 'InvalidRequest', 'account does not have an email address')
       unless defined($account->{email}) && length($account->{email});
     issue_account_action_token(
       $c,
       $account,
-      purpose => 'plc_operation',
+      purpose => ACTION_TOKEN_PLC_OPERATION,
       subject => 'PLC update requested',
       content => sub ($token) { "Use token $token->{token} to authorize your PLC operation." },
     );
@@ -70,7 +74,7 @@ sub register_misc_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.identity.signPlcOperation', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => 'access');
+    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS);
     xrpc_error(400, 'InvalidRequest', 'PLC operations are only supported for did:plc accounts')
       unless is_plc_did($account->{did});
     my $body = $c->req->json || {};
@@ -79,7 +83,7 @@ sub register_misc_handlers ($registry, $app) {
       unless length $token_value;
     my $token = $c->store->get_action_token($token_value);
     xrpc_error(400, 'InvalidToken', 'Token is invalid') unless $token;
-    xrpc_error(400, 'InvalidToken', 'Token purpose did not match') unless ($token->{purpose} // q()) eq 'plc_operation';
+    xrpc_error(400, 'InvalidToken', 'Token purpose did not match') unless ($token->{purpose} // q()) eq ACTION_TOKEN_PLC_OPERATION;
     xrpc_error(400, 'ExpiredToken', 'Token has expired')
       if defined($token->{expires_at}) && $token->{expires_at} < time;
     xrpc_error(400, 'InvalidToken', 'Token was not issued for this account')
@@ -100,7 +104,7 @@ sub register_misc_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.identity.submitPlcOperation', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => 'access');
+    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS);
     xrpc_error(400, 'InvalidRequest', 'PLC operations are only supported for did:plc accounts')
       unless is_plc_did($account->{did});
     my $body = $c->req->json || {};
@@ -125,7 +129,7 @@ sub register_misc_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.identity.updateHandle', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => 'access');
+    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS);
     my $body   = $c->req->json || {};
     my $domain = $c->config_value('service_handle_domain', 'localhost');
     my $handle = normalize_handle($body->{handle}, $domain);
@@ -161,7 +165,7 @@ sub register_misc_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.moderation.createReport', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => 'access');
+    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS);
     my $body = $c->req->json || {};
     assert_report_allowed($c, $account, $body->{reasonType});
     my $row = $c->store->create_report(

@@ -12,6 +12,14 @@ use ATProto::PDS::API::Helpers qw(find_account invite_code_view issue_account_ac
 use ATProto::PDS::API::Util qw(iso8601 xrpc_error);
 use ATProto::PDS::Auth::JWT qw(decode_jwt encode_jwt encode_service_jwt);
 use ATProto::PDS::Auth::Password qw(hash_password random_hex);
+use ATProto::PDS::Constants qw(
+  ACTION_TOKEN_ACCOUNT_DELETE
+  ACTION_TOKEN_EMAIL_CONFIRM
+  ACTION_TOKEN_EMAIL_UPDATE
+  ACTION_TOKEN_PASSWORD_RESET
+  TOKEN_AUD_ACCESS
+  TOKEN_AUD_REFRESH
+);
 use ATProto::PDS::Identity qw(account_did account_did_doc normalize_handle service_did);
 use ATProto::PDS::Moderation qw(assert_login_allowed is_repo_takedown);
 use ATProto::PDS::PLC qw(account_did_method create_plc_account is_plc_did refresh_plc_did_doc);
@@ -186,12 +194,12 @@ sub register_server_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.server.getSession', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => 'access');
+    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS);
     return session_view($account);
   });
 
   $registry->register('com.atproto.server.refreshSession', sub ($c, $endpoint) {
-    my (undef, $account, $session) = require_auth($c, audience => 'refresh');
+    my (undef, $account, $session) = require_auth($c, audience => TOKEN_AUD_REFRESH);
     assert_login_allowed($c, $account);
     my $rotated = $c->store->rotate_session($session->{id});
     xrpc_error(401, 'ExpiredToken', 'Refresh session has already been revoked') unless $rotated;
@@ -199,14 +207,14 @@ sub register_server_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.server.deleteSession', sub ($c, $endpoint) {
-    my ($claims) = require_auth($c, audience => 'refresh', allow_refresh => 1);
+    my ($claims) = require_auth($c, audience => TOKEN_AUD_REFRESH, allow_refresh => 1);
     my $session = $c->store->get_session($claims->{jti});
     $c->store->revoke_session($session->{id}) if $session;
     return {};
   });
 
   $registry->register('com.atproto.server.checkAccountStatus', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => 'access');
+    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS);
     my $car = $c->store->repo_car($account->{did});
     my $block_count = 0;
     my $blob_count = 0 + $c->store->count_blobs_by_did($account->{did});
@@ -227,7 +235,7 @@ sub register_server_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.server.createAppPassword', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => 'access', required_scope => 'full');
+    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS, required_scope => 'full');
     my $body = $c->req->json || {};
     my $name = $body->{name} // q();
     xrpc_error(400, 'InvalidRequest', 'App password name is required') unless length $name;
@@ -250,7 +258,7 @@ sub register_server_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.server.listAppPasswords', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => 'access');
+    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS);
     my $rows = $c->store->list_app_passwords_by_did($account->{did});
     return {
       passwords => [
@@ -266,7 +274,7 @@ sub register_server_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.server.revokeAppPassword', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => 'access');
+    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS);
     my $body = $c->req->json || {};
     my $name = $body->{name} // q();
     xrpc_error(400, 'InvalidRequest', 'App password name is required') unless length $name;
@@ -283,7 +291,7 @@ sub register_server_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.server.deactivateAccount', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => 'access', required_scope => 'full');
+    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS, required_scope => 'full');
     $c->store->update_account($account->{did}, deactivated_at => time);
     $c->append_event(
       did     => $account->{did},
@@ -298,7 +306,7 @@ sub register_server_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.server.activateAccount', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => 'access', required_scope => 'full');
+    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS, required_scope => 'full');
     $account = $c->store->update_account($account->{did}, deactivated_at => undef);
     $c->append_event(
       did     => $account->{did},
@@ -341,7 +349,7 @@ sub register_server_handlers ($registry, $app) {
       issue_account_action_token(
         $c,
         $account,
-        purpose => 'password_reset',
+        purpose => ACTION_TOKEN_PASSWORD_RESET,
         subject => 'perlsky password reset',
         content => sub ($token) { "Use token $token->{token} to reset your password." },
       );
@@ -355,7 +363,7 @@ sub register_server_handlers ($registry, $app) {
       if length($body->{password} // q()) < 8;
     my $token = _require_action_token($c,
       token   => $body->{token},
-      purpose => 'password_reset',
+      purpose => ACTION_TOKEN_PASSWORD_RESET,
     );
     my $account = $c->store->get_account_by_did($token->{did});
     xrpc_error(404, 'AccountNotFound', 'Account was not found') unless $account;
@@ -374,12 +382,12 @@ sub register_server_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.server.requestEmailConfirmation', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => 'access');
+    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS);
     return {} unless $account->{email};
     issue_account_action_token(
       $c,
       $account,
-      purpose => 'email_confirm',
+      purpose => ACTION_TOKEN_EMAIL_CONFIRM,
       subject => 'perlsky email confirmation',
       content => sub ($token) { "Use token $token->{token} to confirm your email address." },
     );
@@ -390,7 +398,7 @@ sub register_server_handlers ($registry, $app) {
     my $body = $c->req->json || {};
     my $token = _require_action_token($c,
       token   => $body->{token},
-      purpose => 'email_confirm',
+      purpose => ACTION_TOKEN_EMAIL_CONFIRM,
     );
     my $account = $c->store->get_account_by_did($token->{did});
     xrpc_error(404, 'AccountNotFound', 'Account was not found') unless $account;
@@ -407,13 +415,13 @@ sub register_server_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.server.requestEmailUpdate', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => 'access');
+    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS);
     my $token_required = defined $account->{email_confirmed_at} ? 1 : 0;
     if ($token_required) {
       issue_account_action_token(
         $c,
         $account,
-        purpose => 'email_update',
+        purpose => ACTION_TOKEN_EMAIL_UPDATE,
         subject => 'perlsky email change authorization',
         content => sub ($token) { "Use token $token->{token} to update your email address." },
       );
@@ -424,14 +432,14 @@ sub register_server_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.server.updateEmail', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => 'access', required_scope => 'full');
+    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS, required_scope => 'full');
     my $body = $c->req->json || {};
     if (defined $account->{email_confirmed_at}) {
       xrpc_error(400, 'TokenRequired', 'A confirmation token is required to update email')
         unless defined($body->{token}) && length($body->{token});
       my $token = _require_action_token($c,
         token   => $body->{token},
-        purpose => 'email_update',
+        purpose => ACTION_TOKEN_EMAIL_UPDATE,
       );
       xrpc_error(400, 'InvalidToken', 'Token was not issued for this account')
         unless ($token->{did} // q()) eq $account->{did};
@@ -446,11 +454,11 @@ sub register_server_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.server.requestAccountDelete', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => 'access', required_scope => 'full');
+    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS, required_scope => 'full');
     issue_account_action_token(
       $c,
       $account,
-      purpose => 'account_delete',
+      purpose => ACTION_TOKEN_ACCOUNT_DELETE,
       subject => 'perlsky account deletion',
       content => sub ($token) { "Use token $token->{token} to delete your account." },
     );
@@ -458,7 +466,7 @@ sub register_server_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.server.deleteAccount', sub ($c, $endpoint) {
-    my ($claims, $account) = require_auth($c, audience => 'access', required_scope => 'full');
+    my ($claims, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS, required_scope => 'full');
     my $body = $c->req->json || {};
     xrpc_error(401, 'AuthRequired', 'Token is not authorized for that repo')
       unless ($claims->{sub} // q()) eq ($body->{did} // q()) && ($account->{did} // q()) eq ($body->{did} // q());
@@ -466,7 +474,7 @@ sub register_server_handlers ($registry, $app) {
       unless verify_account_password($c, $account, $body->{password} // q());
     my $token = _require_action_token($c,
       token   => $body->{token},
-      purpose => 'account_delete',
+      purpose => ACTION_TOKEN_ACCOUNT_DELETE,
     );
     xrpc_error(400, 'InvalidToken', 'Token was not issued for this account')
       unless ($token->{did} // q()) eq $account->{did};
@@ -493,7 +501,7 @@ sub register_server_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.server.getServiceAuth', sub ($c, $endpoint) {
-    my ($claims, $account, $session) = require_auth($c, audience => 'access');
+    my ($claims, $account, $session) = require_auth($c, audience => TOKEN_AUD_ACCESS);
     my $aud = $c->param('aud') // q();
     xrpc_error(400, 'InvalidRequest', 'aud is required') unless length $aud;
     my $lxm = $c->param('lxm') // q();
@@ -577,7 +585,7 @@ sub register_server_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.server.getAccountInviteCodes', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => 'access', required_scope => 'full');
+    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS, required_scope => 'full');
     my $rows = $c->store->list_invite_codes_for_account($account->{did});
     return {
       codes => [ map { invite_code_view($c->store, $_) } @$rows ],
@@ -616,8 +624,8 @@ sub require_auth ($c, %opts) {
 
   my $claims = $decoded->{claims};
   my $aud = $claims->{aud} // q();
-  my $ok = $aud eq ($opts{audience} // 'access')
-    || ($opts{allow_refresh} && $aud eq 'refresh');
+  my $ok = $aud eq ($opts{audience} // TOKEN_AUD_ACCESS)
+    || ($opts{allow_refresh} && $aud eq TOKEN_AUD_REFRESH);
   xrpc_error(401, 'InvalidToken', 'Unexpected token audience') unless $ok;
 
   my $session_id = $claims->{jti} // q();
@@ -630,7 +638,7 @@ sub require_auth ($c, %opts) {
     if defined($session->{expires_at}) && $session->{expires_at} < time;
   xrpc_error(401, 'InvalidToken', 'Token session did not match token subject')
     unless ($session->{did} // q()) eq ($claims->{sub} // q());
-  if ($aud eq 'access') {
+  if ($aud eq TOKEN_AUD_ACCESS) {
     my $token_scope = _canonical_access_scope($claims->{scope});
     my $session_scope = _canonical_access_scope($session->{scope});
     xrpc_error(401, 'InvalidToken', 'Token session scope did not match token scope')
@@ -668,9 +676,9 @@ sub _session_response ($c, $account, $session) {
   my $access = encode_jwt({
     iss => $issuer,
     sub => $account->{did},
-    aud => 'access',
+    aud => TOKEN_AUD_ACCESS,
     scope => $scope,
-    typ => 'access',
+    typ => TOKEN_AUD_ACCESS,
     jti => $session->{id},
     exp => $now + 3600,
   }, $secret);
@@ -678,8 +686,8 @@ sub _session_response ($c, $account, $session) {
   my $refresh = encode_jwt({
     iss => $issuer,
     sub => $account->{did},
-    aud => 'refresh',
-    typ => 'refresh',
+    aud => TOKEN_AUD_REFRESH,
+    typ => TOKEN_AUD_REFRESH,
     jti => $session->{id},
     exp => $refresh_exp,
   }, $secret);
@@ -733,7 +741,7 @@ sub _invite_code_targets ($c, $body, %opts) {
     return ('admin', $target);
   }
 
-  my (undef, $account) = require_auth($c, audience => 'access', required_scope => 'full');
+  my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS, required_scope => 'full');
   if ($opts{multiple}) {
     my @targets = @{ $body->{forAccounts} || [ $account->{did} ] };
     @targets = ($account->{did}) unless @targets;
