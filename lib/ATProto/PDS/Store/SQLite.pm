@@ -1718,19 +1718,16 @@ sub set_repo_head ($self, %args) {
   my $now = $args{indexed_at} // time;
   $self->dbh->do(
     q{
-      INSERT INTO repo_heads (did, commit_cid, rev, root_cid, indexed_at)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO repo_heads (did, indexed_at)
+      VALUES (?, ?)
       ON CONFLICT(did) DO UPDATE SET
-        commit_cid = excluded.commit_cid,
-        rev = excluded.rev,
-        root_cid = excluded.root_cid,
+        commit_cid = NULL,
+        rev = NULL,
+        root_cid = NULL,
         indexed_at = excluded.indexed_at
     },
     undef,
     $did,
-    $args{commit_cid},
-    $args{rev},
-    $args{root_cid},
     $now,
   );
   $self->dbh->do(

@@ -104,6 +104,13 @@ $store->set_repo_head(
   root_cid   => 'bafyroot',
 );
 is($store->get_repo_head($account->{did})->{rev}, '3k6h2w3px2', 'repo head metadata is stored');
+my $repo_head_row = $store->dbh->selectrow_hashref(
+  q{SELECT commit_cid, rev, root_cid FROM repo_heads WHERE did = ?},
+  undef,
+  $account->{did},
+);
+ok(!defined $repo_head_row->{commit_cid} && !defined $repo_head_row->{rev} && !defined $repo_head_row->{root_cid},
+  'repo_heads no longer stores duplicate commit metadata');
 
 $store->dbh->do(q{DELETE FROM repo_heads WHERE did = ?}, undef, $account->{did});
 is(
