@@ -11,7 +11,7 @@ use File::Spec;
 use File::Temp qw(tempdir);
 use IO::Socket::INET;
 use JSON::PP ();
-use MIME::Base64 qw(decode_base64 encode_base64);
+use MIME::Base64 qw(decode_base64);
 use POSIX qw(WNOHANG);
 use Time::HiRes qw(sleep time);
 
@@ -26,11 +26,25 @@ BEGIN {
 }
 
 use Mojo::JSON qw(decode_json encode_json true false);
-use Mojo::URL;
 use Mojo::UserAgent;
-use ATProto::PDS::EventStream qw(decode_frame);
 use ATProto::PDS::Repo::CAR qw(read_car);
 use ATProto::PDS::Repo::DagCbor qw(decode_dag_cbor);
+use ATProto::PDS::Test::Differential::Firehose qw(
+  first_frame
+  frames_until_quiet
+  next_commit_frame
+  quiet_firehose
+);
+use ATProto::PDS::Test::Differential::HTTP qw(
+  admin_auth_header
+  auth_header
+  get_form
+  get_json
+  get_json_url
+  post_bytes
+  post_empty
+  post_json
+);
 
 my $root = File::Spec->rel2abs(File::Spec->catdir(dirname(__FILE__), '..'));
 my $tmp  = tempdir(CLEANUP => 1);
@@ -170,255 +184,9 @@ sub random_hex ($bytes) {
   return unpack('H*', $buf);
 }
 
-sub post_json ($origin, $nsid, $payload, $headers = {}) {
-  my $ua = Mojo::UserAgent->new(max_redirects => 0);
-  my $tx = $ua->post(
-    "$origin/xrpc/$nsid" => {
-      'Content-Type' => 'application/json',
-      %{$headers},
-    } => json => $payload,
-  );
-  return $tx->result;
-}
-
-sub post_empty ($origin, $nsid, $headers = {}) {
-  my $ua = Mojo::UserAgent->new(max_redirects => 0);
-  my $tx = $ua->post("$origin/xrpc/$nsid" => $headers);
-  return $tx->result;
-}
-
-sub post_bytes ($origin, $nsid, $bytes, $content_type, $headers = {}) {
-  my $ua = Mojo::UserAgent->new(max_redirects => 0);
-  my $tx = $ua->post(
-    "$origin/xrpc/$nsid" => {
-      'Content-Type' => $content_type,
-      %{$headers},
-    } => $bytes,
-  );
-  return $tx->result;
-}
-
-sub get_form ($origin, $nsid, $query, $headers = {}) {
-  my $ua  = Mojo::UserAgent->new(max_redirects => 0);
-  my $url = Mojo::URL->new("$origin/xrpc/$nsid")->query($query);
-  my $tx  = $ua->get($url => $headers);
-  return $tx->result;
-}
-
-sub get_json ($origin, $nsid, $query = undef, $headers = {}) {
-  my $res = defined $query ? get_form($origin, $nsid, $query, $headers) : Mojo::UserAgent->new(max_redirects => 0)->get("$origin/xrpc/$nsid" => $headers)->result;
-  return $res;
-}
-
-sub get_json_url ($url) {
-  return Mojo::UserAgent->new(max_redirects => 0)->get($url)->result;
-}
-
-sub auth_header ($token) {
-  return { Authorization => "Bearer $token" };
-}
-
-sub admin_auth_header ($password) {
-  return {
-    Authorization => 'Basic ' . encode_base64("admin:$password", q()),
-  };
-}
-
 sub normalized_domains ($res) {
   my $json = $res->json || {};
   return [ sort map { /^\./ ? $_ : ".$_" } @{ $json->{availableUserDomains} || [] } ];
-}
-
-sub quiet_firehose ($url, $quiet_seconds = 0.5) {
-  my $ua = Mojo::UserAgent->new;
-  my $got_frame = 0;
-  my $error;
-  my $done = 0;
-
-  $ua->websocket($url => sub ($ua, $tx) {
-    unless ($tx->is_websocket) {
-      $error = $tx->res->error->{message} // 'websocket handshake failed';
-      $done = 1;
-      Mojo::IOLoop->stop;
-      return;
-    }
-
-    my $timer = Mojo::IOLoop->timer($quiet_seconds => sub {
-      $done = 1;
-      $tx->finish(1000);
-    });
-
-    $tx->on(binary => sub ($tx, $bytes) {
-      $got_frame = 1;
-      Mojo::IOLoop->remove($timer);
-      $tx->finish(1000);
-    });
-
-    $tx->on(finish => sub ($tx, $code, $reason = undef) {
-      Mojo::IOLoop->stop if $done || $got_frame || defined $error;
-    });
-  });
-
-  Mojo::IOLoop->start unless Mojo::IOLoop->is_running;
-  die "$error\n" if defined $error;
-  return !$got_frame;
-}
-
-sub next_commit_frame ($url, $expected_path, $trigger, $timeout = 10) {
-  my $ua = Mojo::UserAgent->new;
-  my $frame;
-  my $error;
-  my $deadline = time + $timeout;
-  my $triggered = 0;
-  my $done = 0;
-
-  $ua->websocket($url => sub ($ua, $tx) {
-    unless ($tx->is_websocket) {
-      $error = $tx->res->error->{message} // 'websocket handshake failed';
-      $done = 1;
-      Mojo::IOLoop->stop;
-      return;
-    }
-
-    my $timer;
-    $timer = Mojo::IOLoop->recurring(0.1 => sub {
-      if (time >= $deadline) {
-        $error = "timed out waiting for firehose commit at $expected_path";
-        Mojo::IOLoop->remove($timer);
-        $done = 1;
-        $tx->finish(1000);
-      }
-    });
-
-    $tx->on(binary => sub ($tx, $bytes) {
-      my $decoded = decode_frame($bytes);
-      my $header  = $decoded->{header} || {};
-      my $body    = $decoded->{body}   || {};
-      my @ops     = @{ $body->{ops} || [] };
-      my $match   = grep { ($_->{path} // q()) eq $expected_path } @ops;
-      if (($header->{t} // q()) eq '#commit' && $match) {
-        $frame = $decoded;
-        Mojo::IOLoop->remove($timer);
-        $done = 1;
-        $tx->finish(1000);
-      }
-    });
-
-    Mojo::IOLoop->next_tick(sub {
-      return if $triggered;
-      $triggered = 1;
-      eval { $trigger->() };
-      if ($@) {
-        $error = $@;
-        Mojo::IOLoop->remove($timer);
-        $done = 1;
-        $tx->finish(1011);
-      }
-    });
-
-    $tx->on(finish => sub ($tx, $code, $reason = undef) {
-      Mojo::IOLoop->stop if $done || defined $error;
-    });
-  });
-
-  Mojo::IOLoop->start unless Mojo::IOLoop->is_running;
-  die "$error\n" if defined $error;
-  return $frame;
-}
-
-sub first_frame ($url, $timeout = 5) {
-  my $ua = Mojo::UserAgent->new;
-  my $frame;
-  my $error;
-  my $done = 0;
-  my $deadline = time + $timeout;
-
-  $ua->websocket($url => sub ($ua, $tx) {
-    unless ($tx->is_websocket) {
-      $error = $tx->res->error->{message} // 'websocket handshake failed';
-      $done = 1;
-      Mojo::IOLoop->stop;
-      return;
-    }
-
-    my $timer;
-    $timer = Mojo::IOLoop->recurring(0.1 => sub {
-      if (time >= $deadline) {
-        $error = "timed out waiting for firehose frame";
-        Mojo::IOLoop->remove($timer);
-        $done = 1;
-        $tx->finish(1000);
-      }
-    });
-
-    $tx->on(binary => sub ($tx, $bytes) {
-      $frame = decode_frame($bytes);
-      Mojo::IOLoop->remove($timer);
-      $done = 1;
-      $tx->finish(1000);
-    });
-
-    $tx->on(finish => sub ($tx, $code, $reason = undef) {
-      Mojo::IOLoop->stop if $done || defined $error;
-    });
-  });
-
-  Mojo::IOLoop->start unless Mojo::IOLoop->is_running;
-  die "$error\n" if defined $error;
-  return $frame;
-}
-
-sub frames_until_quiet ($url, $quiet_seconds = 0.25, $timeout = 5) {
-  my $ua = Mojo::UserAgent->new;
-  my @frames;
-  my $error;
-  my $done = 0;
-  my $deadline = time + $timeout;
-
-  $ua->websocket($url => sub ($ua, $tx) {
-    unless ($tx->is_websocket) {
-      $error = $tx->res->error->{message} // 'websocket handshake failed';
-      $done = 1;
-      Mojo::IOLoop->stop;
-      return;
-    }
-
-    my $quiet_timer;
-    my $reset_quiet = sub {
-      Mojo::IOLoop->remove($quiet_timer) if defined $quiet_timer;
-      $quiet_timer = Mojo::IOLoop->timer($quiet_seconds => sub {
-        $done = 1;
-        $tx->finish(1000);
-      });
-    };
-    $reset_quiet->();
-
-    my $watchdog;
-    $watchdog = Mojo::IOLoop->recurring(0.1 => sub {
-      if (time >= $deadline) {
-        $error = "timed out waiting for websocket frames at $url";
-        Mojo::IOLoop->remove($watchdog);
-        Mojo::IOLoop->remove($quiet_timer) if defined $quiet_timer;
-        $done = 1;
-        $tx->finish(1000);
-      }
-    });
-
-    $tx->on(binary => sub ($tx, $bytes) {
-      push @frames, decode_frame($bytes);
-      $reset_quiet->();
-    });
-
-    $tx->on(finish => sub ($tx, $code, $reason = undef) {
-      Mojo::IOLoop->remove($watchdog) if defined $watchdog;
-      Mojo::IOLoop->remove($quiet_timer) if defined $quiet_timer;
-      Mojo::IOLoop->stop if $done || defined $error;
-    });
-  });
-
-  Mojo::IOLoop->start unless Mojo::IOLoop->is_running;
-  die "$error\n" if defined $error;
-  return \@frames;
 }
 
 sub normalize_commit_frame ($frame, $did) {
