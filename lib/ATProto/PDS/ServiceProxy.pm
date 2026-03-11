@@ -492,64 +492,30 @@ sub _thread_view ($self, $c, $account, $row, $profile_value = undef, $viewer = u
 }
 
 sub _reply_rows ($self, $c, $parent_uri) {
-  my @matches;
-  for my $account (@{ $c->store->list_accounts }) {
-    for my $row (@{ $c->store->all_records_for_did($account->{did}) }) {
-      next unless ($row->{collection} // q()) eq 'app.bsky.feed.post';
-      my $reply = (ref($row->{value}) eq 'HASH') ? $row->{value}{reply} : undef;
-      next unless ref($reply) eq 'HASH';
-      next unless (($reply->{parent}{uri} // q()) eq $parent_uri);
-      push @matches, [ $account, $row ];
-    }
-  }
-  @matches = sort {
-    $self->_post_indexed_at($a->[1]) cmp $self->_post_indexed_at($b->[1])
-  } @matches;
-  return @matches;
+  my $index = $self->_local_post_index($c);
+  return @{ $index->{replies}{$parent_uri} || [] };
 }
 
 sub _post_counts_and_viewer ($self, $c, $post_uri, $viewer = undef) {
-  my $cache = $c->stash('local_post_stats') // {};
-  return $cache->{$post_uri} if $cache->{$post_uri};
-
+  my $index = $self->_local_post_index($c);
   my $viewer_did = $viewer ? $viewer->{did} : undef;
-  my $stats = {
+  my $base = $index->{stats}{$post_uri} || {
     likeCount   => 0,
     repostCount => 0,
     replyCount  => 0,
     quoteCount  => 0,
-    viewer      => {},
   };
-
-  for my $account (@{ $c->store->list_accounts }) {
-    for my $row (@{ $c->store->all_records_for_did($account->{did}) }) {
-      my $value = $row->{value};
-      next unless ref($value) eq 'HASH';
-
-      if (($row->{collection} // q()) eq 'app.bsky.feed.like') {
-        next unless (($value->{subject}{uri} // q()) eq $post_uri);
-        $stats->{likeCount}++;
-        $stats->{viewer}{like} = 'at://' . $account->{did} . '/' . $row->{collection} . '/' . $row->{rkey}
-          if defined $viewer_did && $account->{did} eq $viewer_did;
-      }
-      elsif (($row->{collection} // q()) eq 'app.bsky.feed.repost') {
-        next unless (($value->{subject}{uri} // q()) eq $post_uri);
-        $stats->{repostCount}++;
-        $stats->{viewer}{repost} = 'at://' . $account->{did} . '/' . $row->{collection} . '/' . $row->{rkey}
-          if defined $viewer_did && $account->{did} eq $viewer_did;
-      }
-      elsif (($row->{collection} // q()) eq 'app.bsky.feed.post') {
-        my $reply = $value->{reply};
-        $stats->{replyCount}++
-          if ref($reply) eq 'HASH' && (($reply->{parent}{uri} // q()) eq $post_uri);
-        $stats->{quoteCount}++
-          if ($self->_quoted_uri($value) // q()) eq $post_uri;
-      }
-    }
+  my $stats = {
+    %$base,
+    viewer => {},
+  };
+  if (defined $viewer_did) {
+    my $viewer = $index->{viewer}{$post_uri} || {};
+    $stats->{viewer}{like} = $viewer->{like}{$viewer_did}
+      if defined $viewer->{like}{$viewer_did};
+    $stats->{viewer}{repost} = $viewer->{repost}{$viewer_did}
+      if defined $viewer->{repost}{$viewer_did};
   }
-
-  $cache->{$post_uri} = $stats;
-  $c->stash(local_post_stats => $cache);
   return $stats;
 }
 
@@ -565,6 +531,74 @@ sub _quoted_uri ($self, $value) {
       && ref($embed->{record}) eq 'HASH'
       && ref($embed->{record}{record}) eq 'HASH';
   return undef;
+}
+
+sub _local_post_index ($self, $c) {
+  my $index = $c->stash('local_post_index');
+  return $index if $index;
+
+  $index = {
+    replies => {},
+    stats   => {},
+    viewer  => {},
+  };
+
+  for my $account (@{ $c->store->list_accounts }) {
+    for my $row (@{ $c->store->all_records_for_did($account->{did}) }) {
+      my $value = $row->{value};
+      next unless ref($value) eq 'HASH';
+
+      if (($row->{collection} // q()) eq 'app.bsky.feed.post') {
+        my $reply = $value->{reply};
+        if (ref($reply) eq 'HASH') {
+          my $parent_uri = $reply->{parent}{uri} // q();
+          if (length $parent_uri) {
+            push @{ $index->{replies}{$parent_uri} }, [ $account, $row ];
+            _local_post_stats($index, $parent_uri)->{replyCount}++;
+          }
+        }
+
+        my $quoted_uri = $self->_quoted_uri($value) // q();
+        _local_post_stats($index, $quoted_uri)->{quoteCount}++
+          if length $quoted_uri;
+        next;
+      }
+
+      if (($row->{collection} // q()) eq 'app.bsky.feed.like') {
+        my $subject_uri = $value->{subject}{uri} // q();
+        next unless length $subject_uri;
+        _local_post_stats($index, $subject_uri)->{likeCount}++;
+        $index->{viewer}{$subject_uri}{like}{$account->{did}} = $self->_post_uri($account, $row);
+        next;
+      }
+
+      if (($row->{collection} // q()) eq 'app.bsky.feed.repost') {
+        my $subject_uri = $value->{subject}{uri} // q();
+        next unless length $subject_uri;
+        _local_post_stats($index, $subject_uri)->{repostCount}++;
+        $index->{viewer}{$subject_uri}{repost}{$account->{did}} = $self->_post_uri($account, $row);
+      }
+    }
+  }
+
+  for my $parent_uri (keys %{ $index->{replies} }) {
+    my @sorted = sort {
+      $self->_post_indexed_at($a->[1]) cmp $self->_post_indexed_at($b->[1])
+    } @{ $index->{replies}{$parent_uri} };
+    $index->{replies}{$parent_uri} = \@sorted;
+  }
+
+  $c->stash(local_post_index => $index);
+  return $index;
+}
+
+sub _local_post_stats ($index, $post_uri) {
+  return $index->{stats}{$post_uri} ||= {
+    likeCount   => 0,
+    repostCount => 0,
+    replyCount  => 0,
+    quoteCount  => 0,
+  };
 }
 
 sub _post_embed_view ($self, $c, $account, $value, $viewer = undef, $depth = 0) {
