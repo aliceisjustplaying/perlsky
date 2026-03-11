@@ -10,6 +10,8 @@ use Mojo::URL;
 use Mojo::UserAgent;
 use Time::HiRes qw(time);
 
+use ATProto::PDS::Identity qw(service_host);
+
 sub new ($class, %args) {
   return bless {
     hostname      => $args{hostname}      // 'localhost',
@@ -108,7 +110,7 @@ sub notify_of_update ($self, %args) {
 
 sub _touch_status ($self, $service, %args) {
   return unless $self->{store};
-  my $host = _service_host($service);
+  my $host = service_host($service);
   $self->{store}->touch_host_notice(
     hostname => $host,
     %args,
@@ -157,15 +159,4 @@ sub _request_crawl_batch ($hostname, $services) {
 
   return \@results;
 }
-
-sub _service_host ($service) {
-  my $url = Mojo::URL->new($service);
-  my $host = lc($url->host // $service);
-  my $scheme = $url->scheme // 'http';
-  my $port = $url->port;
-  my $default = $scheme eq 'https' ? 443 : 80;
-  $host .= ':' . $port if defined $port && $port != $default;
-  return $host;
-}
-
 1;
