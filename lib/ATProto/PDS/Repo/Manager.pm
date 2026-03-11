@@ -10,6 +10,7 @@ use Scalar::Util qw(blessed);
 
 use ATProto::PDS::Crypto::Secp256k1 qw(generate_keypair sign_compact_low_s);
 use ATProto::PDS::API::Util qw(xrpc_error);
+use ATProto::PDS::Constants qw(EVENT_TYPE_COMMIT);
 use ATProto::PDS::Repo::Bytes;
 use ATProto::PDS::Repo::CAR qw(read_car write_car);
 use ATProto::PDS::Repo::CID;
@@ -177,7 +178,7 @@ sub apply_writes ($self, $account, $writes, %opts) {
     if ($opts{emit_event} // 1) {
       $store->append_event(
         did        => $did,
-        type       => 'commit',
+        type       => EVENT_TYPE_COMMIT,
         rev        => $rev,
         commit_cid => $commit_cid->to_string,
         payload    => {
@@ -294,7 +295,7 @@ sub import_repo_car ($self, $account, $car_bytes) {
     );
     $store->append_event(
       did        => $did,
-      type       => 'commit',
+      type       => EVENT_TYPE_COMMIT,
       rev        => $rev,
       commit_cid => $commit_cid->to_string,
       payload    => {

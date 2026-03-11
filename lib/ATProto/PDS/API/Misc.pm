@@ -14,6 +14,7 @@ use ATProto::PDS::API::Util qw(flatten_params iso8601 pump_event_subscription su
 use ATProto::PDS::Auth::Password qw(hash_password random_hex);
 use ATProto::PDS::Constants qw(
   ACTION_TOKEN_PLC_OPERATION
+  EVENT_TYPE_IDENTITY
   TOKEN_AUD_ACCESS
 );
 use ATProto::PDS::EventStream qw(encode_message_frame);
@@ -292,7 +293,7 @@ sub _label_view ($row) {
 sub _append_identity_event ($c, $account) {
   $c->append_event(
     did     => $account->{did},
-    type    => 'identity',
+    type    => EVENT_TYPE_IDENTITY,
     rev     => $account->{repo_rev},
     payload => {
       did    => $account->{did},

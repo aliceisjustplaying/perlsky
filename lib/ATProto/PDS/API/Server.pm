@@ -17,6 +17,10 @@ use ATProto::PDS::Constants qw(
   ACTION_TOKEN_EMAIL_CONFIRM
   ACTION_TOKEN_EMAIL_UPDATE
   ACTION_TOKEN_PASSWORD_RESET
+  EVENT_TYPE_ACCOUNT
+  EVENT_TYPE_COMMIT
+  EVENT_TYPE_IDENTITY
+  EVENT_TYPE_SYNC
   TOKEN_AUD_ACCESS
   TOKEN_AUD_REFRESH
 );
@@ -136,7 +140,7 @@ sub register_server_handlers ($registry, $app) {
     $c->store->claim_reserved_signing_key($did) if $reserved && !defined $reserved->{claimed_at};
     $c->append_event(
       did     => $account->{did},
-      type    => 'identity',
+      type    => EVENT_TYPE_IDENTITY,
       rev     => $account->{repo_rev},
       payload => {
         did    => $account->{did},
@@ -145,7 +149,7 @@ sub register_server_handlers ($registry, $app) {
     );
     $c->append_event(
       did     => $account->{did},
-      type    => 'account',
+      type    => EVENT_TYPE_ACCOUNT,
       rev     => $account->{repo_rev},
       payload => {
         active => JSON::PP::true,
@@ -153,7 +157,7 @@ sub register_server_handlers ($registry, $app) {
     );
     $c->append_event(
       did        => $account->{did},
-      type       => 'commit',
+      type       => EVENT_TYPE_COMMIT,
       rev        => $account->{repo_rev},
       commit_cid => $repo->{cid},
       payload    => {
@@ -164,7 +168,7 @@ sub register_server_handlers ($registry, $app) {
     );
     $c->append_event(
       did        => $account->{did},
-      type       => 'sync',
+      type       => EVENT_TYPE_SYNC,
       rev        => $account->{repo_rev},
       commit_cid => $repo->{cid},
       car_bytes  => $repo->{sync_car_bytes},
@@ -295,7 +299,7 @@ sub register_server_handlers ($registry, $app) {
     $c->store->update_account($account->{did}, deactivated_at => time);
     $c->append_event(
       did     => $account->{did},
-      type    => 'account',
+      type    => EVENT_TYPE_ACCOUNT,
       rev     => $account->{repo_rev},
       payload => {
         active => JSON::PP::false,
@@ -310,7 +314,7 @@ sub register_server_handlers ($registry, $app) {
     $account = $c->store->update_account($account->{did}, deactivated_at => undef);
     $c->append_event(
       did     => $account->{did},
-      type    => 'account',
+      type    => EVENT_TYPE_ACCOUNT,
       rev     => $account->{repo_rev},
       payload => {
         active => JSON::PP::true,
@@ -318,7 +322,7 @@ sub register_server_handlers ($registry, $app) {
     );
     $c->append_event(
       did     => $account->{did},
-      type    => 'identity',
+      type    => EVENT_TYPE_IDENTITY,
       rev     => $account->{repo_rev},
       payload => {
         did    => $account->{did},
@@ -330,7 +334,7 @@ sub register_server_handlers ($registry, $app) {
       my $sync_car = $c->repo_manager->sync_car_for_commit($commit);
       $c->append_event(
         did        => $account->{did},
-        type       => 'sync',
+        type       => EVENT_TYPE_SYNC,
         rev        => $account->{repo_rev},
         commit_cid => $commit->{cid},
         car_bytes  => $sync_car,
@@ -489,7 +493,7 @@ sub register_server_handlers ($registry, $app) {
       $c->store->consume_action_token($token->{token});
       $c->append_event(
         did     => $account->{did},
-        type    => 'account',
+        type    => EVENT_TYPE_ACCOUNT,
         rev     => $account->{repo_rev},
         payload => {
           active => JSON::PP::false,
