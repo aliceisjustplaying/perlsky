@@ -81,7 +81,7 @@ Important fields:
 - `hostname`: the host relays should crawl
 - `service_handle_domain`: the suffix used for local handles
 - `jwt_secret`: required; the server now refuses to start if it is missing or still set to the old `perlsky-dev-secret` fallback
-- `sentry_dsn`: optional; when set, perlsky reports unhandled XRPC exceptions to Sentry
+- `sentry_dsn`: optional; when set, perlsky reports unhandled XRPC exceptions to Sentry with request context and Perl stack frames
 - If you want users like `alice.pds.example.com`, set `service_handle_domain` to `pds.example.com`, not `example.com`.
 - Public handle resolution for `alice.pds.example.com` also requires wildcard DNS for `*.pds.example.com` and a reverse proxy/TLS setup that will answer those subdomains.
 - `invite_code_required`: if true, `createAccount` requires a valid invite code
@@ -337,6 +337,7 @@ If you want exception reporting in addition to Prometheus metrics, add `sentry_d
 The current integration is intentionally narrow:
 
 - it reports unhandled XRPC exceptions
+- the Sentry event includes request metadata and Perl stack frames
 - it does not report ordinary handled XRPC errors like `InvalidToken`
 - it is a no-op when `sentry_dsn` is unset
 

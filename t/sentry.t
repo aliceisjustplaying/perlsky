@@ -72,16 +72,26 @@ my $sentry = ATProto::PDS::Sentry->new(
 );
 $sentry->{ua} = SentryTestUA->new(\@requests);
 
-ok($sentry->enabled, 'sentry client is enabled when a DSN is configured');
-ok(
-  $sentry->capture_exception(
-    message       => 'intentional sentry test failure',
+sub sentry_nested_failure {
+  die "intentional sentry test failure";
+}
+
+sub sentry_emit_nested_failure {
+  eval { sentry_nested_failure(); 1 };
+  my $err = $@;
+  return $sentry->capture_exception(
+    message       => $err,
     method        => 'GET',
     nsid          => 'com.atproto.server.describeServer',
     endpoint_type => 'query',
     status        => 500,
     did           => 'did:plc:test',
-  ),
+  );
+}
+
+ok($sentry->enabled, 'sentry client is enabled when a DSN is configured');
+ok(
+  sentry_emit_nested_failure(),
   'capture_exception reports success for a 200 response',
 );
 is(scalar @requests, 1, 'capture_exception submits one store request');
@@ -91,6 +101,25 @@ is($requests[0]{payload}{tags}{nsid}, 'com.atproto.server.describeServer', 'payl
 is($requests[0]{payload}{exception}{values}[0]{type}, 'UnhandledXRPCException', 'payload includes exception type');
 like($requests[0]{payload}{exception}{values}[0]{value}, qr/intentional sentry test failure/, 'payload includes exception message');
 is($requests[0]{payload}{user}{id}, 'did:plc:test', 'payload includes the actor did when available');
+ok(
+  ref($requests[0]{payload}{exception}{values}[0]{stacktrace}{frames}) eq 'ARRAY'
+    && @{$requests[0]{payload}{exception}{values}[0]{stacktrace}{frames}},
+  'payload includes stacktrace frames',
+);
+ok(
+  scalar(grep {
+    ($_->{filename} // q()) =~ m{(?:^|/)t/sentry\.t$}
+      && ($_->{function} // q()) =~ /sentry_nested_failure|<exception>/
+  } @{$requests[0]{payload}{exception}{values}[0]{stacktrace}{frames}}),
+  'payload stacktrace points at the test failure site',
+);
+ok(
+  scalar(grep {
+    ($_->{filename} // q()) =~ m{(?:^|/)t/sentry\.t$}
+      && ($_->{function} // q()) =~ /sentry_emit_nested_failure/
+  } @{$requests[0]{payload}{exception}{values}[0]{stacktrace}{frames}}),
+  'payload stacktrace includes the caller frame',
+);
 
 my $root = File::Spec->rel2abs(File::Spec->catdir($Bin, '..'));
 my $tmp  = tempdir(CLEANUP => 1);

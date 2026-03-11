@@ -34,6 +34,7 @@ sub capture_exception ($self, %args) {
   return 0 unless $self->enabled;
 
   my $message = $args{message} // 'Unhandled exception';
+  my $frames = _stacktrace_frames($message);
   my $event = {
     event_id    => substr(sha1_hex(join q{|}, time, $$, rand(), $message), 0, 32),
     timestamp   => strftime('%Y-%m-%dT%H:%M:%SZ', gmtime),
@@ -55,6 +56,7 @@ sub capture_exception ($self, %args) {
         {
           type  => $args{type} // 'UnhandledXRPCException',
           value => $message,
+          (@$frames ? (stacktrace => { frames => $frames }) : ()),
         },
       ],
     },
@@ -88,6 +90,86 @@ sub capture_exception ($self, %args) {
   return 0 unless $tx;
   my $code = eval { $tx->result->code } // 0;
   return ($code >= 200 && $code < 300) ? 1 : 0;
+}
+
+sub _stacktrace_frames ($message) {
+  my @frames = _message_stack_frames($message)->@*;
+  my %seen = map { _frame_key($_) => 1 } @frames;
+
+  for my $frame (_caller_stack_frames()->@*) {
+    my $key = _frame_key($frame);
+    next if $seen{$key}++;
+    push @frames, $frame;
+  }
+
+  return \@frames;
+}
+
+sub _message_stack_frames ($message) {
+  return [] unless defined $message && length $message;
+
+  my @frames;
+  my @lines = split /\n/, $message;
+  if (@lines && $lines[0] =~ / at (.+) line (\d+)\.?$/) {
+    push @frames, {
+      filename => $1,
+      function => '<exception>',
+      module   => undef,
+      lineno   => 0 + $2,
+      in_app   => _in_app_filename($1),
+    };
+  }
+
+  for my $line (@lines[1 .. $#lines]) {
+    next unless $line =~ /^\s*(.+?) called at (.+) line (\d+)\.?$/;
+    push @frames, {
+      filename => $2,
+      function => $1,
+      module   => _module_from_function($1),
+      lineno   => 0 + $3,
+      in_app   => _in_app_filename($2),
+    };
+  }
+
+  return \@frames;
+}
+
+sub _caller_stack_frames () {
+  my @frames;
+  my $level = 1;
+  while (my @caller = caller($level++)) {
+    my ($package, $filename, $line, $subroutine) = @caller[0 .. 3];
+    next if defined $subroutine && $subroutine =~ /\AATProto::PDS::Sentry::(?:capture_exception|_stacktrace_frames|_message_stack_frames|_caller_stack_frames|_frame_key|_module_from_function|_in_app_filename)\z/;
+    push @frames, {
+      filename => $filename,
+      function => $subroutine // '<main>',
+      module   => $package,
+      lineno   => 0 + $line,
+      in_app   => _in_app_filename($filename),
+    };
+  }
+  return [ reverse @frames ];
+}
+
+sub _frame_key ($frame) {
+  return join "\x1F",
+    map { defined $_ ? $_ : q() }
+    @{$frame}{qw(filename function lineno)};
+}
+
+sub _module_from_function ($function) {
+  return undef unless defined $function && length $function;
+  return $1 if $function =~ /\A(.+)::[^:]+\z/;
+  return undef;
+}
+
+sub _in_app_filename ($filename) {
+  return 0 unless defined $filename && length $filename;
+  return 0 if $filename =~ /^\(eval/;
+  return 0 if $filename =~ m{(?:^|/)(?:core_perl|site_perl|vendor_perl)(?:/|$)};
+  return 0 if $filename =~ m{(?:^|/)local/lib/perl5(?:/|$)};
+  return 0 if $filename =~ m{^/usr/};
+  return 1;
 }
 
 sub _ua ($self) {

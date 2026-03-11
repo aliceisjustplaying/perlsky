@@ -107,7 +107,7 @@ The dashboard expects a Prometheus data source. When provisioning, either keep t
 
 ## Sentry
 
-Prometheus is still the main place to watch rates and latency. If you also configure `sentry_dsn`, perlsky will report unhandled XRPC exceptions to Sentry. That works well as a complement to:
+Prometheus is still the main place to watch rates and latency. If you also configure `sentry_dsn`, perlsky will report unhandled XRPC exceptions to Sentry with request metadata and Perl stack frames. That works well as a complement to:
 
 - `perlsky_xrpc_errors_total` for handled request failures
 - `perlsky_xrpc_unhandled_exceptions_total` for internal 500-class failures
