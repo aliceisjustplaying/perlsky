@@ -98,8 +98,28 @@ $t->post_ok('/xrpc/com.atproto.server.refreshSession' => { Authorization => "Bea
 
 my $refreshed = $t->tx->res->json;
 
+$t->get_ok('/xrpc/com.atproto.server.getSession' => { Authorization => "Bearer $access" })
+  ->status_is(401)
+  ->json_is('/error' => 'ExpiredToken');
+
+$t->get_ok('/xrpc/com.atproto.server.getSession' => { Authorization => "Bearer $refresh" })
+  ->status_is(401)
+  ->json_is('/error' => 'InvalidToken');
+
+$t->get_ok('/xrpc/com.atproto.server.getSession' => { Authorization => "Bearer $refreshed->{refreshJwt}" })
+  ->status_is(401)
+  ->json_is('/error' => 'InvalidToken');
+
+$t->get_ok('/xrpc/com.atproto.server.getSession' => { Authorization => "Bearer $refreshed->{accessJwt}" })
+  ->status_is(200)
+  ->json_is('/did' => $did);
+
 $t->post_ok('/xrpc/com.atproto.server.deleteSession' => { Authorization => "Bearer $refreshed->{refreshJwt}" } => json => {})
   ->status_is(200);
+
+$t->get_ok('/xrpc/com.atproto.server.getSession' => { Authorization => "Bearer $refreshed->{accessJwt}" })
+  ->status_is(401)
+  ->json_is('/error' => 'ExpiredToken');
 
 $t->post_ok('/xrpc/com.atproto.server.createSession' => json => {
   identifier => 'alice.localhost',
@@ -107,8 +127,10 @@ $t->post_ok('/xrpc/com.atproto.server.createSession' => json => {
 })->status_is(200)
   ->json_is('/did' => $did);
 
+my $replacement_access = $t->tx->res->json->{accessJwt};
+
 $t->get_ok('/xrpc/com.atproto.server.getServiceAuth?aud=did:web:api.bsky.app&lxm=app.bsky.actor.getPreferences' => {
-  Authorization => "Bearer $access",
+  Authorization => "Bearer $replacement_access",
 })->status_is(200)
   ->json_has('/token');
 

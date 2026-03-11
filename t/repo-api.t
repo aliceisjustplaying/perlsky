@@ -45,6 +45,7 @@ $t->post_ok('/xrpc/com.atproto.server.createAccount' => json => {
 my $session = $t->tx->res->json;
 my $did     = $session->{did};
 my $access  = $session->{accessJwt};
+my $refresh = $session->{refreshJwt};
 
 $t->post_ok('/xrpc/com.atproto.repo.createRecord' => { Authorization => "Bearer $access" } => json => {
   repo       => $did,
@@ -57,6 +58,18 @@ $t->post_ok('/xrpc/com.atproto.repo.createRecord' => { Authorization => "Bearer 
   },
 })->status_is(200)
   ->json_like('/cid' => qr/\Ab/);
+
+$t->post_ok('/xrpc/com.atproto.repo.createRecord' => { Authorization => "Bearer $refresh" } => json => {
+  repo       => $did,
+  collection => 'app.bsky.feed.post',
+  rkey       => 'refresh-post',
+  record     => {
+    '$type'   => 'app.bsky.feed.post',
+    text      => 'refresh tokens are not access tokens',
+    createdAt => '2026-03-10T00:01:00Z',
+  },
+})->status_is(401)
+  ->json_is('/error' => 'InvalidToken');
 
 $t->get_ok("/xrpc/com.atproto.repo.getRecord?repo=$did&collection=app.bsky.feed.post&rkey=first-post")
   ->status_is(200)

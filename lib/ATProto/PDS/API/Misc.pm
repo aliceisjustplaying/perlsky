@@ -11,7 +11,7 @@ use Mojo::IOLoop;
 
 use ATProto::PDS::API::Helpers qw(find_account require_admin subject_key);
 use ATProto::PDS::API::Server qw(require_auth);
-use ATProto::PDS::API::Util qw(iso8601 xrpc_error);
+use ATProto::PDS::API::Util qw(flatten_params iso8601 xrpc_error);
 use ATProto::PDS::Auth::Password qw(hash_password random_hex);
 use ATProto::PDS::EventStream qw(encode_error_frame encode_info_frame encode_message_frame);
 use ATProto::PDS::Identity qw(account_did_doc normalize_handle service_did service_did_doc);
@@ -24,7 +24,7 @@ our @EXPORT_OK = qw(register_misc_handlers);
 
 sub register_misc_handlers ($registry, $app) {
   $registry->register('com.atproto.identity.getRecommendedDidCredentials', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
+    my (undef, $account) = require_auth($c, audience => 'access');
     return recommended_did_credentials($c->app->settings, $account);
   });
 
@@ -57,7 +57,7 @@ sub register_misc_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.identity.requestPlcOperationSignature', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
+    my (undef, $account) = require_auth($c, audience => 'access');
     xrpc_error(400, 'InvalidRequest', 'account does not have an email address')
       unless defined($account->{email}) && length($account->{email});
     my $token = $c->store->create_action_token(
@@ -76,7 +76,7 @@ sub register_misc_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.identity.signPlcOperation', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
+    my (undef, $account) = require_auth($c, audience => 'access');
     xrpc_error(400, 'InvalidRequest', 'PLC operations are only supported for did:plc accounts')
       unless is_plc_did($account->{did});
     my $body = $c->req->json || {};
@@ -106,7 +106,7 @@ sub register_misc_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.identity.submitPlcOperation', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
+    my (undef, $account) = require_auth($c, audience => 'access');
     xrpc_error(400, 'InvalidRequest', 'PLC operations are only supported for did:plc accounts')
       unless is_plc_did($account->{did});
     my $body = $c->req->json || {};
@@ -140,7 +140,7 @@ sub register_misc_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.identity.updateHandle', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
+    my (undef, $account) = require_auth($c, audience => 'access');
     my $body   = $c->req->json || {};
     my $domain = $c->config_value('service_handle_domain', 'localhost');
     my $handle = normalize_handle($body->{handle}, $domain);
@@ -184,7 +184,7 @@ sub register_misc_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.moderation.createReport', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
+    my (undef, $account) = require_auth($c, audience => 'access');
     my $body = $c->req->json || {};
     assert_report_allowed($c, $account, $body->{reasonType});
     my $row = $c->store->create_report(
@@ -205,8 +205,8 @@ sub register_misc_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.label.queryLabels', sub ($c, $endpoint) {
-    my $patterns = [ _flatten_params($c->every_param('uriPatterns')) ];
-    my @sources  = _flatten_params($c->every_param('sources'));
+    my $patterns = [ flatten_params($c->every_param('uriPatterns')) ];
+    my @sources  = flatten_params($c->every_param('sources'));
     xrpc_error(400, 'InvalidRequest', 'uriPatterns is required') unless @$patterns;
     my $page = $c->store->list_labels(
       uri_patterns => $patterns,
@@ -329,14 +329,6 @@ sub register_misc_handlers ($registry, $app) {
     });
     return {};
   });
-}
-
-sub _flatten_params (@values) {
-  my @flat;
-  for my $value (@values) {
-    push @flat, ref($value) eq 'ARRAY' ? @$value : $value;
-  }
-  return @flat;
 }
 
 sub _label_view ($row) {
