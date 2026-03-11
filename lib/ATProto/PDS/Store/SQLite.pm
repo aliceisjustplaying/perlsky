@@ -22,6 +22,21 @@ use ATProto::PDS::Store::SQLite::Events qw(
   list_events_from
   next_event_after_seq
 );
+use ATProto::PDS::Store::SQLite::ActionTokens qw(
+  consume_action_token
+  create_action_token
+  get_action_token
+  latest_action_token
+);
+use ATProto::PDS::Store::SQLite::Invites qw(
+  create_invite_code
+  disable_invite_codes
+  get_invite_code
+  list_invite_code_uses
+  list_invite_codes
+  list_invite_codes_for_account
+  record_invite_code_use
+);
 use ATProto::PDS::Store::SQLite::Labels qw(
   get_label
   list_labels
@@ -941,213 +956,6 @@ sub search_accounts ($self, %args) {
   my $page = _paginate($rows, $limit, 'did');
   $page->{items} = [ map { $self->_row_to_account($_) } @{ $page->{items} } ];
   return $page;
-}
-
-sub create_action_token ($self, %args) {
-  my $token   = $args{token}   // _random_id();
-  my $purpose = $args{purpose} // die 'purpose is required';
-  my $now     = $args{created_at} // time;
-  $self->dbh->do(
-    q{
-      INSERT INTO action_tokens (
-        token, did, email, purpose, payload_json, created_at, expires_at, consumed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    },
-    undef,
-    $token,
-    $args{did},
-    $args{email},
-    $purpose,
-    _maybe_json($args{payload}),
-    $now,
-    $args{expires_at},
-    $args{consumed_at},
-  );
-  return $self->get_action_token($token);
-}
-
-sub get_action_token ($self, $token) {
-  my $row = $self->dbh->selectrow_hashref(
-    q{SELECT * FROM action_tokens WHERE token = ?},
-    undef,
-    $token,
-  );
-  return _row_from_json_columns($row, qw(payload_json));
-}
-
-sub consume_action_token ($self, $token, %args) {
-  $self->dbh->do(
-    q{UPDATE action_tokens SET consumed_at = ? WHERE token = ?},
-    undef,
-    $args{consumed_at} // time,
-    $token,
-  );
-  return $self->get_action_token($token);
-}
-
-sub latest_action_token ($self, %args) {
-  my @where;
-  my @bind;
-  for my $pair (
-    [ purpose => 'purpose' ],
-    [ did     => 'did' ],
-    [ email   => 'email' ],
-  ) {
-    my ($arg, $column) = @$pair;
-    next unless defined $args{$arg};
-    push @where, "$column = ?";
-    push @bind, $args{$arg};
-  }
-  my $sql = q{SELECT * FROM action_tokens};
-  $sql .= q{ WHERE } . join(q{ AND }, @where) if @where;
-  $sql .= q{ ORDER BY created_at DESC, token DESC LIMIT 1};
-  my $row = $self->dbh->selectrow_hashref($sql, undef, @bind);
-  return _row_from_json_columns($row, qw(payload_json));
-}
-
-sub create_invite_code ($self, %args) {
-  my $code = $args{code} // die 'code is required';
-  my $now  = $args{created_at} // time;
-  $self->dbh->do(
-    q{
-      INSERT INTO invite_codes (
-        code, for_account, created_by, use_count, disabled, note, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
-    },
-    undef,
-    $code,
-    $args{for_account},
-    $args{created_by},
-    $args{use_count} // 1,
-    $args{disabled} ? 1 : 0,
-    $args{note},
-    $now,
-  );
-  return $self->get_invite_code($code);
-}
-
-sub get_invite_code ($self, $code) {
-  my $row = $self->dbh->selectrow_hashref(
-    q{SELECT * FROM invite_codes WHERE code = ?},
-    undef,
-    $code,
-  );
-  return undef unless $row;
-  my $uses = $self->dbh->selectrow_array(
-    q{SELECT COUNT(*) FROM invite_code_uses WHERE code = ?},
-    undef,
-    $code,
-  ) // 0;
-  $row->{use_count_consumed} = $uses;
-  return $row;
-}
-
-sub list_invite_codes ($self, %args) {
-  my $limit = $args{limit} // 100;
-  $limit = 500 if $limit > 500;
-  my $cursor = $args{cursor};
-  my $sort = $args{sort} // 'recent';
-  my @bind;
-  my @where;
-  my $sql = q{
-    SELECT invite_codes.*, COUNT(invite_code_uses.code) AS use_count_consumed
-    FROM invite_codes
-    LEFT JOIN invite_code_uses ON invite_code_uses.code = invite_codes.code
-  };
-  if ($sort eq 'usage') {
-    if (defined $cursor && length $cursor) {
-      my ($cursor_use_count, $cursor_code) = _parse_usage_cursor($cursor);
-      push @where, q{(invite_codes.use_count < ? OR (invite_codes.use_count = ? AND invite_codes.code > ?))};
-      push @bind, $cursor_use_count, $cursor_use_count, $cursor_code;
-    }
-    $sql .= q{ WHERE } . join(q{ AND }, @where) if @where;
-    $sql .= q{ GROUP BY invite_codes.code ORDER BY invite_codes.use_count DESC, invite_codes.code ASC};
-  } else {
-    if (defined $cursor && length $cursor) {
-      push @where, q{invite_codes.code > ?};
-      push @bind, $cursor;
-    }
-    $sql .= q{ WHERE } . join(q{ AND }, @where) if @where;
-    $sql .= q{ GROUP BY invite_codes.code ORDER BY invite_codes.created_at DESC, invite_codes.code DESC};
-  }
-  $sql .= q{ LIMIT ?};
-  push @bind, $limit + 1;
-  my $rows = $self->dbh->selectall_arrayref($sql, { Slice => {} }, @bind);
-  my $page = _paginate(
-    $rows,
-    $limit,
-    $sort eq 'usage'
-      ? sub ($row) { _usage_cursor($row->{use_count}, $row->{code}) }
-      : 'code',
-  );
-  return $page;
-}
-
-sub list_invite_codes_for_account ($self, $did) {
-  return $self->dbh->selectall_arrayref(
-    q{
-      SELECT invite_codes.*, COUNT(invite_code_uses.code) AS use_count_consumed
-      FROM invite_codes
-      LEFT JOIN invite_code_uses ON invite_code_uses.code = invite_codes.code
-      WHERE invite_codes.for_account = ?
-      GROUP BY invite_codes.code
-      ORDER BY invite_codes.created_at DESC, invite_codes.code DESC
-    },
-    { Slice => {} },
-    $did,
-  );
-}
-
-sub record_invite_code_use ($self, %args) {
-  my $code    = $args{code}    // die 'code is required';
-  my $used_by = $args{used_by} // die 'used_by is required';
-  my $used_at = $args{used_at} // time;
-  $self->dbh->do(
-    q{
-      INSERT INTO invite_code_uses (code, used_by, used_at)
-      VALUES (?, ?, ?)
-      ON CONFLICT(code, used_by) DO UPDATE SET
-        used_at = excluded.used_at
-    },
-    undef,
-    $code,
-    $used_by,
-    $used_at,
-  );
-  return $self->list_invite_code_uses($code);
-}
-
-sub list_invite_code_uses ($self, $code) {
-  return $self->dbh->selectall_arrayref(
-    q{SELECT * FROM invite_code_uses WHERE code = ? ORDER BY used_at ASC, used_by ASC},
-    { Slice => {} },
-    $code,
-  );
-}
-
-sub disable_invite_codes ($self, %args) {
-  my $now = $args{updated_at} // time;
-  if (my $codes = $args{codes}) {
-    return [] unless @$codes;
-    my $placeholders = join(', ', ('?') x @$codes);
-    $self->dbh->do(
-      "UPDATE invite_codes SET disabled = 1, note = COALESCE(?, note) WHERE code IN ($placeholders)",
-      undef,
-      $args{note},
-      @$codes,
-    );
-  }
-  if (my $accounts = $args{accounts}) {
-    return [] unless @$accounts;
-    my $placeholders = join(', ', ('?') x @$accounts);
-    $self->dbh->do(
-      "UPDATE invite_codes SET disabled = 1, note = COALESCE(?, note) WHERE for_account IN ($placeholders)",
-      undef,
-      $args{note},
-      @$accounts,
-    );
-  }
-  return $now;
 }
 
 sub create_report ($self, %args) {
