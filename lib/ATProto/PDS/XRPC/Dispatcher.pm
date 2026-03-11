@@ -160,6 +160,18 @@ sub register_routes ($self) {
       if (ref($err) eq 'HASH' && $err->{error}) {
         return $render_error->($err->{status} // 400, $err->{error}, $err->{message} // $err->{error}, $endpoint->{type}, $endpoint->{id});
       }
+      my ($claims) = eval { $c->req->headers->authorization ? ATProto::PDS::API::Server::require_auth($c) : () };
+      eval {
+        $c->sentry->capture_exception(
+          context       => $c,
+          message       => "$err",
+          method        => $method,
+          nsid          => $endpoint->{id},
+          endpoint_type => $endpoint->{type},
+          status        => 500,
+          (ref($claims) eq 'HASH' && defined($claims->{sub}) ? (did => $claims->{sub}) : ()),
+        );
+      };
       return $render_internal_error->($err, $endpoint->{type}, $endpoint->{id});
     }
 

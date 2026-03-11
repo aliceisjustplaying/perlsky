@@ -63,6 +63,7 @@ Create `/etc/perlsky/perlsky.json`:
   "jwt_secret": "REPLACE_WITH_A_RANDOM_SECRET",
   "admin_password": "REPLACE_WITH_A_RANDOM_SECRET",
   "metrics_token": "REPLACE_WITH_A_RANDOM_SECRET",
+  "sentry_dsn": "https://PUBLIC_KEY@o0.ingest.sentry.io/0",
   "bsky_appview_url": "https://api.bsky.app",
   "bsky_appview_did": "did:web:api.bsky.app",
   "chat_service_url": "https://api.bsky.chat",
@@ -80,6 +81,7 @@ Important fields:
 - `hostname`: the host relays should crawl
 - `service_handle_domain`: the suffix used for local handles
 - `jwt_secret`: required; the server now refuses to start if it is missing or still set to the old `perlsky-dev-secret` fallback
+- `sentry_dsn`: optional; when set, perlsky reports unhandled XRPC exceptions to Sentry
 - If you want users like `alice.pds.example.com`, set `service_handle_domain` to `pds.example.com`, not `example.com`.
 - Public handle resolution for `alice.pds.example.com` also requires wildcard DNS for `*.pds.example.com` and a reverse proxy/TLS setup that will answer those subdomains.
 - `invite_code_required`: if true, `createAccount` requires a valid invite code
@@ -327,6 +329,16 @@ Checked-in Prometheus and Grafana examples live under:
 - [ops/grafana/perlsky-dashboard.json](../ops/grafana/perlsky-dashboard.json)
 
 See [METRICS.md](./METRICS.md) for the metric surface and dashboard notes.
+
+## Sentry
+
+If you want exception reporting in addition to Prometheus metrics, add `sentry_dsn` to `/etc/perlsky/perlsky.json`.
+
+The current integration is intentionally narrow:
+
+- it reports unhandled XRPC exceptions
+- it does not report ordinary handled XRPC errors like `InvalidToken`
+- it is a no-op when `sentry_dsn` is unset
 
 ## Prometheus
 

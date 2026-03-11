@@ -20,6 +20,7 @@ use ATProto::PDS::LexiconCatalog qw(endpoint_catalog);
 use ATProto::PDS::LexiconRegistry;
 use ATProto::PDS::Metrics;
 use ATProto::PDS::Repo::Manager;
+use ATProto::PDS::Sentry;
 use ATProto::PDS::ServiceProxy;
 use ATProto::PDS::Store::SQLite;
 use ATProto::PDS::XRPC::Dispatcher;
@@ -70,6 +71,14 @@ sub startup ($self) {
       $crawler_notifier->{store} = $c->store;
       $crawler_notifier;
     };
+  });
+  $self->helper(sentry => sub ($c) {
+    state $sentry = ATProto::PDS::Sentry->new(
+      dsn         => $c->app->settings->{sentry_dsn},
+      environment => $ENV{MOJO_MODE} || 'development',
+      server_name => ($c->app->settings->{hostname} // lc($public_url->host // 'localhost')),
+      service     => $config->{service_name} // 'perlsky',
+    );
   });
   $self->helper(append_event => sub ($c, %args) {
     my $seq = $c->store->append_event(%args);

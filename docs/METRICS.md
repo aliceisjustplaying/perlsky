@@ -105,6 +105,13 @@ The repo includes:
 
 The dashboard expects a Prometheus data source. When provisioning, either keep the checked-in `uid` from the example data source or update the dashboard's `${DS_PROMETHEUS}` mapping during import.
 
+## Sentry
+
+Prometheus is still the main place to watch rates and latency. If you also configure `sentry_dsn`, perlsky will report unhandled XRPC exceptions to Sentry. That works well as a complement to:
+
+- `perlsky_xrpc_errors_total` for handled request failures
+- `perlsky_xrpc_unhandled_exceptions_total` for internal 500-class failures
+
 ## Example Scrape
 
 ```sh
