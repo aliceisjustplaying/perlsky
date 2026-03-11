@@ -10,6 +10,12 @@ use JSON::PP ();
 
 use ATProto::PDS::EventStream qw(encode_message_frame);
 use ATProto::PDS::API::Util qw(flatten_params iso8601 pump_event_subscription resolve_did_account subscription_start_seq xrpc_error);
+use ATProto::PDS::Constants qw(
+  EVENT_TYPE_ACCOUNT
+  EVENT_TYPE_COMMIT
+  EVENT_TYPE_IDENTITY
+  EVENT_TYPE_SYNC
+);
 use ATProto::PDS::Identity qw(service_host);
 use ATProto::PDS::Moderation qw(assert_blob_readable assert_repo_readable);
 use ATProto::PDS::Repo::CAR qw(write_car);
@@ -327,7 +333,7 @@ sub _render_car ($c, $car) {
 }
 
 sub _event_frame ($event) {
-  if (($event->{type} // q()) eq 'commit') {
+  if (($event->{type} // q()) eq EVENT_TYPE_COMMIT) {
     return encode_message_frame('#commit', {
       seq    => 0 + $event->{seq},
       rebase => JSON::PP::false,
@@ -353,7 +359,7 @@ sub _event_frame ($event) {
     });
   }
 
-  if (($event->{type} // q()) eq 'sync') {
+  if (($event->{type} // q()) eq EVENT_TYPE_SYNC) {
     return encode_message_frame('#sync', {
       seq    => 0 + $event->{seq},
       did    => $event->{did},
@@ -363,7 +369,7 @@ sub _event_frame ($event) {
     });
   }
 
-  if (($event->{type} // q()) eq 'identity') {
+  if (($event->{type} // q()) eq EVENT_TYPE_IDENTITY) {
     return encode_message_frame('#identity', {
       seq    => 0 + $event->{seq},
       did    => $event->{did},
@@ -372,7 +378,7 @@ sub _event_frame ($event) {
     });
   }
 
-  if (($event->{type} // q()) eq 'account') {
+  if (($event->{type} // q()) eq EVENT_TYPE_ACCOUNT) {
     return encode_message_frame('#account', {
       seq    => 0 + $event->{seq},
       did    => $event->{did},
