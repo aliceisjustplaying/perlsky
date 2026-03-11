@@ -2102,7 +2102,7 @@ sub _row_to_record ($row) {
 }
 
 sub _execute_sql ($dbh, $sql, $params = undef, $blob_positions = undef) {
-  my $sth = $dbh->prepare($sql);
+  my $sth = $dbh->prepare_cached($sql, undef, 3);
   my %blob = map { $_ => 1 } keys %{ $blob_positions // {} };
   my $values = $params // [];
   for my $index (0 .. $#$values) {
