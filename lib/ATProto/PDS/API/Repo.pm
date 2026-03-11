@@ -15,6 +15,7 @@ use ATProto::PDS::API::Util qw(blob_ref resolve_repo xrpc_error);
 use ATProto::PDS::Constants qw(TOKEN_AUD_ACCESS);
 use ATProto::PDS::Moderation qw(assert_record_readable assert_repo_readable assert_repo_writable is_record_takedown parse_at_uri);
 use ATProto::PDS::Repo::CID;
+use ATProto::PDS::Repo::DagCbor qw(encode_dag_cbor);
 
 our @EXPORT_OK = qw(register_repo_handlers);
 
@@ -43,21 +44,12 @@ sub register_repo_handlers ($registry, $app) {
 
   $registry->register('com.atproto.repo.putRecord', sub ($c, $endpoint) {
     my $body = $c->req->json || {};
-    return _apply_single_write($c, $body, {
-      action     => 'update',
-      collection => $body->{collection},
-      rkey       => $body->{rkey},
-      value      => $body->{record},
-    }, include_result => 1);
+    return _put_record($c, $body);
   });
 
   $registry->register('com.atproto.repo.deleteRecord', sub ($c, $endpoint) {
     my $body = $c->req->json || {};
-    return _apply_single_write($c, $body, {
-      action     => 'delete',
-      collection => $body->{collection},
-      rkey       => $body->{rkey},
-    });
+    return _delete_record($c, $body);
   });
 
   $registry->register('com.atproto.repo.applyWrites', sub ($c, $endpoint) {
@@ -200,6 +192,57 @@ sub _apply_single_write ($c, $body, $write, %args) {
     };
   }
   return \%response;
+}
+
+sub _put_record ($c, $body) {
+  my $account = _require_repo_owner($c, $body->{repo});
+  my $did = $account->{did};
+  my $collection = $body->{collection};
+  my $rkey = $body->{rkey};
+  my $uri = _record_uri($did, $collection, $rkey);
+  my $current = $c->store->get_record($did, $collection, $rkey);
+  my $record_bytes = encode_dag_cbor($body->{record});
+
+  if ($current && defined($current->{record_bytes}) && $current->{record_bytes} eq $record_bytes) {
+    return {
+      uri              => $uri,
+      cid              => $current->{cid},
+      validationStatus => 'unknown',
+    };
+  }
+
+  my $commit = $c->repo_manager->apply_writes(
+    $account,
+    [{
+      action     => $current ? 'update' : 'create',
+      collection => $collection,
+      rkey       => $rkey,
+      value      => $body->{record},
+    }],
+    swap_commit => $body->{swapCommit},
+  );
+  return {
+    %{ $commit->{results}[0] },
+    commit => _commit_view($commit),
+  };
+}
+
+sub _delete_record ($c, $body) {
+  my $account = _require_repo_owner($c, $body->{repo});
+  my $current = $c->store->get_record($account->{did}, $body->{collection}, $body->{rkey});
+  return {} unless $current;
+  my $commit = $c->repo_manager->apply_writes(
+    $account,
+    [{
+      action     => 'delete',
+      collection => $body->{collection},
+      rkey       => $body->{rkey},
+    }],
+    swap_commit => $body->{swapCommit},
+  );
+  return {
+    commit => _commit_view($commit),
+  };
 }
 
 sub _commit_view ($commit) {

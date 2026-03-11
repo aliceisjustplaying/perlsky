@@ -60,6 +60,18 @@ $t->post_ok('/xrpc/com.atproto.repo.createRecord' => { Authorization => "Bearer 
 })->status_is(200)
   ->json_like('/cid' => qr/\Ab/);
 
+$t->post_ok('/xrpc/com.atproto.repo.createRecord' => { Authorization => "Bearer $access" } => json => {
+  repo       => $did,
+  collection => 'app.bsky.feed.post',
+  rkey       => 'first-post',
+  record     => {
+    '$type'   => 'app.bsky.feed.post',
+    text      => 'duplicate create should fail',
+    createdAt => '2026-03-10T00:00:30Z',
+  },
+})->status_is(400)
+  ->json_is('/error' => 'InvalidRequest');
+
 $t->post_ok('/xrpc/com.atproto.repo.putRecord' => { Authorization => "Bearer $access" } => json => {
   repo       => $did,
   collection => 'app.bsky.feed.post',
@@ -74,6 +86,55 @@ $t->post_ok('/xrpc/com.atproto.repo.putRecord' => { Authorization => "Bearer $ac
   ->json_like('/cid' => qr/\Ab/);
 my $updated_cid = $t->tx->res->json->{cid};
 
+$t->post_ok('/xrpc/com.atproto.repo.putRecord' => { Authorization => "Bearer $access" } => json => {
+  repo       => $did,
+  collection => 'app.bsky.feed.post',
+  rkey       => 'created-via-put',
+  record     => {
+    '$type'   => 'app.bsky.feed.post',
+    text      => 'put created this record',
+    createdAt => '2026-03-10T00:02:30Z',
+  },
+})->status_is(200)
+  ->json_is('/uri' => "at://$did/app.bsky.feed.post/created-via-put")
+  ->json_like('/cid' => qr/\Ab/);
+
+$t->get_ok("/xrpc/com.atproto.sync.getLatestCommit?did=$did")
+  ->status_is(200)
+  ->json_like('/cid' => qr/\Ab/)
+  ->json_has('/rev');
+my $pre_noop_commit = $t->tx->res->json;
+
+$t->post_ok('/xrpc/com.atproto.repo.putRecord' => { Authorization => "Bearer $access" } => json => {
+  repo       => $did,
+  collection => 'app.bsky.feed.post',
+  rkey       => 'first-post',
+  record     => {
+    '$type'   => 'app.bsky.feed.post',
+    text      => 'hello from updated perl',
+    createdAt => '2026-03-10T00:02:00Z',
+  },
+})->status_is(200)
+  ->json_is('/uri' => "at://$did/app.bsky.feed.post/first-post")
+  ->json_is('/cid' => $updated_cid);
+my $noop_put = $t->tx->res->json;
+ok(!exists($noop_put->{commit}), 'identical putRecord omits commit on no-op');
+
+$t->get_ok("/xrpc/com.atproto.sync.getLatestCommit?did=$did")
+  ->status_is(200)
+  ->json_is('/cid' => $pre_noop_commit->{cid})
+  ->json_is('/rev' => $pre_noop_commit->{rev});
+
+$t->get_ok("/xrpc/com.atproto.repo.getRecord?repo=$did&collection=app.bsky.feed.post&rkey=created-via-put")
+  ->status_is(200)
+  ->json_is('/value/text' => 'put created this record');
+
+$t->get_ok("/xrpc/com.atproto.sync.getLatestCommit?did=$did")
+  ->status_is(200)
+  ->json_like('/cid' => qr/\Ab/)
+  ->json_has('/rev');
+my $pre_refresh_attempt_commit = $t->tx->res->json;
+
 $t->post_ok('/xrpc/com.atproto.repo.createRecord' => { Authorization => "Bearer $refresh" } => json => {
   repo       => $did,
   collection => 'app.bsky.feed.post',
@@ -86,17 +147,28 @@ $t->post_ok('/xrpc/com.atproto.repo.createRecord' => { Authorization => "Bearer 
 })->status_is(401)
   ->json_is('/error' => 'InvalidToken');
 
+$t->get_ok("/xrpc/com.atproto.repo.getRecord?repo=$did&collection=app.bsky.feed.post&rkey=refresh-post")
+  ->status_is(404)
+  ->json_is('/error' => 'RecordNotFound');
+
+$t->get_ok("/xrpc/com.atproto.sync.getLatestCommit?did=$did")
+  ->status_is(200)
+  ->json_is('/cid' => $pre_refresh_attempt_commit->{cid})
+  ->json_is('/rev' => $pre_refresh_attempt_commit->{rev});
+
 $t->get_ok("/xrpc/com.atproto.repo.getRecord?repo=$did&collection=app.bsky.feed.post&rkey=first-post")
   ->status_is(200)
   ->json_is('/value/text' => 'hello from updated perl');
 
 $t->get_ok("/xrpc/com.atproto.repo.listRecords?repo=$did&collection=app.bsky.feed.post")
   ->status_is(200)
-  ->json_is('/records/0/value/text' => 'hello from updated perl');
+  ->json_is('/records/0/value/text' => 'put created this record')
+  ->json_is('/records/1/value/text' => 'hello from updated perl');
 
 $t->get_ok('/xrpc/com.atproto.repo.listRecords?repo=Repo-Owner.Localhost&collection=app.bsky.feed.post')
   ->status_is(200)
-  ->json_is('/records/0/value/text' => 'hello from updated perl');
+  ->json_is('/records/0/value/text' => 'put created this record')
+  ->json_is('/records/1/value/text' => 'hello from updated perl');
 
 $t->get_ok("/xrpc/com.atproto.sync.getLatestCommit?did=$did")
   ->status_is(200)
@@ -156,5 +228,23 @@ ok(
   !scalar(grep { $_->{cid}->to_string eq $updated_cid } @{ $missing_record_proof->{blocks} || [] }),
   'missing sync proof omits the deleted record block',
 );
+
+$t->get_ok("/xrpc/com.atproto.sync.getLatestCommit?did=$did")
+  ->status_is(200)
+  ->json_like('/cid' => qr/\Ab/)
+  ->json_has('/rev');
+my $pre_missing_delete_commit = $t->tx->res->json;
+
+$t->post_ok('/xrpc/com.atproto.repo.deleteRecord' => { Authorization => "Bearer $access" } => json => {
+  repo       => $did,
+  collection => 'app.bsky.feed.post',
+  rkey       => 'first-post',
+})->status_is(200)
+  ->json_is({});
+
+$t->get_ok("/xrpc/com.atproto.sync.getLatestCommit?did=$did")
+  ->status_is(200)
+  ->json_is('/cid' => $pre_missing_delete_commit->{cid})
+  ->json_is('/rev' => $pre_missing_delete_commit->{rev});
 
 done_testing;

@@ -69,6 +69,33 @@ $t->post_ok('/xrpc/com.atproto.server.createInviteCode' => {
 })->status_is(400)
   ->json_is('/error' => 'InvalidRequest');
 
+$t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
+  Authorization => "Bearer $access",
+} => json => {
+  repo       => $did,
+  collection => 'app.bsky.feed.post',
+  rkey       => 'apply-update-me',
+  record     => {
+    '$type'   => 'app.bsky.feed.post',
+    text      => 'before applyWrites update',
+    createdAt => '2026-03-11T00:00:00Z',
+  },
+})->status_is(200)
+  ->json_has('/cid');
+
+$t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
+  Authorization => "Bearer $access",
+} => json => {
+  repo       => $did,
+  collection => 'app.bsky.feed.post',
+  rkey       => 'apply-delete-me',
+  record     => {
+    '$type'   => 'app.bsky.feed.post',
+    text      => 'before applyWrites delete',
+    createdAt => '2026-03-11T00:00:01Z',
+  },
+})->status_is(200);
+
 $t->post_ok('/xrpc/com.atproto.repo.applyWrites' => {
   Authorization => "Bearer $access",
 } => json => {
@@ -84,16 +111,51 @@ $t->post_ok('/xrpc/com.atproto.repo.applyWrites' => {
       },
     },
     {
+      '$type'     => 'com.atproto.repo.applyWrites#update',
+      collection  => 'app.bsky.feed.post',
+      rkey        => 'apply-update-me',
+      value       => {
+        '$type'   => 'app.bsky.feed.post',
+        text      => 'after applyWrites update',
+        createdAt => '2026-03-11T00:00:02Z',
+      },
+    },
+    {
       '$type'     => 'com.atproto.repo.applyWrites#delete',
       collection  => 'app.bsky.feed.post',
-      rkey        => 'missing-rkey-ok',
+      rkey        => 'apply-delete-me',
     },
   ],
 })->status_is(200)
   ->json_is('/results/0/$type', 'com.atproto.repo.applyWrites#createResult')
   ->json_has('/results/0/uri')
   ->json_has('/results/0/cid')
-  ->json_is('/results/1/$type', 'com.atproto.repo.applyWrites#deleteResult');
+  ->json_is('/results/1/$type', 'com.atproto.repo.applyWrites#updateResult')
+  ->json_has('/results/1/uri')
+  ->json_has('/results/1/cid')
+  ->json_is('/results/2/$type', 'com.atproto.repo.applyWrites#deleteResult');
+
+$t->get_ok("/xrpc/com.atproto.repo.getRecord?repo=$did&collection=app.bsky.feed.post&rkey=apply-update-me")
+  ->status_is(200)
+  ->json_is('/value/text' => 'after applyWrites update');
+
+$t->get_ok("/xrpc/com.atproto.repo.getRecord?repo=$did&collection=app.bsky.feed.post&rkey=apply-delete-me")
+  ->status_is(404)
+  ->json_is('/error' => 'RecordNotFound');
+
+$t->post_ok('/xrpc/com.atproto.repo.applyWrites' => {
+  Authorization => "Bearer $access",
+} => json => {
+  repo   => $did,
+  writes => [
+    {
+      '$type'     => 'com.atproto.repo.applyWrites#delete',
+      collection  => 'app.bsky.feed.post',
+      rkey        => 'missing-rkey-ok',
+    },
+  ],
+})->status_is(400)
+  ->json_is('/error' => 'InvalidRequest');
 
 $t->get_ok('/xrpc/com.atproto.server.getAccountInviteCodes' => {
   Authorization => "Bearer $access",

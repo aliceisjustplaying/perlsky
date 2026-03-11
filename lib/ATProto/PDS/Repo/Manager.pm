@@ -81,9 +81,14 @@ sub apply_writes ($self, $account, $writes, %opts) {
   my @ops;
   for my $write (@$writes) {
     my $action = $write->{action} // '';
+    my $collection = $write->{collection};
+    my $rkey = $write->{rkey} // next_tid();
+    my $path = $collection . '/' . $rkey;
+    my $previous = $previous_records{$path};
+
     if ($action eq 'delete') {
-      my $path = join('/', grep { defined && length } $write->{collection}, $write->{rkey});
-      my $previous = $previous_records{$path};
+      xrpc_error(400, 'InvalidRequest', 'Could not locate record: at://' . $did . '/' . $path)
+        unless $previous;
       delete $records->{$path};
       push @results, {
         '$type' => 'com.atproto.repo.applyWrites#deleteResult',
@@ -97,8 +102,6 @@ sub apply_writes ($self, $account, $writes, %opts) {
       next;
     }
 
-    my $collection = $write->{collection};
-    my $rkey = $write->{rkey} // next_tid();
     my $value = $write->{value} // $write->{record};
     my @blob_cids = _blob_cids($value);
     for my $blob_cid (@blob_cids) {
@@ -114,10 +117,19 @@ sub apply_writes ($self, $account, $writes, %opts) {
         message => "Blob has been taken down: $blob_cid",
       } if defined $blob->{quarantined_at};
     }
+
+    if ($action eq 'create') {
+      xrpc_error(400, 'InvalidRequest', "There is already a value at key: $path")
+        if $previous;
+    } elsif ($action eq 'update') {
+      xrpc_error(400, 'InvalidRequest', 'Could not locate record: at://' . $did . '/' . $path)
+        unless $previous;
+    } else {
+      xrpc_error(400, 'InvalidRequest', "Action not supported: $action");
+    }
+
     my $bytes = encode_dag_cbor($value);
     my $cid = ATProto::PDS::Repo::CID->for_dag_cbor($bytes);
-    my $path = $collection . '/' . $rkey;
-    my $previous = $previous_records{$path};
     $records->{$path} = {
       collection   => $collection,
       rkey         => $rkey,
@@ -126,13 +138,13 @@ sub apply_writes ($self, $account, $writes, %opts) {
       record_bytes => $bytes,
     };
     push @results, {
-      '$type'           => $previous ? 'com.atproto.repo.applyWrites#updateResult' : 'com.atproto.repo.applyWrites#createResult',
+      '$type'           => 'com.atproto.repo.applyWrites#' . ($action eq 'create' ? 'create' : 'update') . 'Result',
       uri              => "at://$did/$collection/$rkey",
       cid              => $cid->to_string,
       validationStatus => 'unknown',
     };
     push @ops, {
-      action => $previous ? 'update' : 'create',
+      action => $action,
       path   => $path,
       cid    => $cid->to_string,
       ($previous ? (prev => $previous->{cid}) : ()),
