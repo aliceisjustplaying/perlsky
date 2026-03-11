@@ -15,6 +15,7 @@ use ATProto::PDS::Moderation qw(admin_authorization_status subject_key);
 our @EXPORT_OK = qw(
   account_view
   find_account
+  issue_account_action_token
   invite_code_view
   require_admin
   subject_key
@@ -69,6 +70,27 @@ sub verify_login_password ($c, $account, $password) {
   }
 
   return undef;
+}
+
+sub issue_account_action_token ($c, $account, %args) {
+  return undef unless $account;
+  my $token = $c->store->create_action_token(
+    did        => $account->{did},
+    email      => $account->{email},
+    purpose    => $args{purpose},
+    expires_at => $args{expires_at} // (time + 3600),
+  );
+  if (defined($account->{email}) && length($account->{email})) {
+    $c->store->log_outbound_email(
+      recipient_did   => $account->{did},
+      recipient_email => $account->{email},
+      subject         => $args{subject},
+      content         => ref($args{content}) eq 'CODE'
+        ? $args{content}->($token)
+        : $args{content},
+    );
+  }
+  return $token;
 }
 
 sub account_view ($account) {

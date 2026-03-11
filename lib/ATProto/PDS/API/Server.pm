@@ -8,7 +8,7 @@ no warnings 'experimental::signatures';
 use Exporter 'import';
 use JSON::PP ();
 
-use ATProto::PDS::API::Helpers qw(find_account invite_code_view require_admin verify_account_password verify_login_password);
+use ATProto::PDS::API::Helpers qw(find_account invite_code_view issue_account_action_token require_admin verify_account_password verify_login_password);
 use ATProto::PDS::API::Util qw(iso8601 xrpc_error);
 use ATProto::PDS::Auth::JWT qw(decode_jwt encode_jwt encode_service_jwt);
 use ATProto::PDS::Auth::Password qw(hash_password random_hex);
@@ -338,7 +338,7 @@ sub register_server_handlers ($registry, $app) {
     my $body = $c->req->json || {};
     my $account = $c->store->get_account_by_email($body->{email} // q());
     if ($account) {
-      _issue_account_action_token(
+      issue_account_action_token(
         $c,
         $account,
         purpose => 'password_reset',
@@ -376,7 +376,7 @@ sub register_server_handlers ($registry, $app) {
   $registry->register('com.atproto.server.requestEmailConfirmation', sub ($c, $endpoint) {
     my (undef, $account) = require_auth($c, audience => 'access');
     return {} unless $account->{email};
-    _issue_account_action_token(
+    issue_account_action_token(
       $c,
       $account,
       purpose => 'email_confirm',
@@ -410,7 +410,7 @@ sub register_server_handlers ($registry, $app) {
     my (undef, $account) = require_auth($c, audience => 'access');
     my $token_required = defined $account->{email_confirmed_at} ? 1 : 0;
     if ($token_required) {
-      _issue_account_action_token(
+      issue_account_action_token(
         $c,
         $account,
         purpose => 'email_update',
@@ -447,7 +447,7 @@ sub register_server_handlers ($registry, $app) {
 
   $registry->register('com.atproto.server.requestAccountDelete', sub ($c, $endpoint) {
     my (undef, $account) = require_auth($c, audience => 'access', required_scope => 'full');
-    _issue_account_action_token(
+    issue_account_action_token(
       $c,
       $account,
       purpose => 'account_delete',
@@ -762,27 +762,6 @@ sub _initial_email_confirmed_at ($c, $email) {
   return undef unless defined $email && length $email;
   return undef unless $c->config_value('testing_auto_confirm_email', 1);
   return time;
-}
-
-sub _issue_account_action_token ($c, $account, %args) {
-  return undef unless $account;
-  my $token = $c->store->create_action_token(
-    did        => $account->{did},
-    email      => $account->{email},
-    purpose    => $args{purpose},
-    expires_at => $args{expires_at} // (time + 3600),
-  );
-  if (defined($account->{email}) && length($account->{email})) {
-    $c->store->log_outbound_email(
-      recipient_did   => $account->{did},
-      recipient_email => $account->{email},
-      subject         => $args{subject},
-      content         => ref($args{content}) eq 'CODE'
-        ? $args{content}->($token)
-        : $args{content},
-    );
-  }
-  return $token;
 }
 
 sub _require_action_token ($c, %args) {

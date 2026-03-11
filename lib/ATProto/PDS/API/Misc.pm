@@ -8,7 +8,7 @@ no warnings 'experimental::signatures';
 use Exporter 'import';
 use JSON::PP ();
 
-use ATProto::PDS::API::Helpers qw(find_account require_admin subject_key);
+use ATProto::PDS::API::Helpers qw(find_account issue_account_action_token require_admin subject_key);
 use ATProto::PDS::API::Server qw(require_auth);
 use ATProto::PDS::API::Util qw(flatten_params iso8601 pump_event_subscription subscription_start_seq xrpc_error);
 use ATProto::PDS::Auth::Password qw(hash_password random_hex);
@@ -59,17 +59,12 @@ sub register_misc_handlers ($registry, $app) {
     my (undef, $account) = require_auth($c, audience => 'access');
     xrpc_error(400, 'InvalidRequest', 'account does not have an email address')
       unless defined($account->{email}) && length($account->{email});
-    my $token = $c->store->create_action_token(
-      did        => $account->{did},
-      email      => $account->{email},
-      purpose    => 'plc_operation',
-      expires_at => time + 3600,
-    );
-    $c->store->log_outbound_email(
-      recipient_did   => $account->{did},
-      recipient_email => $account->{email},
-      subject         => 'PLC update requested',
-      content         => "Use token $token->{token} to authorize your PLC operation.",
+    issue_account_action_token(
+      $c,
+      $account,
+      purpose => 'plc_operation',
+      subject => 'PLC update requested',
+      content => sub ($token) { "Use token $token->{token} to authorize your PLC operation." },
     );
     return {};
   });
