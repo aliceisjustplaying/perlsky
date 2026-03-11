@@ -41,6 +41,7 @@ my $tmp  = File::Spec->catdir($root, 'data', 'tmp-tests', 'service-proxy');
 remove_tree($tmp) if -d $tmp;
 
 my $appview_app = Mojolicious->new;
+my %appview_seen;
 $appview_app->routes->get('/ready')->to(cb => sub {
   my ($c) = @_;
   $c->render(text => 'ok');
@@ -48,6 +49,12 @@ $appview_app->routes->get('/ready')->to(cb => sub {
 $appview_app->routes->any('/xrpc/*nsid')->to(cb => sub {
   my ($c) = @_;
   my $nsid = $c->stash('nsid');
+  if ($nsid eq 'app.bsky.unspecced.getTrendingTopics' && !$appview_seen{$nsid}++) {
+    return $c->render(status => 500, json => {
+      error   => 'UpstreamTemporaryFailure',
+      message => 'try again',
+    });
+  }
   my %body = (
     nsid => $nsid,
     auth => $c->req->headers->authorization,
@@ -217,6 +224,16 @@ my $chat_auth = _decode_bearer($t->tx->res->json->{auth});
 is($chat_auth->{claims}{aud}, 'did:web:chat.test', 'chat proxy auth targets the chat DID');
 is($chat_auth->{claims}{lxm}, 'chat.bsky.convo.getLog', 'chat proxy auth binds the chat method');
 ok(_verify_es256k($account->{public_key}, $chat_auth->{signing_input}, $chat_auth->{signature}), 'chat proxy auth signature verifies');
+
+$t->get_ok('/xrpc/app.bsky.unspecced.getTrendingTopics?limit=14' => {
+  Authorization => "Bearer $access",
+})->status_is(200)
+  ->json_is('/nsid' => 'app.bsky.unspecced.getTrendingTopics');
+
+my $trending_auth = _decode_bearer($t->tx->res->json->{auth});
+is($trending_auth->{claims}{aud}, 'did:web:appview.test', 'trending topics retry still targets the appview DID');
+is($trending_auth->{claims}{lxm}, 'app.bsky.unspecced.getTrendingTopics', 'trending topics retry binds the proxied method');
+ok(_verify_es256k($account->{public_key}, $trending_auth->{signing_input}, $trending_auth->{signature}), 'trending topics retry auth signature verifies');
 
 $t->get_ok('/xrpc/app.bsky.actor.getPreferences' => {
   Authorization   => "Bearer $access",

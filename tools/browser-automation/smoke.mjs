@@ -30,22 +30,85 @@ const summary = {
 const ignoredConsole = [
   /events\.bsky\.app\/.*ERR_BLOCKED_BY_CLIENT/i,
   /slider-vertical/i,
+  /Password field is not contained in a form/i,
 ];
 
 const ignoredRequestFailure = [
-  { url: /events\.bsky\.app\//i, error: /ERR_BLOCKED_BY_CLIENT/i },
+  { url: /events\.bsky\.app\//i, error: /ERR_(BLOCKED_BY_CLIENT|ABORTED)/i },
   { url: /workers\.dev\/api\/config/i, error: /ERR_ABORTED/i },
+  { url: /app-config\.workers\.bsky\.app\/config/i, error: /ERR_ABORTED/i },
+  { url: /live-events\.workers\.bsky\.app\/config/i, error: /ERR_ABORTED/i },
+  { url: /events\.bsky\.app\/t/i, error: /ERR_ABORTED/i },
+  { url: /events\.bsky\.app\/gb\/api\/features\//i, error: /ERR_ABORTED/i },
+  { url: /video\.bsky\.app\/watch\/.*\/playlist\.m3u8/i, error: /ERR_ABORTED/i },
+  { url: /\/xrpc\/chat\.bsky\.convo\.getLog/i, error: /ERR_ABORTED/i },
 ];
 
 const ignoredHttpFailure = [
   { url: /c\.1password\.com\/richicons/i, status: 404 },
 ];
 
-const browser = await chromium.launch({ headless: config.headless !== false });
+const executableExists = async (file) => {
+  if (!file) {
+    return false;
+  }
+  try {
+    await fs.access(file);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const browserCandidates = async () => {
+  const base = {
+    headless: config.headless !== false,
+    chromiumSandbox: true,
+  };
+  const candidates = [];
+  if (config.browserExecutablePath) {
+    candidates.push({
+      label: `executable:${config.browserExecutablePath}`,
+      options: { ...base, executablePath: config.browserExecutablePath },
+    });
+  }
+  const systemChrome = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+  if (!config.browserExecutablePath && await executableExists(systemChrome)) {
+    candidates.push({
+      label: 'system-google-chrome',
+      options: { ...base, executablePath: systemChrome },
+    });
+  }
+  candidates.push({
+    label: 'playwright-chromium',
+    options: { ...base, channel: 'chromium' },
+  });
+  return candidates;
+};
+
+const launchBrowser = async () => {
+  const errors = [];
+  for (const candidate of await browserCandidates()) {
+    try {
+      const browser = await chromium.launch(candidate.options);
+      summary.notes.push(`browser launch candidate succeeded: ${candidate.label}`);
+      return browser;
+    } catch (error) {
+      errors.push(`${candidate.label}: ${String(error?.message ?? error)}`);
+    }
+  }
+  throw new Error(`unable to launch browser via any candidate: ${errors.join(' | ')}`);
+};
+
+const browser = await launchBrowser();
 const context = await browser.newContext({
   viewport: { width: 1440, height: 1000 },
 });
 const page = await context.newPage();
+
+if (config.browserExecutablePath) {
+  summary.notes.push(`requested browser executable: ${config.browserExecutablePath}`);
+}
 
 page.on('console', (msg) => {
   summary.console.push({
@@ -238,7 +301,7 @@ const maybeFollowTarget = async () => {
 };
 
 const composePost = async (text) => {
-  await page.getByRole('button', { name: 'New Post' }).click({ noWaitAfter: true });
+  await page.locator('[aria-label="Compose new post"]').last().click({ noWaitAfter: true });
   await wait(800);
   const editor = page.locator('[aria-label="Rich-Text Editor"]').last();
   await editor.click({ noWaitAfter: true });
@@ -270,13 +333,13 @@ const findFirstFeedItem = async (timeout = 60000) => {
   return row;
 };
 
-const likeOwnPost = async (row) => {
+const clickLike = async (row) => {
   const btn = row.getByTestId('likeBtn').first();
   await btn.click({ noWaitAfter: true });
   await wait(1500);
 };
 
-const repostOwnPost = async (row) => {
+const clickRepost = async (row) => {
   const btn = row.getByTestId('repostBtn').first();
   await btn.click({ noWaitAfter: true });
   await wait(500);
@@ -287,7 +350,7 @@ const repostOwnPost = async (row) => {
   }
 };
 
-const quoteOwnPost = async (row, text) => {
+const clickQuote = async (row, text) => {
   const btn = row.getByTestId('repostBtn').first();
   await btn.click({ noWaitAfter: true });
   await wait(500);
@@ -304,7 +367,7 @@ const quoteOwnPost = async (row, text) => {
   await wait(4000);
 };
 
-const replyToOwnPost = async (row, text) => {
+const clickReply = async (row, text) => {
   const btn = row.getByTestId('replyBtn').first();
   await btn.click({ noWaitAfter: true });
   await wait(1000);
@@ -314,6 +377,47 @@ const replyToOwnPost = async (row, text) => {
   const publishReply = page.getByRole('button', { name: /publish reply|reply/i }).last();
   await publishReply.click({ noWaitAfter: true });
   await wait(4000);
+};
+
+const buttonText = async (locator) => {
+  const label = await locator.getAttribute('aria-label');
+  if (label && label.trim()) {
+    return label.trim();
+  }
+  const text = await locator.innerText().catch(() => '');
+  return text.trim();
+};
+
+const ensureLiked = async (row) => {
+  const btn = row.getByTestId('likeBtn').first();
+  const before = await buttonText(btn);
+  if (/unlike/i.test(before)) {
+    return { note: 'already liked' };
+  }
+  await clickLike(row);
+  return { note: await buttonText(btn) };
+};
+
+const ensureReposted = async (row) => {
+  const btn = row.getByTestId('repostBtn').first();
+  const before = await buttonText(btn);
+  if (/undo repost|remove repost/i.test(before)) {
+    return { note: 'already reposted' };
+  }
+  await clickRepost(row);
+  return { note: await buttonText(btn) };
+};
+
+const openNotifications = async () => {
+  await page.goto(`${config.appUrl.replace(/\/$/, '')}/notifications`, {
+    waitUntil: 'domcontentloaded',
+    timeout: 60000,
+  });
+  await wait(3000);
+  const heading = page.getByText(/^Notifications$/).first();
+  if (await heading.count()) {
+    await heading.waitFor({ state: 'visible', timeout: 15000 });
+  }
 };
 
 const verifyPublicHandleResolution = async () => {
@@ -394,13 +498,13 @@ try {
 
   if (ownPost) {
     const row = await findFeedItemByText(config.postText);
-    await step('like-own-post', () => likeOwnPost(row), { optional: true });
-    await step('repost-own-post', () => repostOwnPost(row), { optional: true });
-    await step('quote-own-post', () => quoteOwnPost(row, config.quoteText), { optional: true });
+    await step('like-own-post', () => ensureLiked(row), { optional: true });
+    await step('repost-own-post', () => ensureReposted(row), { optional: true });
+    await step('quote-own-post', () => clickQuote(row, config.quoteText), { optional: true });
     await step('reply-own-post', async () => {
       await openOwnProfile();
       const refreshed = await findFeedItemByText(config.postText, 60000);
-      await replyToOwnPost(refreshed, config.replyText);
+      await clickReply(refreshed, config.replyText);
     }, { optional: true });
   }
 
@@ -414,6 +518,38 @@ try {
     const row = await findFirstFeedItem(20000);
     const preview = ((await row.textContent()) || '').replace(/\s+/g, ' ').slice(0, 160);
     return { note: preview };
+  }, { optional: true });
+
+  await step('like-target-post', async () => {
+    const row = await findFirstFeedItem(20000);
+    return ensureLiked(row);
+  }, { optional: true });
+
+  await step('repost-target-post', async () => {
+    const row = await findFirstFeedItem(20000);
+    return ensureReposted(row);
+  }, { optional: true });
+
+  await step('quote-target-post', async () => {
+    const row = await findFirstFeedItem(20000);
+    await clickQuote(row, `${config.quoteText} to @${config.targetHandle.replace(/^@/, '')}`);
+    return { note: 'quoted target post' };
+  }, { optional: true });
+
+  await step('reply-target-post', async () => {
+    await gotoProfile(config.targetHandle);
+    const row = await findFirstFeedItem(20000);
+    await clickReply(row, `${config.replyText} to @${config.targetHandle.replace(/^@/, '')}`);
+    return { note: 'replied to target post' };
+  }, { optional: true });
+
+  await step('notifications-page', async () => {
+    await openNotifications();
+    const tab = page.getByRole('tab', { name: /all|priority/i }).first();
+    if (await tab.count()) {
+      await tab.waitFor({ state: 'visible', timeout: 15000 });
+    }
+    return { note: 'notifications page loaded' };
   }, { optional: true });
 
   if (config.editProfile) {

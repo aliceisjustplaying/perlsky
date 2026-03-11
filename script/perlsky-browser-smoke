@@ -15,6 +15,20 @@ my $tools_dir = File::Spec->catdir($root, 'tools', 'browser-automation');
 my $cache_dir = File::Spec->catdir($root, '.cache', 'ms-playwright');
 my $default_artifacts = File::Spec->catdir($root, 'data', 'browser-smoke', 'latest');
 
+my @default_browser_paths = (
+  '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+  '/Applications/Brave Browser.app/Contents/MacOS/Brave Browser',
+  '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+);
+
+my $default_browser_executable;
+for my $candidate (@default_browser_paths) {
+  if (-x $candidate) {
+    $default_browser_executable = $candidate;
+    last;
+  }
+}
+
 my %opt = (
   app_url       => $ENV{PERLSKY_BROWSER_APP_URL}    || 'https://bsky.app',
   pds_url       => $ENV{PERLSKY_BROWSER_PDS_URL}    || 'https://perlsky.mosphere.at',
@@ -33,6 +47,7 @@ my %opt = (
   edit_profile  => $ENV{PERLSKY_BROWSER_EDIT_PROFILE} ? 1 : 0,
   public_checks => $ENV{PERLSKY_BROWSER_SKIP_PUBLIC_CHECKS} ? 0 : 1,
   strict_errors => $ENV{PERLSKY_BROWSER_STRICT_ERRORS} ? 1 : 0,
+  browser_executable_path => $ENV{PERLSKY_BROWSER_EXECUTABLE_PATH} || $default_browser_executable,
 );
 
 my $cmd = shift(@ARGV) // 'run';
@@ -53,6 +68,7 @@ Options:
   --birthdate YYYY-MM-DD
   --public-api-url URL
   --public-check-timeout-ms MS
+  --browser-executable-path PATH
   --post-text TEXT
   --quote-text TEXT
   --reply-text TEXT
@@ -72,6 +88,7 @@ Environment:
   PERLSKY_BROWSER_BIRTHDATE
   PERLSKY_BROWSER_PUBLIC_API_URL
   PERLSKY_BROWSER_PUBLIC_CHECK_TIMEOUT_MS
+  PERLSKY_BROWSER_EXECUTABLE_PATH
   PERLSKY_BROWSER_POST_TEXT
   PERLSKY_BROWSER_QUOTE_TEXT
   PERLSKY_BROWSER_REPLY_TEXT
@@ -95,6 +112,7 @@ GetOptionsFromArray(
   'birthdate=s'     => \$opt{birthdate},
   'public-api-url=s' => \$opt{public_api_url},
   'public-check-timeout-ms=i' => \$opt{public_check_timeout_ms},
+  'browser-executable-path=s' => \$opt{browser_executable_path},
   'post-text=s'     => \$opt{post_text},
   'quote-text=s'    => \$opt{quote_text},
   'reply-text=s'    => \$opt{reply_text},
@@ -140,6 +158,7 @@ my $config = {
   publicCheckTimeoutMs => 0 + $opt{public_check_timeout_ms},
   publicChecks => $opt{public_checks} ? JSON::PP::true : JSON::PP::false,
   strictErrors => $opt{strict_errors} ? JSON::PP::true : JSON::PP::false,
+  browserExecutablePath => $opt{browser_executable_path},
   postText     => $opt{post_text},
   quoteText    => $opt{quote_text},
   replyText    => $opt{reply_text},

@@ -90,21 +90,12 @@ sub proxy_xrpc_request ($self, $c, $nsid) {
     );
   }
 
-  my $tx = $method eq 'POST'
-    ? $self->ua->build_tx($method => $url => \%headers => ($c->req->body // q()))
-    : $self->ua->build_tx($method => $url => \%headers);
-
-  $tx = eval { $self->ua->start($tx) };
-  if (my $err = $@) {
-    my $message = "$err";
-    xrpc_error(502, 'UpstreamFailure', $message || 'Upstream service unreachable');
-  }
-
-  my $res = $tx->result;
-  if (my $err = $res->error) {
-    xrpc_error(502, 'UpstreamFailure', $err->{message} // 'Upstream service unreachable')
-      unless $res->code;
-  }
+  my $res = $self->_perform_upstream_request(
+    method  => $method,
+    url     => $url,
+    headers => \%headers,
+    body    => ($c->req->body // q()),
+  );
 
   my $status = $res->code // 502;
   my $headers_out = $c->res->headers;
@@ -134,6 +125,45 @@ sub proxy_xrpc_request ($self, $c, $nsid) {
     data   => $res->body,
   );
   return $status;
+}
+
+sub _perform_upstream_request ($self, %args) {
+  my $method  = $args{method};
+  my $url     = $args{url};
+  my $headers = $args{headers} // {};
+  my $body    = $args{body};
+  my $attempts = ($method eq 'GET' || $method eq 'HEAD') ? 2 : 1;
+  my $last_res;
+
+  for my $attempt (1 .. $attempts) {
+    my $tx = $method eq 'POST'
+      ? $self->ua->build_tx($method => $url => $headers => $body)
+      : $self->ua->build_tx($method => $url => $headers);
+
+    $tx = eval { $self->ua->start($tx) };
+    if (my $err = $@) {
+      my $message = "$err";
+      xrpc_error(502, 'UpstreamFailure', $message || 'Upstream service unreachable')
+        if $attempt >= $attempts;
+      next;
+    }
+
+    my $res = $tx->result;
+    if (my $err = $res->error) {
+      if (!$res->code) {
+        xrpc_error(502, 'UpstreamFailure', $err->{message} // 'Upstream service unreachable')
+          if $attempt >= $attempts;
+        next;
+      }
+    }
+
+    $last_res = $res;
+    next if ($method eq 'GET' || $method eq 'HEAD') && ($res->code // 0) >= 500 && $attempt < $attempts;
+    return $res;
+  }
+
+  return $last_res if $last_res;
+  xrpc_error(502, 'UpstreamFailure', 'Upstream service unreachable');
 }
 
 sub _target_for_request ($self, $c, $nsid) {
