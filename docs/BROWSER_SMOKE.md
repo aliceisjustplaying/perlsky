@@ -57,6 +57,8 @@ The current reusable dual-account smoke exercises these `bsky.app` flows:
   `notifications/likes`, `threads`, `following-feed`, `content-and-media`, and `accessibility`
 - cleanup of created posts plus undo of follow/like/bookmark/repost state
 
+This tranche intentionally does not cover DMs. We are deferring `chat.bsky.*` conversation/send flows for a later pass so the current smoke stays focused on stable social, list, and settings interactions.
+
 Two notification checks are intentionally different:
 
 - like/repost/quote/reply notifications between the two smoke accounts are required and part of the clean passing run
@@ -89,3 +91,4 @@ It also fails the test run if the browser harness finishes with `summary.ok = fa
 - The report flow stops at the draft/submit screen on purpose so smoke runs do not send moderation reports to external services.
 - The current broad smoke automates only dedicated smoke accounts. It does not log into `@alice.mosphere.at`.
 - The smoke accounts can still visit and interact with `@alice.mosphere.at` as a public target, but the harness does not authenticate as that account.
+- DMs are intentionally out of scope for now. If we revisit them later, they should be added as a separate documented tranche rather than silently folded into the existing smoke.
