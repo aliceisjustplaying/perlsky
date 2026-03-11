@@ -7,7 +7,6 @@ no warnings 'experimental::signatures';
 
 use Exporter 'import';
 use JSON::PP ();
-use Mojo::URL;
 
 use ATProto::PDS::API::Util qw(iso8601 resolve_repo xrpc_error);
 
@@ -109,7 +108,6 @@ sub _profile_view_detailed ($self, $c, $account, $profile_value = undef) {
     %{ $self->_profile_view_basic($c, $account, $profile_value) },
     createdAt      => iso8601($account->{created_at}),
     indexedAt      => iso8601($account->{created_at}),
-    followersCount => 0 + ($follow_index->{followers_by_subject}{ $account->{did} } // 0),
     followsCount   => 0 + ($follow_index->{follows_by_actor}{ $account->{did} } // 0),
     postsCount     => 0 + $c->store->count_records_by_collection($account->{did}, 'app.bsky.feed.post'),
   };

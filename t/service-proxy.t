@@ -215,9 +215,9 @@ $t->get_ok("/xrpc/app.bsky.actor.getProfile?actor=$did" => {
   ->json_is('/labels' => [])
   ->json_has('/createdAt')
   ->json_has('/indexedAt')
-  ->json_is('/followersCount' => 0)
   ->json_is('/followsCount' => 0)
   ->json_is('/postsCount' => 0);
+ok(!exists($t->tx->res->json->{followersCount}), 'local profile omits non-authoritative followersCount');
 
 $t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
   Authorization => "Bearer $access",
@@ -250,16 +250,17 @@ $t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
 $t->get_ok("/xrpc/app.bsky.actor.getProfile?actor=$did" => {
   Authorization => "Bearer $access",
 })->status_is(200)
-  ->json_is('/followersCount' => 1)
-  ->json_is('/followsCount' => 1);
+  ->json_is('/followsCount' => 1)
+  ->json_hasnt('/viewer/knownFollowers');
+ok(!exists($t->tx->res->json->{followersCount}), 'local profile still omits followersCount after remote-follow-capable activity');
 
 $t->get_ok("/xrpc/app.bsky.actor.getProfile?actor=$bob_did" => {
   Authorization => "Bearer $access",
 })->status_is(200)
-  ->json_is('/followersCount' => 1)
   ->json_is('/followsCount' => 1)
   ->json_is('/viewer/following' => "at://$did/app.bsky.graph.follow/follow-bob")
   ->json_is('/viewer/followedBy' => "at://$bob_did/app.bsky.graph.follow/follow-alice");
+ok(!exists($t->tx->res->json->{followersCount}), 'remote-follower-dependent followersCount is omitted for followed local profiles');
 
 $t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
   Authorization => "Bearer $bob_access",
@@ -309,11 +310,13 @@ $t->get_ok("/xrpc/app.bsky.feed.getAuthorFeed?actor=$did&limit=10" => {
 })->status_is(200)
   ->json_is('/feed/0/post/uri' => $post_uri)
   ->json_is('/feed/0/post/record/text' => 'browser smoke post')
-  ->json_is('/feed/0/post/bookmarkCount' => 0)
   ->json_is('/feed/0/post/author/associated/chat/allowIncoming' => 'all')
   ->json_is('/feed/0/post/author/associated/activitySubscription/allowSubscriptions' => 'followers')
   ->json_is('/feed/0/post/author/labels' => [])
   ->json_has('/feed/0/post/author/createdAt');
+ok(!exists($t->tx->res->json->{feed}[0]{post}{bookmarkCount}), 'local post view omits non-authoritative bookmarkCount');
+ok(!exists($t->tx->res->json->{feed}[0]{post}{replyCount}), 'local post view omits non-authoritative replyCount');
+ok(!exists($t->tx->res->json->{feed}[0]{post}{likeCount}), 'local post view omits non-authoritative likeCount');
 
 $t->get_ok('/xrpc/app.bsky.feed.getPostThread?uri=' . _uri_escape($post_uri) => {
   Authorization => "Bearer $access",

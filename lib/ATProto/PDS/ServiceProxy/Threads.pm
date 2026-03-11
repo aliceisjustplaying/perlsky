@@ -109,25 +109,20 @@ sub _optional_auth_account ($self, $c) {
 
 sub _post_view ($self, $c, $account, $row, $profile_value = undef, $viewer = undef, $depth = 0) {
   my $uri = $self->_post_uri($account, $row);
-  my $counts = $self->_post_counts_and_viewer($c, $uri, $viewer);
   my $post = {
-    uri           => $uri,
-    cid           => $row->{cid},
-    author        => $self->_profile_view_basic($c, $account, $profile_value, $viewer),
-    record        => $row->{value},
-    bookmarkCount => 0,
-    replyCount    => $counts->{replyCount},
-    repostCount   => $counts->{repostCount},
-    likeCount     => $counts->{likeCount},
-    quoteCount    => $counts->{quoteCount},
-    indexedAt     => $self->_post_indexed_at($row),
-    labels        => [],
+    uri       => $uri,
+    cid       => $row->{cid},
+    author    => $self->_profile_view_basic($c, $account, $profile_value, $viewer),
+    record    => $row->{value},
+    indexedAt => $self->_post_indexed_at($row),
+    labels    => [],
   };
   if ($depth < 2) {
     my $embed = $self->_post_embed_view($c, $account, $row->{value}, $viewer, $depth + 1);
     $post->{embed} = $embed if defined $embed;
   }
-  $post->{viewer} = $counts->{viewer} if %{ $counts->{viewer} };
+  my $viewer_state = $self->_post_counts_and_viewer($c, $uri, $viewer)->{viewer} || {};
+  $post->{viewer} = $viewer_state if %$viewer_state;
   return $post;
 }
 
@@ -184,24 +179,15 @@ sub _reply_rows ($self, $c, $parent_uri) {
 sub _post_counts_and_viewer ($self, $c, $post_uri, $viewer = undef) {
   my $index = $self->_local_post_index($c);
   my $viewer_did = $viewer ? $viewer->{did} : undef;
-  my $base = $index->{stats}{$post_uri} || {
-    likeCount   => 0,
-    repostCount => 0,
-    replyCount  => 0,
-    quoteCount  => 0,
-  };
-  my $stats = {
-    %$base,
-    viewer => {},
-  };
+  my $viewer_state = {};
   if (defined $viewer_did) {
-    my $viewer = $index->{viewer}{$post_uri} || {};
-    $stats->{viewer}{like} = $viewer->{like}{$viewer_did}
-      if defined $viewer->{like}{$viewer_did};
-    $stats->{viewer}{repost} = $viewer->{repost}{$viewer_did}
-      if defined $viewer->{repost}{$viewer_did};
+    my $state = $index->{viewer}{$post_uri} || {};
+    $viewer_state->{like} = $state->{like}{$viewer_did}
+      if defined $state->{like}{$viewer_did};
+    $viewer_state->{repost} = $state->{repost}{$viewer_did}
+      if defined $state->{repost}{$viewer_did};
   }
-  return $stats;
+  return { viewer => $viewer_state };
 }
 
 sub _local_post_index ($self, $c) {
@@ -435,10 +421,6 @@ sub _record_embed_view ($self, $c, $record_ref, $viewer = undef, $depth = 0) {
     indexedAt => $post_view->{indexedAt},
   );
   $record_view{labels} = $post_view->{labels} if $post_view->{labels};
-  $record_view{replyCount} = $post_view->{replyCount} if defined $post_view->{replyCount};
-  $record_view{repostCount} = $post_view->{repostCount} if defined $post_view->{repostCount};
-  $record_view{likeCount} = $post_view->{likeCount} if defined $post_view->{likeCount};
-  $record_view{quoteCount} = $post_view->{quoteCount} if defined $post_view->{quoteCount};
   $record_view{embeds} = [ $post_view->{embed} ] if defined $post_view->{embed};
   return \%record_view;
 }
