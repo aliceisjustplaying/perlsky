@@ -100,6 +100,7 @@ $t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
     createdAt => '2026-03-10T00:00:00Z',
   },
 })->status_is(200);
+my $first_result = $t->tx->res->json;
 
 $ws->message_ok('received a firehose frame')
   ->message_like({binary => qr/.+/}, 'firehose frame is binary');
@@ -118,6 +119,10 @@ is($decoded->{body}{since}, $prior_rev, 'first emitted commit advertises the pre
 my $initial_car = read_car($decoded->{body}{blocks});
 my $initial_commit_block = (grep { $_->{cid}->to_string eq $decoded->{body}{commit}->to_string } @{ $initial_car->{blocks} })[0];
 ok($initial_commit_block, 'initial commit block is present in emitted CAR');
+ok(
+  scalar(grep { $_->{cid}->to_string eq $first_result->{cid} } @{ $initial_car->{blocks} || [] }),
+  'initial firehose CAR includes the created record block',
+);
 my $initial_commit = decode_dag_cbor($initial_commit_block->{bytes});
 ok(exists $initial_commit->{prev}, 'initial commit includes prev for compatibility');
 ok(!defined $initial_commit->{prev}, 'initial commit prev is null');
@@ -149,6 +154,7 @@ $t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
     createdAt => '2026-03-10T00:00:01Z',
   },
 })->status_is(200);
+my $second_result = $t->tx->res->json;
 
 $follow->message_ok('received a second firehose frame')
   ->message_like({binary => qr/.+/}, 'second firehose frame is binary');
@@ -160,6 +166,14 @@ is($second->{body}{since}, $initial_rev, 'subsequent commit advertises the previ
 my $second_car = read_car($second->{body}{blocks});
 my $second_commit_block = (grep { $_->{cid}->to_string eq $second->{body}{commit}->to_string } @{ $second_car->{blocks} })[0];
 ok($second_commit_block, 'second commit block is present in emitted CAR');
+ok(
+  scalar(grep { $_->{cid}->to_string eq $second_result->{cid} } @{ $second_car->{blocks} || [] }),
+  'second firehose CAR includes the new record block',
+);
+ok(
+  !scalar(grep { $_->{cid}->to_string eq $first_result->{cid} } @{ $second_car->{blocks} || [] }),
+  'second firehose CAR does not resend unchanged prior record blocks',
+);
 my $second_commit = decode_dag_cbor($second_commit_block->{bytes});
 ok(exists $second_commit->{prev}, 'subsequent commit includes prev for compatibility');
 ok(!defined $second_commit->{prev}, 'subsequent commit prev is null');

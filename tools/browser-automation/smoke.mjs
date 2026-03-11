@@ -15,6 +15,7 @@ const summary = {
   startedAt: new Date().toISOString(),
   appUrl: config.appUrl,
   pdsUrl: config.pdsUrl,
+  publicApiUrl: config.publicApiUrl,
   handle: config.handle,
   targetHandle: config.targetHandle,
   steps: [],
@@ -25,6 +26,20 @@ const summary = {
   xrpc: [],
   notes: [],
 };
+
+const ignoredConsole = [
+  /events\.bsky\.app\/.*ERR_BLOCKED_BY_CLIENT/i,
+  /slider-vertical/i,
+];
+
+const ignoredRequestFailure = [
+  { url: /events\.bsky\.app\//i, error: /ERR_BLOCKED_BY_CLIENT/i },
+  { url: /workers\.dev\/api\/config/i, error: /ERR_ABORTED/i },
+];
+
+const ignoredHttpFailure = [
+  { url: /c\.1password\.com\/richicons/i, status: 404 },
+];
 
 const browser = await chromium.launch({ headless: config.headless !== false });
 const context = await browser.newContext({
@@ -90,6 +105,19 @@ const recordStep = (name, status, extra = {}) => {
   });
 };
 
+const isIgnoredConsole = (entry) =>
+  ignoredConsole.some((pattern) => pattern.test(entry.text || ''));
+
+const isIgnoredRequestFailure = (entry) =>
+  ignoredRequestFailure.some(
+    (rule) => rule.url.test(entry.url || '') && rule.error.test(entry.errorText || ''),
+  );
+
+const isIgnoredHttpFailure = (entry) =>
+  ignoredHttpFailure.some(
+    (rule) => rule.url.test(entry.url || '') && (!rule.status || rule.status === entry.status),
+  );
+
 const step = async (name, fn, { optional = false } = {}) => {
   try {
     const result = await fn();
@@ -110,6 +138,34 @@ const step = async (name, fn, { optional = false } = {}) => {
 };
 
 const wait = (ms) => page.waitForTimeout(ms);
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const fetchJson = async (url) => {
+  const res = await fetch(url, {
+    headers: { accept: 'application/json' },
+  });
+  const text = await res.text();
+  let json;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    json = null;
+  }
+  return { ok: res.ok, status: res.status, text, json };
+};
+
+const pollJson = async (name, buildUrl, predicate, timeoutMs) => {
+  const started = Date.now();
+  let last;
+  while (Date.now() - started < timeoutMs) {
+    last = await fetchJson(buildUrl());
+    if (predicate(last)) {
+      return last;
+    }
+    await sleep(5000);
+  }
+  throw new Error(`${name} did not succeed before timeout; last status=${last?.status ?? 'none'}`);
+};
 
 const closeWelcomeModal = async () => {
   const close = page.getByRole('button', { name: 'Close welcome modal' });
@@ -260,6 +316,45 @@ const replyToOwnPost = async (row, text) => {
   await wait(4000);
 };
 
+const verifyPublicHandleResolution = async () => {
+  const result = await pollJson(
+    'public handle resolution',
+    () => `${config.publicApiUrl}/xrpc/com.atproto.identity.resolveHandle?handle=${encodeURIComponent(config.handle)}`,
+    ({ ok, json }) => ok && typeof json?.did === 'string' && json.did.length > 0,
+    config.publicCheckTimeoutMs ?? 180000,
+  );
+  return { did: result.json.did };
+};
+
+const verifyPublicAuthorFeed = async () => {
+  const result = await pollJson(
+    'public author feed indexing',
+    () => `${config.publicApiUrl}/xrpc/app.bsky.feed.getAuthorFeed?actor=${encodeURIComponent(config.handle)}&limit=20`,
+    ({ ok, json }) =>
+      ok && Array.isArray(json?.feed) && json.feed.some((item) => item?.post?.record?.text === config.postText),
+    config.publicCheckTimeoutMs ?? 180000,
+  );
+  const matching = result.json.feed.find((item) => item?.post?.record?.text === config.postText);
+  return {
+    uri: matching?.post?.uri,
+    cid: matching?.post?.cid,
+  };
+};
+
+const verifyPublicProfile = async () => {
+  const result = await pollJson(
+    'public profile indexing',
+    () => `${config.publicApiUrl}/xrpc/app.bsky.actor.getProfile?actor=${encodeURIComponent(config.handle)}`,
+    ({ ok, json }) => ok && typeof json?.postsCount === 'number' && json.postsCount > 0,
+    config.publicCheckTimeoutMs ?? 180000,
+  );
+  return {
+    postsCount: result.json.postsCount,
+    followersCount: result.json.followersCount,
+    followsCount: result.json.followsCount,
+  };
+};
+
 const editProfile = async () => {
   const edit = page.getByRole('button', { name: /edit profile/i });
   if (!(await edit.count())) {
@@ -282,6 +377,11 @@ try {
   await step('login', login);
   await step('age-assurance', completeAgeAssuranceIfNeeded, { optional: true });
   await step('compose-own-post', () => composePost(config.postText));
+  if (config.publicChecks !== false) {
+    await step('public-resolve-handle', verifyPublicHandleResolution);
+    await step('public-profile', verifyPublicProfile);
+    await step('public-author-feed', verifyPublicAuthorFeed);
+  }
   await step('own-profile', openOwnProfile);
 
   const ownPost = await step('find-own-post', async () => {
@@ -327,6 +427,21 @@ try {
 }
 
 summary.finishedAt = new Date().toISOString();
+summary.unexpected = {
+  console: summary.console.filter((entry) => !isIgnoredConsole(entry)),
+  requestFailures: summary.requestFailures.filter((entry) => !isIgnoredRequestFailure(entry)),
+  httpFailures: summary.httpFailures.filter((entry) => !isIgnoredHttpFailure(entry)),
+  pageErrors: summary.pageErrors,
+};
+summary.unexpected.total =
+  summary.unexpected.console.length +
+  summary.unexpected.requestFailures.length +
+  summary.unexpected.httpFailures.length +
+  summary.unexpected.pageErrors.length;
+if (!summary.fatal && config.strictErrors !== false && summary.unexpected.total > 0) {
+  summary.fatal = `Unexpected browser/runtime errors: ${summary.unexpected.total}`;
+}
+summary.ok = !summary.fatal;
 await screenshot('final').catch(() => undefined);
 await fs.writeFile(
   path.join(config.artifactsDir, 'summary.json'),

@@ -23,12 +23,16 @@ my %opt = (
   target_handle => $ENV{PERLSKY_BROWSER_TARGET_HANDLE} || 'alice.mosphere.at',
   artifacts_dir => $ENV{PERLSKY_BROWSER_ARTIFACTS} || $default_artifacts,
   birthdate     => $ENV{PERLSKY_BROWSER_BIRTHDATE} || '1990-01-01',
+  public_api_url => $ENV{PERLSKY_BROWSER_PUBLIC_API_URL} || 'https://public.api.bsky.app',
+  public_check_timeout_ms => $ENV{PERLSKY_BROWSER_PUBLIC_CHECK_TIMEOUT_MS} || 180_000,
   post_text     => $ENV{PERLSKY_BROWSER_POST_TEXT},
   quote_text    => $ENV{PERLSKY_BROWSER_QUOTE_TEXT},
   reply_text    => $ENV{PERLSKY_BROWSER_REPLY_TEXT},
   profile_note  => $ENV{PERLSKY_BROWSER_PROFILE_NOTE},
   headful       => $ENV{PERLSKY_BROWSER_HEADFUL} ? 1 : 0,
   edit_profile  => $ENV{PERLSKY_BROWSER_EDIT_PROFILE} ? 1 : 0,
+  public_checks => $ENV{PERLSKY_BROWSER_SKIP_PUBLIC_CHECKS} ? 0 : 1,
+  strict_errors => $ENV{PERLSKY_BROWSER_STRICT_ERRORS} ? 1 : 0,
 );
 
 my $cmd = shift(@ARGV) // 'run';
@@ -47,12 +51,16 @@ Options:
   --pds-url URL
   --artifacts-dir DIR
   --birthdate YYYY-MM-DD
+  --public-api-url URL
+  --public-check-timeout-ms MS
   --post-text TEXT
   --quote-text TEXT
   --reply-text TEXT
   --profile-note TEXT
   --headful
   --edit-profile
+  --public-checks
+  --strict-errors
 
 Environment:
   PERLSKY_BROWSER_HANDLE
@@ -62,12 +70,16 @@ Environment:
   PERLSKY_BROWSER_PDS_URL
   PERLSKY_BROWSER_ARTIFACTS
   PERLSKY_BROWSER_BIRTHDATE
+  PERLSKY_BROWSER_PUBLIC_API_URL
+  PERLSKY_BROWSER_PUBLIC_CHECK_TIMEOUT_MS
   PERLSKY_BROWSER_POST_TEXT
   PERLSKY_BROWSER_QUOTE_TEXT
   PERLSKY_BROWSER_REPLY_TEXT
   PERLSKY_BROWSER_PROFILE_NOTE
   PERLSKY_BROWSER_HEADFUL=1
   PERLSKY_BROWSER_EDIT_PROFILE=1
+  PERLSKY_BROWSER_SKIP_PUBLIC_CHECKS=1
+  PERLSKY_BROWSER_STRICT_ERRORS=1
 USAGE
   exit 0;
 }
@@ -81,12 +93,16 @@ GetOptionsFromArray(
   'pds-url=s'       => \$opt{pds_url},
   'artifacts-dir=s' => \$opt{artifacts_dir},
   'birthdate=s'     => \$opt{birthdate},
+  'public-api-url=s' => \$opt{public_api_url},
+  'public-check-timeout-ms=i' => \$opt{public_check_timeout_ms},
   'post-text=s'     => \$opt{post_text},
   'quote-text=s'    => \$opt{quote_text},
   'reply-text=s'    => \$opt{reply_text},
   'profile-note=s'  => \$opt{profile_note},
   'headful!'        => \$opt{headful},
   'edit-profile!'   => \$opt{edit_profile},
+  'public-checks!'  => \$opt{public_checks},
+  'strict-errors!'  => \$opt{strict_errors},
 ) or die "invalid options\n";
 
 if ($cmd eq 'install') {
@@ -120,6 +136,10 @@ my $config = {
   targetHandle => $opt{target_handle},
   artifactsDir => $artifacts_dir,
   birthdate    => $opt{birthdate},
+  publicApiUrl => $opt{public_api_url},
+  publicCheckTimeoutMs => 0 + $opt{public_check_timeout_ms},
+  publicChecks => $opt{public_checks} ? JSON::PP::true : JSON::PP::false,
+  strictErrors => $opt{strict_errors} ? JSON::PP::true : JSON::PP::false,
   postText     => $opt{post_text},
   quoteText    => $opt{quote_text},
   replyText    => $opt{reply_text},

@@ -359,13 +359,17 @@ sub normalize_commit_frame ($frame, $did) {
   my $body   = $frame->{body}   || {};
   my $first  = $body->{ops}[0] || {};
   my $commit_prev_is_null = 0;
+  my $blocks_count = 0;
+  my $commit_block_present = 0;
 
   if (defined $body->{commit} && defined $body->{blocks}) {
     my $car = read_car($body->{blocks});
+    $blocks_count = scalar @{ $car->{blocks} || [] };
     my ($commit_block) = grep {
       $_->{cid}->to_string eq $body->{commit}->to_string
     } @{ $car->{blocks} || [] };
     if ($commit_block) {
+      $commit_block_present = 1;
       my $commit = decode_dag_cbor($commit_block->{bytes});
       $commit_prev_is_null = exists($commit->{prev}) && !defined($commit->{prev}) ? 1 : 0;
     }
@@ -382,6 +386,8 @@ sub normalize_commit_frame ($frame, $did) {
     has_since           => exists($body->{since}) ? 1 : 0,
     since_is_stringish  => !defined($body->{since}) || !ref($body->{since}) ? 1 : 0,
     seq_is_int          => defined($body->{seq}) && $body->{seq} =~ /\A\d+\z/ ? 1 : 0,
+    blocks_count        => $blocks_count,
+    commit_block_present => $commit_block_present,
     commit_prev_is_null => $commit_prev_is_null,
   };
 }

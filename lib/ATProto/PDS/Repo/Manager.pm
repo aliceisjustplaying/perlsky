@@ -143,7 +143,7 @@ sub apply_writes ($self, $account, $writes, %opts) {
   my $commit_bytes = encode_dag_cbor($commit);
   my $commit_cid = ATProto::PDS::Repo::CID->for_dag_cbor($commit_bytes);
 
-  my @blocks = (
+  my @snapshot_blocks = (
     { cid => $commit_cid, bytes => $commit_bytes },
     @{ $mst->{blocks} },
     map {
@@ -153,13 +153,29 @@ sub apply_writes ($self, $account, $writes, %opts) {
       }
     } values %$records,
   );
-  my $car_bytes = write_car($commit_cid, \@blocks);
+  my %firehose_paths = map {
+    my $path = $_->{path} // q();
+    (($_->{action} // q()) ne 'delete' && length $path) ? ($path => 1) : ();
+  } @ops;
+  my @firehose_blocks = (
+    { cid => $commit_cid, bytes => $commit_bytes },
+    @{ $mst->{blocks} },
+    map {
+      my $record = $records->{$_};
+      +{
+        cid   => ATProto::PDS::Repo::CID->from_string($record->{cid}),
+        bytes => $record->{record_bytes},
+      }
+    } sort keys %firehose_paths,
+  );
+  my $snapshot_car_bytes = write_car($commit_cid, \@snapshot_blocks);
+  my $car_bytes = write_car($commit_cid, \@firehose_blocks);
   my $sync_car_bytes = write_car($commit_cid, [
     { cid => $commit_cid, bytes => $commit_bytes },
   ]);
 
   $store->txn(sub ($dbh) {
-    for my $block (@blocks) {
+    for my $block (@snapshot_blocks) {
       $store->put_block(
         cid   => $block->{cid}->to_string,
         codec => $block->{cid}->codec,
@@ -177,7 +193,7 @@ sub apply_writes ($self, $account, $writes, %opts) {
       root_cid    => $mst->{root}->to_string,
       prev_cid    => $latest ? $latest->{cid} : undef,
       commit_bytes => $commit_bytes,
-      car_bytes   => $car_bytes,
+      car_bytes   => $snapshot_car_bytes,
     );
     if ($opts{emit_event} // 1) {
       $store->append_event(
@@ -289,7 +305,26 @@ sub import_repo_car ($self, $account, $car_bytes) {
       }
     } @$records,
   );
-  my $next_car_bytes = write_car($commit_cid, \@repo_blocks);
+  my %firehose_paths = map {
+    my $path = $_->{path} // q();
+    (($_->{action} // q()) ne 'delete' && length $path) ? ($path => 1) : ();
+  } @ops;
+  my %records_by_path = map {
+    $_->{collection} . '/' . $_->{rkey} => $_
+  } @$records;
+  my @firehose_blocks = (
+    { cid => $commit_cid, bytes => $commit_bytes },
+    @{ $mst->{blocks} },
+    map {
+      my $record = $records_by_path{$_};
+      +{
+        cid   => ATProto::PDS::Repo::CID->from_string($record->{cid}),
+        bytes => $record->{record_bytes},
+      }
+    } sort keys %firehose_paths,
+  );
+  my $next_snapshot_car_bytes = write_car($commit_cid, \@repo_blocks);
+  my $next_car_bytes = write_car($commit_cid, \@firehose_blocks);
 
   $store->txn(sub ($dbh) {
     for my $block (values %blocks, @repo_blocks) {
@@ -307,7 +342,7 @@ sub import_repo_car ($self, $account, $car_bytes) {
       root_cid     => $root_cid,
       prev_cid     => $latest ? $latest->{cid} : undef,
       commit_bytes => $commit_bytes,
-      car_bytes    => $next_car_bytes,
+      car_bytes    => $next_snapshot_car_bytes,
     );
     $store->append_event(
       did        => $did,
