@@ -318,15 +318,7 @@ sub register_server_handlers ($registry, $app) {
     );
     my $commit = $c->store->get_latest_commit($account->{did});
     if ($commit) {
-      my $sync_car = $commit->{commit_bytes}
-        ? ATProto::PDS::Repo::CAR::write_car(
-            ATProto::PDS::Repo::CID->from_string($commit->{cid}),
-            [{
-              cid   => ATProto::PDS::Repo::CID->from_string($commit->{cid}),
-              bytes => $commit->{commit_bytes},
-            }],
-          )
-        : undef;
+      my $sync_car = $c->repo_manager->sync_car_for_commit($commit);
       $c->append_event(
         did        => $account->{did},
         type       => 'sync',

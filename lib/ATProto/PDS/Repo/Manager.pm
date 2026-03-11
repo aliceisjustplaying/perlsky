@@ -34,6 +34,17 @@ sub generate_signing_key ($self) {
   return generate_keypair();
 }
 
+sub sync_car_for_commit ($self, $commit) {
+  return undef unless $commit && defined($commit->{commit_bytes});
+  return write_car(
+    ATProto::PDS::Repo::CID->from_string($commit->{cid}),
+    [{
+      cid   => ATProto::PDS::Repo::CID->from_string($commit->{cid}),
+      bytes => $commit->{commit_bytes},
+    }],
+  );
+}
+
 sub initialize_repo ($self, $account) {
   return $self->apply_writes($account, [], emit_event => 0);
 }
@@ -127,7 +138,7 @@ sub apply_writes ($self, $account, $writes, %opts) {
     };
   }
 
-  my $artifacts = _build_commit_artifacts(
+  my $artifacts = $self->_build_commit_artifacts(
     $account,
     $records,
     rev          => next_tid($latest ? $latest->{rev} : undef),
@@ -248,7 +259,7 @@ sub import_repo_car ($self, $account, $car_bytes) {
   my %records_by_path = map {
     $_->{collection} . '/' . $_->{rkey} => $_
   } @$records;
-  my $artifacts = _build_commit_artifacts(
+  my $artifacts = $self->_build_commit_artifacts(
     $account,
     \%records_by_path,
     rev            => next_tid($latest ? $latest->{rev} : undef),
@@ -323,7 +334,7 @@ sub repair_invalid_tids ($self, $account, %opts) {
     imported        => undef,
   } unless $needs_repair;
 
-  my $snapshot_car = _build_snapshot_car(
+  my $snapshot_car = $self->_build_snapshot_car(
     $account,
     $repaired->{records},
     $latest ? (repair_tid($latest->{rev}) // $latest->{rev}) : undef,
@@ -450,11 +461,11 @@ sub _rewrite_owned_at_uris ($value, $hosts, $path_map, $counter_ref) {
   return $value;
 }
 
-sub _build_snapshot_car ($account, $records, $rev = undef) {
+sub _build_snapshot_car ($self, $account, $records, $rev = undef) {
   my %records_by_path = map {
     $_->{collection} . '/' . $_->{rkey} => $_
   } @$records;
-  my $artifacts = _build_commit_artifacts(
+  my $artifacts = $self->_build_commit_artifacts(
     $account,
     \%records_by_path,
     rev          => $rev // next_tid(),
@@ -464,7 +475,7 @@ sub _build_snapshot_car ($account, $records, $rev = undef) {
   return $artifacts->{snapshot_car_bytes};
 }
 
-sub _build_commit_artifacts ($account, $records_by_path, %opts) {
+sub _build_commit_artifacts ($self, $account, $records_by_path, %opts) {
   my %mst_input = map {
     $_ => ATProto::PDS::Repo::CID->from_string($records_by_path->{$_}{cid})
   } sort keys %$records_by_path;
@@ -520,9 +531,10 @@ sub _build_commit_artifacts ($account, $records_by_path, %opts) {
     );
     $artifacts{firehose_car_bytes} = write_car($commit_cid, \@firehose_blocks);
   }
-  $artifacts{sync_car_bytes} = write_car($commit_cid, [
-    { cid => $commit_cid, bytes => $commit_bytes },
-  ]) if $cars{sync};
+  $artifacts{sync_car_bytes} = $self->sync_car_for_commit({
+    cid         => $commit_cid->to_string,
+    commit_bytes => $commit_bytes,
+  }) if $cars{sync};
   return \%artifacts;
 }
 
