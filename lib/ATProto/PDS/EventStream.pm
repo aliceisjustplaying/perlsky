@@ -59,12 +59,17 @@ sub _frame_decoder {
   state $decoder = CBOR::XS->new->filter(sub {
     my ($tag, $value) = @_;
     if ($tag == 42 && !ref($value)) {
-      my $cid_bytes = substr($value, 1);
-      return ATProto::PDS::Repo::CID->from_bytes($cid_bytes);
+      return _decode_cid_tag_payload($value);
     }
     return;
   });
   return $decoder;
+}
+
+sub _decode_cid_tag_payload ($value) {
+  die 'invalid CID tag payload'
+    unless defined($value) && length($value) && substr($value, 0, 1) eq "\x00";
+  return ATProto::PDS::Repo::CID->from_bytes(substr($value, 1));
 }
 
 1;

@@ -1,6 +1,7 @@
 use v5.34;
 use warnings;
 
+use CBOR::XS ();
 use Config ();
 use FindBin qw($Bin);
 use File::Spec;
@@ -66,5 +67,19 @@ my $car = write_car($record_cid, [
 my $parsed = read_car($car);
 is($parsed->{roots}[0]->to_string, $record_cid->to_string, 'car root roundtrip works');
 ok(@{ $parsed->{blocks} } >= 2, 'car returns blocks');
+
+my $invalid_cid_payload = CBOR::XS::encode_cbor({
+  link => CBOR::XS::tag(42, ''),
+});
+
+my $invalid_cid_error = do {
+  my @warnings;
+  local $@;
+  local $SIG{__WARN__} = sub { push @warnings, @_ };
+  my $error = eval { decode_dag_cbor($invalid_cid_payload); 1 } ? undef : $@;
+  is(\@warnings, [], 'invalid DAG-CBOR CID tags fail without warnings');
+  $error;
+};
+like($invalid_cid_error, qr/invalid CID tag payload/, 'invalid DAG-CBOR CID tags are rejected cleanly');
 
 done_testing;
