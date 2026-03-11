@@ -53,6 +53,7 @@ Browser smoke:
 - Use `script/perlsky-browser-smoke bootstrap-pair` once to mint and save a dedicated smoke pair, then rerun `script/perlsky-browser-smoke run-dual` as often as you want against those same accounts.
 - Use `script/perlsky-browser-smoke show-pair` to inspect the saved pair metadata and `script/perlsky-browser-smoke clear-pair` to forget it locally.
 - Fresh-account creation is still available through the explicit `bootstrap-*` commands, but it is no longer the normal path for repeated browser smoke runs.
+- Detailed browser-smoke workflow, current interaction coverage, and the env-gated `prove` wrapper live in `docs/BROWSER_SMOKE.md`.
 
 Moderation and labels:
 
