@@ -448,11 +448,16 @@ sub normalize_commit_frame ($frame, $did) {
     repo_match          => (($body->{repo} // q()) eq $did) ? 1 : 0,
     action              => $first->{action},
     path                => $first->{path},
+    ops_count           => 0 + @{ $body->{ops} || [] },
+    cid_present         => defined($first->{cid}) ? 1 : 0,
+    prev_present        => defined($first->{prev}) ? 1 : 0,
+    prev_data_present   => defined($body->{prevData}) ? 1 : 0,
     has_blocks          => length($body->{blocks} // q()) > 0 ? 1 : 0,
     has_commit          => defined $body->{commit} ? 1 : 0,
     has_since           => exists($body->{since}) ? 1 : 0,
     since_is_stringish  => !defined($body->{since}) || !ref($body->{since}) ? 1 : 0,
     seq_is_int          => defined($body->{seq}) && $body->{seq} =~ /\A\d+\z/ ? 1 : 0,
+    too_big             => $body->{tooBig} ? 1 : 0,
     blocks_count        => $blocks_count,
     commit_block_present => $commit_block_present,
     commit_prev_is_null => $commit_prev_is_null,
@@ -1346,6 +1351,58 @@ for my $name (sort keys %server) {
 check(
   same_hash($server{reference}{firehose_commit}, $server{perlsky}{firehose_commit}),
   'subscribeRepos emits the same normalized commit semantics as the official reference PDS',
+);
+
+note('Comparing firehose update behavior');
+for my $name (sort keys %server) {
+  my $path = 'app.bsky.feed.post/firehose-diff';
+  my $frame = next_commit_frame(
+    "$server{$name}{origin}/xrpc/com.atproto.sync.subscribeRepos",
+    $path,
+    sub {
+      my $res = post_json($server{$name}{origin}, 'com.atproto.repo.putRecord', {
+        repo       => $server{$name}{did},
+        collection => 'app.bsky.feed.post',
+        rkey       => 'firehose-diff',
+        record     => {
+          %{$record},
+          text => "firehose update validation for $name",
+        },
+      }, auth_header($server{$name}{access}));
+      die "putRecord for firehose failed on $name\n" unless $res->is_success;
+    },
+  );
+  $server{$name}{firehose_update_commit} = normalize_commit_frame($frame, $server{$name}{did});
+  check(($server{$name}{firehose_update_commit}{action} // q()) eq 'update', "$name firehose update emits an update op");
+}
+
+check(
+  same_hash($server{reference}{firehose_update_commit}, $server{perlsky}{firehose_update_commit}),
+  'subscribeRepos emits the same normalized update semantics as the official reference PDS',
+);
+
+note('Comparing firehose delete behavior');
+for my $name (sort keys %server) {
+  my $path = 'app.bsky.feed.post/firehose-diff';
+  my $frame = next_commit_frame(
+    "$server{$name}{origin}/xrpc/com.atproto.sync.subscribeRepos",
+    $path,
+    sub {
+      my $res = post_json($server{$name}{origin}, 'com.atproto.repo.deleteRecord', {
+        repo       => $server{$name}{did},
+        collection => 'app.bsky.feed.post',
+        rkey       => 'firehose-diff',
+      }, auth_header($server{$name}{access}));
+      die "deleteRecord for firehose failed on $name\n" unless $res->is_success;
+    },
+  );
+  $server{$name}{firehose_delete_commit} = normalize_commit_frame($frame, $server{$name}{did});
+  check(($server{$name}{firehose_delete_commit}{action} // q()) eq 'delete', "$name firehose delete emits a delete op");
+}
+
+check(
+  same_hash($server{reference}{firehose_delete_commit}, $server{perlsky}{firehose_delete_commit}),
+  'subscribeRepos emits the same normalized delete semantics as the official reference PDS',
 );
 
 note('Comparing future cursor error behavior');

@@ -83,7 +83,8 @@ is($bootstrap_sync_car->{roots}[0]->to_string, $bootstrap_commit->{body}{commit}
 $bootstrap->finish_ok;
 
 my $baseline_seq = $app->store->latest_event_seq;
-my $prior_rev = $app->store->get_latest_commit($did)->{rev};
+my $prior_head = $app->store->get_latest_commit($did);
+my $prior_rev = $prior_head->{rev};
 
 $ws->websocket_ok('/xrpc/com.atproto.sync.subscribeRepos');
 is($ws->message, undef, 'no backlog is emitted when no cursor is supplied');
@@ -115,6 +116,7 @@ is($decoded->{body}{seq}, $baseline_seq + 1, 'sequence advances from prior high 
 is($decoded->{body}{ops}[0]{path}, 'app.bsky.feed.post/firehose', 'operation path is preserved');
 is($decoded->{body}{ops}[0]{action}, 'create', 'operation action is preserved');
 is($decoded->{body}{since}, $prior_rev, 'first emitted commit advertises the previous rev');
+is($decoded->{body}{prevData}->to_string, $prior_head->{root_cid}, 'first emitted commit advertises the previous data root');
 ok(!$decoded->{body}{rebase}, 'commit event is not marked as a rebase');
 ok(!$decoded->{body}{tooBig}, 'commit event is not marked as too big');
 like($decoded->{body}{time}, qr/\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\z/, 'commit event time is ISO8601');
@@ -134,7 +136,6 @@ my $initial_rev = $decoded->{body}{rev};
 
 $ws->finish_ok;
 
-my $latest_seq = $app->store->latest_event_seq;
 my $replay = Test::Mojo->new($app);
 $replay->websocket_ok("/xrpc/com.atproto.sync.subscribeRepos?cursor=$baseline_seq");
 
@@ -145,6 +146,7 @@ $replay->finish_ok;
 
 my $follow = Test::Mojo->new($app);
 $follow->websocket_ok('/xrpc/com.atproto.sync.subscribeRepos');
+my $first_head = $app->store->get_latest_commit($did);
 $t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
   Authorization => "Bearer $access",
 } => json => {
@@ -165,6 +167,7 @@ $follow->message_ok('received a second firehose frame')
 my $second = decode_frame($follow->message->[1]);
 is($second->{body}{ops}[0]{path}, 'app.bsky.feed.post/firehose-second', 'second operation path is preserved');
 is($second->{body}{since}, $initial_rev, 'subsequent commit advertises the previous rev');
+is($second->{body}{prevData}->to_string, $first_head->{root_cid}, 'subsequent commit advertises the previous data root');
 ok(!$second->{body}{rebase}, 'subsequent commit is not marked as a rebase');
 ok(!$second->{body}{tooBig}, 'subsequent commit is not marked as too big');
 like($second->{body}{time}, qr/\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\z/, 'subsequent commit time is ISO8601');
@@ -181,6 +184,86 @@ is($second_commit->{did}, $did, 'subsequent commit block belongs to the repo');
 is($second_commit->{rev}, $second->{body}{rev}, 'subsequent commit block rev matches the event');
 $follow->finish_ok;
 
+my $update_watch = Test::Mojo->new($app);
+$update_watch->websocket_ok('/xrpc/com.atproto.sync.subscribeRepos');
+my $second_head = $app->store->get_latest_commit($did);
+$t->post_ok('/xrpc/com.atproto.repo.putRecord' => {
+  Authorization => "Bearer $access",
+} => json => {
+  repo       => $did,
+  collection => 'app.bsky.feed.post',
+  rkey       => 'firehose-second',
+  record     => {
+    '$type'   => 'app.bsky.feed.post',
+    text      => 'follow-up firehose edited',
+    createdAt => '2026-03-10T00:00:01Z',
+  },
+})->status_is(200);
+my $updated_result = $t->tx->res->json;
+
+$update_watch->message_ok('received an update firehose frame')
+  ->message_like({binary => qr/.+/}, 'update firehose frame is binary');
+
+my $updated = decode_frame($update_watch->message->[1]);
+is($updated->{header}{t}, '#commit', 'update frame is a commit');
+is($updated->{body}{ops}[0]{action}, 'update', 'update commit reports an update op');
+is($updated->{body}{ops}[0]{path}, 'app.bsky.feed.post/firehose-second', 'update operation path is preserved');
+is($updated->{body}{ops}[0]{cid}->to_string, $updated_result->{cid}, 'update op exposes the replacement record CID');
+is($updated->{body}{ops}[0]{prev}->to_string, $second_result->{cid}, 'update op exposes the previous record CID');
+is($updated->{body}{since}, $second->{body}{rev}, 'update commit advertises the prior rev');
+is($updated->{body}{prevData}->to_string, $second_head->{root_cid}, 'update commit advertises the previous data root');
+
+my $updated_car = read_car($updated->{body}{blocks});
+ok(
+  scalar(grep { $_->{cid}->to_string eq $updated_result->{cid} } @{ $updated_car->{blocks} || [] }),
+  'update firehose CAR includes the replacement record block',
+);
+ok(
+  !scalar(grep { $_->{cid}->to_string eq $second_result->{cid} } @{ $updated_car->{blocks} || [] }),
+  'update firehose CAR does not resend the superseded record block',
+);
+$update_watch->finish_ok;
+
+my $delete_watch = Test::Mojo->new($app);
+$delete_watch->websocket_ok('/xrpc/com.atproto.sync.subscribeRepos');
+my $updated_head = $app->store->get_latest_commit($did);
+$t->post_ok('/xrpc/com.atproto.repo.deleteRecord' => {
+  Authorization => "Bearer $access",
+} => json => {
+  repo       => $did,
+  collection => 'app.bsky.feed.post',
+  rkey       => 'firehose-second',
+})->status_is(200);
+
+$delete_watch->message_ok('received a delete firehose frame')
+  ->message_like({binary => qr/.+/}, 'delete firehose frame is binary');
+
+my $deleted = decode_frame($delete_watch->message->[1]);
+is($deleted->{header}{t}, '#commit', 'delete frame is a commit');
+is($deleted->{body}{ops}[0]{action}, 'delete', 'delete commit reports a delete op');
+is($deleted->{body}{ops}[0]{path}, 'app.bsky.feed.post/firehose-second', 'delete operation path is preserved');
+ok(!defined $deleted->{body}{ops}[0]{cid}, 'delete op omits the deleted record CID');
+is($deleted->{body}{ops}[0]{prev}->to_string, $updated_result->{cid}, 'delete op exposes the deleted record CID as prev');
+is($deleted->{body}{since}, $updated->{body}{rev}, 'delete commit advertises the prior rev');
+is($deleted->{body}{prevData}->to_string, $updated_head->{root_cid}, 'delete commit advertises the previous data root');
+
+my $deleted_car = read_car($deleted->{body}{blocks});
+ok(
+  !scalar(grep { $_->{cid}->to_string eq $updated_result->{cid} } @{ $deleted_car->{blocks} || [] }),
+  'delete firehose CAR does not include the deleted record block',
+);
+ok(
+  !scalar(grep { $_->{cid}->to_string eq $first_result->{cid} } @{ $deleted_car->{blocks} || [] }),
+  'delete firehose CAR does not resend unchanged record blocks',
+);
+$delete_watch->finish_ok;
+
+my $firehose_latest = $app->store->latest_event_seq;
+my $exclusive = Test::Mojo->new($app);
+$exclusive->websocket_ok("/xrpc/com.atproto.sync.subscribeRepos?cursor=$firehose_latest");
+is($exclusive->message, undef, 'repo cursor replay is exclusive at the current latest event');
+$exclusive->finish_ok;
+
 my $future = Test::Mojo->new($app);
 $future->websocket_ok('/xrpc/com.atproto.sync.subscribeRepos?cursor=999999999')
   ->message_ok('future cursor returns an error frame');
@@ -189,6 +272,14 @@ my $error = decode_frame($future->message->[1]);
 is($error->{header}{op}, -1, 'future cursor frame is an error');
 is($error->{body}{error}, 'FutureCursor', 'error type is FutureCursor');
 $future->finish_ok;
+
+my $future_edge = Test::Mojo->new($app);
+$future_edge->websocket_ok('/xrpc/com.atproto.sync.subscribeRepos?cursor=' . ($app->store->latest_event_seq + 1))
+  ->message_ok('latest+1 repo cursor is rejected as future');
+
+my $future_edge_error = decode_frame($future_edge->message->[1]);
+is($future_edge_error->{body}{error}, 'FutureCursor', 'edge future repo cursor is also rejected');
+$future_edge->finish_ok;
 
 my $skip_start = $app->store->latest_event_seq;
 $app->store->append_event(
