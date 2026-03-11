@@ -6,6 +6,20 @@ just `perlsky`. The browser runtime now lives here, while the old
 `tools/browser-automation/*` paths remain as thin compatibility wrappers for
 the current `perlsky` workflow.
 
+## Quickstart
+
+```sh
+npm install
+npx playwright install chromium
+node bin/atproto-smoke.mjs print-example --mode dual > config.json
+$EDITOR config.json
+node bin/atproto-smoke.mjs run-dual --config config.json
+```
+
+For the lowest-friction path, point the suite at an existing PDS and two
+existing accounts. The package is intentionally adapter-friendly, but
+bring-your-own accounts are the default path for non-Perl PDS implementations.
+
 ## Current Scope
 
 The existing browser automation is already strong enough to be useful outside
@@ -99,6 +113,10 @@ pure endpoint-only harness:
 The browser layer stays because it catches real `social-app` assumptions and
 AppView proxying issues. The direct API/AppView layers belong underneath it so
 regressions become easier to debug and less brittle when the UI changes.
+
+In other words: this project should eventually answer both "does my PDS return
+the right protocol shapes?" and "does it still behave correctly through
+`bsky.app` and AppView-backed reads?".
 
 ## Planned Next Steps
 
