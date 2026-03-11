@@ -142,7 +142,15 @@ sub create_account ($self, %args) {
       $args{invites_disabled} ? 1 : 0,
       $args{invite_note},
     ],
-    { 7 => 1, 14 => 1, 15 => 1 },
+    _blob_bind_positions_for_names(
+      [qw(
+        id account_id did handle email password_hash password_salt
+        created_at updated_at deactivated_at deleted_at email_confirmed_at
+        did_doc_json private_key public_key public_key_multibase signing_key_did
+        repo_commit_cid repo_root_cid repo_rev invites_disabled invite_note
+      )],
+      qw(password_salt private_key public_key),
+    ),
   );
 
   return $self->get_account_by_did($did);
@@ -166,15 +174,14 @@ sub update_account ($self, $did, %changes) {
 
   push @sets, 'updated_at = ?';
   push @bind, ($changes{updated_at} // time), $did;
-  my %blob_positions = map {
-    my $column = $sets[$_];
-    (($column =~ /^(?:password_salt|private_key|public_key) = \?$/) ? ($_ + 1 => 1) : ())
-  } 0 .. $#sets;
   _execute_sql(
     $self->dbh,
     'UPDATE accounts SET ' . join(', ', @sets) . ' WHERE did = ?',
     \@bind,
-    \%blob_positions,
+    _blob_bind_positions_for_names(
+      [ map { /^(.+?) = \?$/ ? $1 : () } @sets ],
+      qw(password_salt private_key public_key),
+    ),
   );
   return $self->get_account_by_did($did);
 }
@@ -623,7 +630,9 @@ sub put_record ($self, %args) {
       $args{created_at} // $now,
       $now,
     ],
-    { 6 => 1 },
+    _blob_bind_positions_for_names([qw(
+      did collection rkey cid value_json record_bytes created_at updated_at
+    )], qw(record_bytes)),
   );
 
   return $self->get_record($did, $collection, $rkey);
@@ -650,7 +659,9 @@ sub replace_records_for_did ($self, $did, $records) {
         $record->{created_at} // time,
         $record->{updated_at} // time,
       ],
-      { 6 => 1 },
+      _blob_bind_positions_for_names([qw(
+        did collection rkey cid value_json record_bytes created_at updated_at
+      )], qw(record_bytes)),
     );
   }
   return 1;
@@ -759,7 +770,7 @@ sub put_block ($self, %args) {
       $args{bytes},
       $now,
     ],
-    { 3 => 1 },
+    _blob_bind_positions_for_names([qw(cid codec bytes created_at)], qw(bytes)),
   );
   return $self->get_block($cid);
 }
@@ -803,7 +814,10 @@ sub put_commit ($self, %args) {
       $args{car_bytes},
       $now,
     ],
-    { 6 => 1, 7 => 1 },
+    _blob_bind_positions_for_names(
+      [qw(did rev cid root_cid prev_cid commit_bytes car_bytes created_at)],
+      qw(commit_bytes car_bytes),
+    ),
   );
   $self->set_repo_head(
     did        => $did,
@@ -935,7 +949,10 @@ sub append_event ($self, %args) {
         $args{car_bytes},
         $now,
       ],
-      { 6 => 1 },
+      _blob_bind_positions_for_names(
+        [qw(did type rev commit_cid payload_json car_bytes created_at)],
+        qw(car_bytes),
+      ),
     );
     return $self->dbh->sqlite_last_insert_rowid;
   });
@@ -1336,7 +1353,10 @@ sub put_label ($self, %args) {
         $now,
         $args{updated_at} // $now,
       ],
-      { 7 => 1 },
+      _blob_bind_positions_for_names(
+        [qw(subject_key src uri cid val exp sig created_at updated_at)],
+        qw(sig),
+      ),
     );
     return $self->get_label(
       subject_key => $subject_key,
@@ -1442,7 +1462,13 @@ sub reserve_signing_key ($self, %args) {
       $now,
       $args{claimed_at},
     ],
-    { 2 => 1, 3 => 1 },
+    _blob_bind_positions_for_names(
+      [qw(
+        did private_key public_key public_key_multibase signing_key_did
+        created_at claimed_at
+      )],
+      qw(private_key public_key),
+    ),
   );
   return $self->get_reserved_signing_key($did);
 }
@@ -2122,6 +2148,16 @@ sub _execute_sql ($dbh, $sql, $params = undef, $blob_positions = undef) {
   }
   $sth->execute;
   return $sth;
+}
+
+sub _blob_bind_positions_for_names ($bind_names, @blob_names) {
+  my %is_blob = map { $_ => 1 } @blob_names;
+  my %positions;
+  for my $index (0 .. $#$bind_names) {
+    next unless $is_blob{$bind_names->[$index]};
+    $positions{$index + 1} = 1;
+  }
+  return \%positions;
 }
 
 sub _row_from_blob_columns ($row, @columns) {
