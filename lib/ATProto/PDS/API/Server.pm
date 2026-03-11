@@ -521,6 +521,8 @@ sub register_server_handlers ($registry, $app) {
     my $exp = defined($requested_exp) ? int($requested_exp) : ($now + 60);
     xrpc_error(400, 'BadExpiration', 'Requested expiration is out of bounds')
       if $exp <= $now || $exp > ($now + 3600);
+    xrpc_error(400, 'BadExpiration', 'Requested expiration is out of bounds')
+      if !length($normalized_lxm) && $exp > ($now + 60);
     xrpc_error(500, 'SigningKeyUnavailable', 'Account signing key is unavailable')
       unless defined($account->{private_key}) && length($account->{private_key});
     my $token = encode_service_jwt({

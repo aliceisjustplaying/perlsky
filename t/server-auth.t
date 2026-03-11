@@ -245,6 +245,31 @@ ok(
   'service auth signature verifies',
 );
 
+$t->get_ok('/xrpc/com.atproto.server.getServiceAuth?aud=did:web:api.bsky.app&exp=' . (time + 120) => {
+  Authorization => "Bearer $replacement_access",
+})->status_is(400)
+  ->json_is('/error' => 'BadExpiration');
+
+$t->post_ok('/xrpc/com.atproto.admin.updateSubjectStatus' => {
+  Authorization => $admin_auth,
+} => json => {
+  subject  => {
+    '$type' => 'com.atproto.admin.defs#repoRef',
+    did     => $did,
+  },
+  takedown => { applied => JSON::PP::true },
+})->status_is(200);
+
+$t->get_ok('/xrpc/com.atproto.server.getServiceAuth?aud=did:web:api.bsky.app&lxm=app.bsky.actor.getPreferences' => {
+  Authorization => "Bearer $replacement_access",
+})->status_is(200)
+  ->json_has('/token');
+
+$t->get_ok('/xrpc/com.atproto.server.getServiceAuth?aud=did:web:api.bsky.app&lxm=com.atproto.server.createAccount' => {
+  Authorization => "Bearer $replacement_access",
+})->status_is(200)
+  ->json_has('/token');
+
 my $legacy_tmp  = File::Spec->catdir($root, 'data', 'tmp-tests', 'server-auth-legacy');
 remove_tree($legacy_tmp) if -d $legacy_tmp;
 my $legacy_t = Test::Mojo->new(ATProto::PDS->new(
