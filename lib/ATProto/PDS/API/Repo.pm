@@ -136,12 +136,15 @@ sub register_repo_handlers ($registry, $app) {
   $registry->register('com.atproto.repo.listMissingBlobs', sub ($c, $endpoint) {
     my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS);
     assert_repo_writable($c, $account);
-    my $page = {
-      items  => [],
-      cursor => undef,
-    };
+    my $page = _missing_blobs_page(
+      $c,
+      $account->{did},
+      limit  => $c->param('limit') // 500,
+      cursor => $c->param('cursor'),
+    );
     return {
       blobs => $page->{items},
+      (defined $page->{cursor} ? (cursor => $page->{cursor}) : ()),
     };
   });
 
@@ -298,6 +301,56 @@ sub _list_visible_records ($c, $did, $collection, %args) {
     items  => \@visible,
     cursor => $out_cursor,
   };
+}
+
+sub _missing_blobs_page ($c, $did, %args) {
+  my $limit = $args{limit} // 500;
+  my $cursor = $args{cursor};
+  my %missing_by_cid;
+
+  for my $row (@{ $c->store->all_records_for_did($did) }) {
+    my $record_uri = _record_uri($did, $row->{collection}, $row->{rkey});
+    for my $cid (_record_blob_cids($row->{value})) {
+      next if defined($cursor) && length($cursor) && $cid le $cursor;
+      next if $c->store->get_blob($cid);
+      my $current = $missing_by_cid{$cid};
+      if (!$current || ($record_uri cmp $current->{recordUri}) < 0) {
+        $missing_by_cid{$cid} = {
+          cid       => $cid,
+          recordUri => $record_uri,
+        };
+      }
+    }
+  }
+
+  my @items = map { $missing_by_cid{$_} } sort keys %missing_by_cid;
+  splice @items, $limit if @items > $limit;
+  return {
+    items  => \@items,
+    cursor => @items ? $items[-1]{cid} : undef,
+  };
+}
+
+sub _record_blob_cids ($value) {
+  return () unless defined $value;
+  if (ref($value) eq 'HASH') {
+    if (($value->{'$type'} // q()) eq 'blob' && ref($value->{ref}) eq 'HASH' && defined($value->{ref}{'$link'})) {
+      return ($value->{ref}{'$link'});
+    }
+    my @found;
+    for my $child (values %$value) {
+      push @found, _record_blob_cids($child);
+    }
+    return @found;
+  }
+  if (ref($value) eq 'ARRAY') {
+    my @found;
+    for my $child (@$value) {
+      push @found, _record_blob_cids($child);
+    }
+    return @found;
+  }
+  return ();
 }
 
 sub _normalize_apply_writes_input ($write) {

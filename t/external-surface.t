@@ -122,6 +122,19 @@ $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.getBlob')->query(
   ->content_type_is('text/plain')
   ->content_is('blob-bytes');
 
+$t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
+  Authorization => "Bearer $access",
+} => json => {
+  repo       => $did,
+  collection => 'com.example.record',
+  rkey       => 'missing-blob-ref',
+  record     => {
+    '$type' => 'com.example.record',
+    note    => 'blob reference for missing-blob listing',
+    image   => $blob,
+  },
+})->status_is(200);
+
 $t->post_ok('/xrpc/com.atproto.server.createAccount' => json => {
   handle   => 'bob.example.test',
   email    => 'bob@example.test',
@@ -155,6 +168,32 @@ $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.getBlob')->query(
   ->header_is('Cross-Origin-Resource-Policy' => 'cross-origin')
   ->content_type_is('text/plain')
   ->content_is('blob-bytes');
+
+$t->post_ok('/xrpc/com.atproto.repo.uploadBlob' => {
+  Authorization => "Bearer $access",
+  'Content-Type' => 'text/plain',
+} => 'nested-blob-bytes')->status_is(200);
+
+my $nested_blob = $t->tx->res->json->{blob};
+my $nested_blob_cid = $nested_blob->{ref}{'$link'};
+
+$t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
+  Authorization => "Bearer $access",
+} => json => {
+  repo       => $did,
+  collection => 'com.example.record',
+  rkey       => 'nested-missing-blob-ref',
+  record     => {
+    '$type'      => 'com.example.record',
+    note         => 'nested blob reference for missing-blob listing',
+    attachments  => [{
+      kind  => 'image',
+      image => $nested_blob,
+    }],
+  },
+})->status_is(200);
+
+my $nested_record_uri = $t->tx->res->json->{uri};
 
 $t->get_ok('/xrpc/com.atproto.server.checkAccountStatus' => {
   Authorization => "Bearer $access",
@@ -192,5 +231,43 @@ $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.label.queryLabels')->query(
 ))->status_is(200)
   ->json_is('/labels/0/val' => '!hide')
   ->json_is('/labels/0/uri' => $record_uri);
+
+for my $cid ($blob_cid, $nested_blob_cid) {
+  $app->store->dbh->do(
+    q{DELETE FROM blob_owners WHERE cid = ?},
+    undef,
+    $cid,
+  );
+  $app->store->dbh->do(
+    q{DELETE FROM blobs WHERE cid = ?},
+    undef,
+    $cid,
+  );
+}
+
+my %expected_missing = (
+  $blob_cid        => "at://$did/com.example.record/missing-blob-ref",
+  $nested_blob_cid => $nested_record_uri,
+);
+my @missing_cids = sort keys %expected_missing;
+
+$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.repo.listMissingBlobs')->query(
+  limit => 1,
+), {
+  Authorization => "Bearer $access",
+})->status_is(200)
+  ->json_is('/blobs/0/cid' => $missing_cids[0])
+  ->json_is('/blobs/0/recordUri' => $expected_missing{$missing_cids[0]})
+  ->json_is('/cursor' => $missing_cids[0]);
+
+$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.repo.listMissingBlobs')->query(
+  limit  => 1,
+  cursor => $missing_cids[0],
+), {
+  Authorization => "Bearer $access",
+})->status_is(200)
+  ->json_is('/blobs/0/cid' => $missing_cids[1])
+  ->json_is('/blobs/0/recordUri' => $expected_missing{$missing_cids[1]})
+  ->json_is('/cursor' => $missing_cids[1]);
 
 done_testing;
