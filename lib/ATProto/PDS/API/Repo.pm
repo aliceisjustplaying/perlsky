@@ -19,9 +19,7 @@ our @EXPORT_OK = qw(register_repo_handlers);
 
 sub register_repo_handlers ($registry, $app) {
   $registry->register('com.atproto.repo.describeRepo', sub ($c, $endpoint) {
-    my $account = resolve_repo($c, $c->param('repo'));
-    xrpc_error(404, 'RepoNotFound', 'Repository was not found') unless $account;
-    assert_repo_readable($c, $account);
+    my $account = _readable_repo($c, $c->param('repo'));
 
     return {
       handle          => $account->{handle},
@@ -34,56 +32,31 @@ sub register_repo_handlers ($registry, $app) {
 
   $registry->register('com.atproto.repo.createRecord', sub ($c, $endpoint) {
     my $body = $c->req->json || {};
-    my $account = _require_repo_owner($c, $body->{repo});
-    my $commit = $c->repo_manager->apply_writes($account, [{
+    return _apply_single_write($c, $body, {
       action     => 'create',
       collection => $body->{collection},
       rkey       => $body->{rkey},
       value      => $body->{record},
-    }], swap_commit => $body->{swapCommit});
-    my $result = $commit->{results}[0];
-    return {
-      %$result,
-      commit => {
-        cid => $commit->{cid},
-        rev => $commit->{rev},
-      },
-    };
+    }, include_result => 1);
   });
 
   $registry->register('com.atproto.repo.putRecord', sub ($c, $endpoint) {
     my $body = $c->req->json || {};
-    my $account = _require_repo_owner($c, $body->{repo});
-    my $commit = $c->repo_manager->apply_writes($account, [{
+    return _apply_single_write($c, $body, {
       action     => 'update',
       collection => $body->{collection},
       rkey       => $body->{rkey},
       value      => $body->{record},
-    }], swap_commit => $body->{swapCommit});
-    my $result = $commit->{results}[0];
-    return {
-      %$result,
-      commit => {
-        cid => $commit->{cid},
-        rev => $commit->{rev},
-      },
-    };
+    }, include_result => 1);
   });
 
   $registry->register('com.atproto.repo.deleteRecord', sub ($c, $endpoint) {
     my $body = $c->req->json || {};
-    my $account = _require_repo_owner($c, $body->{repo});
-    my $commit = $c->repo_manager->apply_writes($account, [{
+    return _apply_single_write($c, $body, {
       action     => 'delete',
       collection => $body->{collection},
       rkey       => $body->{rkey},
-    }], swap_commit => $body->{swapCommit});
-    return {
-      commit => {
-        cid => $commit->{cid},
-        rev => $commit->{rev},
-      },
-    };
+    });
   });
 
   $registry->register('com.atproto.repo.applyWrites', sub ($c, $endpoint) {
@@ -96,34 +69,23 @@ sub register_repo_handlers ($registry, $app) {
       swap_commit => $body->{swapCommit},
     );
     return {
-      commit => {
-        cid => $commit->{cid},
-        rev => $commit->{rev},
-      },
+      commit  => _commit_view($commit),
       results => $commit->{results},
     };
   });
 
   $registry->register('com.atproto.repo.getRecord', sub ($c, $endpoint) {
-    my $account = resolve_repo($c, $c->param('repo'));
-    xrpc_error(404, 'RepoNotFound', 'Repository was not found') unless $account;
-    assert_repo_readable($c, $account);
+    my $account = _readable_repo($c, $c->param('repo'));
     my $row = $c->store->get_record($account->{did}, $c->param('collection'), $c->param('rkey'));
     xrpc_error(404, 'RecordNotFound', 'Record was not found') unless $row;
-    assert_record_readable($c, "at://$account->{did}/$row->{collection}/$row->{rkey}");
-    return {
-      uri   => "at://$account->{did}/$row->{collection}/$row->{rkey}",
-      cid   => $row->{cid},
-      value => $row->{value},
-    };
+    assert_record_readable($c, _record_uri($account->{did}, $row->{collection}, $row->{rkey}));
+    return _record_view($account->{did}, $row);
   });
 
   $registry->register('com.atproto.repo.listRecords', sub ($c, $endpoint) {
-    my $account = resolve_repo($c, $c->param('repo'));
-    xrpc_error(404, 'RepoNotFound', 'Repository was not found') unless $account;
-    assert_repo_readable(
+    my $account = _readable_repo(
       $c,
-      $account,
+      $c->param('repo'),
       status  => 400,
       error   => 'InvalidRequest',
       message => 'Could not find repo: ' . ($c->param('repo') // q()),
@@ -138,15 +100,7 @@ sub register_repo_handlers ($registry, $app) {
     );
     return {
       (defined $page->{cursor} ? (cursor => $page->{cursor}) : ()),
-      records => [
-        map {
-          +{
-            uri   => "at://$account->{did}/$_->{collection}/$_->{rkey}",
-            cid   => $_->{cid},
-            value => $_->{value},
-          }
-        } @{ $page->{items} }
-      ],
+      records => [ map { _record_view($account->{did}, $_) } @{ $page->{items} } ],
     };
   });
 
@@ -218,6 +172,52 @@ sub _require_repo_owner ($c, $repo) {
   xrpc_error(401, 'AuthRequired', 'Token is not authorized for that repo') unless ($claims->{sub} // '') eq $account->{did};
   assert_repo_writable($c, $account);
   return $account;
+}
+
+sub _readable_repo ($c, $repo, %args) {
+  my $account = resolve_repo($c, $repo);
+  xrpc_error(404, 'RepoNotFound', 'Repository was not found') unless $account;
+  assert_repo_readable($c, $account, %args);
+  return $account;
+}
+
+sub _apply_single_write ($c, $body, $write, %args) {
+  my $account = _require_repo_owner($c, $body->{repo});
+  my $commit = $c->repo_manager->apply_writes(
+    $account,
+    [$write],
+    swap_commit => $body->{swapCommit},
+  );
+  my %response = (
+    commit => _commit_view($commit),
+  );
+  if ($args{include_result}) {
+    my $result = $commit->{results}[0];
+    return {
+      %$result,
+      %response,
+    };
+  }
+  return \%response;
+}
+
+sub _commit_view ($commit) {
+  return {
+    cid => $commit->{cid},
+    rev => $commit->{rev},
+  };
+}
+
+sub _record_uri ($did, $collection, $rkey) {
+  return "at://$did/$collection/$rkey";
+}
+
+sub _record_view ($did, $row) {
+  return {
+    uri   => _record_uri($did, $row->{collection}, $row->{rkey}),
+    cid   => $row->{cid},
+    value => $row->{value},
+  };
 }
 
 sub _list_visible_records ($c, $did, $collection, %args) {

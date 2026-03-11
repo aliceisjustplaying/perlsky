@@ -59,6 +59,19 @@ $t->post_ok('/xrpc/com.atproto.repo.createRecord' => { Authorization => "Bearer 
 })->status_is(200)
   ->json_like('/cid' => qr/\Ab/);
 
+$t->post_ok('/xrpc/com.atproto.repo.putRecord' => { Authorization => "Bearer $access" } => json => {
+  repo       => $did,
+  collection => 'app.bsky.feed.post',
+  rkey       => 'first-post',
+  record     => {
+    '$type'   => 'app.bsky.feed.post',
+    text      => 'hello from updated perl',
+    createdAt => '2026-03-10T00:02:00Z',
+  },
+})->status_is(200)
+  ->json_is('/uri' => "at://$did/app.bsky.feed.post/first-post")
+  ->json_like('/cid' => qr/\Ab/);
+
 $t->post_ok('/xrpc/com.atproto.repo.createRecord' => { Authorization => "Bearer $refresh" } => json => {
   repo       => $did,
   collection => 'app.bsky.feed.post',
@@ -73,11 +86,11 @@ $t->post_ok('/xrpc/com.atproto.repo.createRecord' => { Authorization => "Bearer 
 
 $t->get_ok("/xrpc/com.atproto.repo.getRecord?repo=$did&collection=app.bsky.feed.post&rkey=first-post")
   ->status_is(200)
-  ->json_is('/value/text' => 'hello from perl');
+  ->json_is('/value/text' => 'hello from updated perl');
 
 $t->get_ok("/xrpc/com.atproto.repo.listRecords?repo=$did&collection=app.bsky.feed.post")
   ->status_is(200)
-  ->json_is('/records/0/value/text' => 'hello from perl');
+  ->json_is('/records/0/value/text' => 'hello from updated perl');
 
 $t->get_ok("/xrpc/com.atproto.sync.getLatestCommit?did=$did")
   ->status_is(200)
