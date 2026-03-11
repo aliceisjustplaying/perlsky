@@ -14,6 +14,7 @@ use POSIX qw(strftime);
 my $root = abs_path(File::Spec->catdir($Bin, '..'));
 my $tools_dir = File::Spec->catdir($root, 'tools', 'browser-automation');
 my $cache_dir = File::Spec->catdir($root, '.cache', 'ms-playwright');
+my $default_pair_file = File::Spec->catfile($root, '.cache', 'browser-smoke', 'reusable-pair.json');
 my $default_artifacts = File::Spec->catdir($root, 'data', 'browser-smoke', 'latest');
 
 my @default_browser_paths = (
@@ -52,10 +53,13 @@ my %opt = (
   secondary_quote_text => $ENV{PERLSKY_BROWSER_SECONDARY_QUOTE_TEXT},
   secondary_reply_text => $ENV{PERLSKY_BROWSER_SECONDARY_REPLY_TEXT},
   secondary_profile_note => $ENV{PERLSKY_BROWSER_SECONDARY_PROFILE_NOTE},
+  pair_file     => $ENV{PERLSKY_BROWSER_PAIR_FILE} || $default_pair_file,
   headful       => $ENV{PERLSKY_BROWSER_HEADFUL} ? 1 : 0,
   edit_profile  => $ENV{PERLSKY_BROWSER_EDIT_PROFILE} ? 1 : 0,
   public_checks => $ENV{PERLSKY_BROWSER_SKIP_PUBLIC_CHECKS} ? 0 : 1,
   strict_errors => $ENV{PERLSKY_BROWSER_STRICT_ERRORS} ? 1 : 0,
+  load_pair     => exists $ENV{PERLSKY_BROWSER_LOAD_PAIR} ? _env_bool($ENV{PERLSKY_BROWSER_LOAD_PAIR}) : 1,
+  save_pair     => exists $ENV{PERLSKY_BROWSER_SAVE_PAIR} ? _env_bool($ENV{PERLSKY_BROWSER_SAVE_PAIR}) : 1,
   browser_executable_path => $ENV{PERLSKY_BROWSER_EXECUTABLE_PATH} || $default_browser_executable,
 );
 
@@ -67,6 +71,8 @@ Usage:
   script/perlsky-browser-smoke install
   script/perlsky-browser-smoke bootstrap-secondary [options]
   script/perlsky-browser-smoke bootstrap-pair [options]
+  script/perlsky-browser-smoke show-pair [options]
+  script/perlsky-browser-smoke clear-pair [options]
   script/perlsky-browser-smoke run [options]
   script/perlsky-browser-smoke run-dual [options]
   script/perlsky-browser-smoke run-dual-bootstrap [options]
@@ -95,6 +101,9 @@ Options:
   --secondary-quote-text TEXT
   --secondary-reply-text TEXT
   --secondary-profile-note TEXT
+  --pair-file PATH
+  --load-pair
+  --save-pair
   --headful
   --edit-profile
   --public-checks
@@ -123,6 +132,9 @@ Environment:
   PERLSKY_BROWSER_SECONDARY_QUOTE_TEXT
   PERLSKY_BROWSER_SECONDARY_REPLY_TEXT
   PERLSKY_BROWSER_SECONDARY_PROFILE_NOTE
+  PERLSKY_BROWSER_PAIR_FILE
+  PERLSKY_BROWSER_LOAD_PAIR=1
+  PERLSKY_BROWSER_SAVE_PAIR=1
   PERLSKY_BROWSER_HEADFUL=1
   PERLSKY_BROWSER_EDIT_PROFILE=1
   PERLSKY_BROWSER_SKIP_PUBLIC_CHECKS=1
@@ -155,11 +167,30 @@ GetOptionsFromArray(
   'secondary-quote-text=s' => \$opt{secondary_quote_text},
   'secondary-reply-text=s' => \$opt{secondary_reply_text},
   'secondary-profile-note=s' => \$opt{secondary_profile_note},
+  'pair-file=s'     => \$opt{pair_file},
+  'load-pair!'      => \$opt{load_pair},
+  'save-pair!'      => \$opt{save_pair},
   'headful!'        => \$opt{headful},
   'edit-profile!'   => \$opt{edit_profile},
   'public-checks!'  => \$opt{public_checks},
   'strict-errors!'  => \$opt{strict_errors},
 ) or die "invalid options\n";
+
+if ($cmd eq 'show-pair') {
+  my $pair = _load_pair_file($opt{pair_file})
+    or die "no reusable pair saved at $opt{pair_file}\n";
+  print encode_json($pair), "\n";
+  exit 0;
+}
+
+if ($cmd eq 'clear-pair') {
+  if (-f $opt{pair_file}) {
+    unlink $opt{pair_file} or die "unable to remove $opt{pair_file}: $!";
+  }
+  exit 0;
+}
+
+_load_saved_pair(\%opt, $cmd);
 
 if ($cmd eq 'install') {
   install_runtime();
@@ -199,6 +230,10 @@ if ($cmd eq 'bootstrap-secondary') {
 
 if ($cmd eq 'bootstrap-pair') {
   my ($primary_account, $secondary_account) = bootstrap_pair(\%opt, $run_id);
+  _save_pair_file($opt{pair_file}, {
+    primary   => $primary_account,
+    secondary => $secondary_account,
+  }) if $opt{save_pair};
   print encode_json({
     primary   => $primary_account,
     secondary => $secondary_account,
@@ -279,6 +314,18 @@ if ($cmd eq 'run-dual') {
     replyText   => $opt{secondary_reply_text},
     profileNote => $opt{secondary_profile_note},
   };
+  $config->{accountSource} = $opt{_pair_loaded} ? 'pair-file' : 'cli';
+  _save_pair_file($opt{pair_file}, {
+    primary => {
+      handle   => $opt{handle},
+      password => $opt{password},
+    },
+    secondary => {
+      handle   => $opt{secondary_handle},
+      password => $opt{secondary_password},
+      (defined $opt{secondary_email} ? (email => $opt{secondary_email}) : ()),
+    },
+  }) if $opt{save_pair};
 } else {
   $config->{handle}      = $opt{handle};
   $config->{password}    = $opt{password};
@@ -342,6 +389,67 @@ sub bootstrap_pair {
     password => $password,
   );
   return ($primary_account, $secondary_account);
+}
+
+sub _load_saved_pair {
+  my ($opt, $cmd) = @_;
+  return unless $opt->{load_pair};
+  return if $cmd eq 'bootstrap-secondary' || $cmd eq 'bootstrap-pair' || $cmd eq 'run-dual-bootstrap' || $cmd eq 'run-pair-bootstrap';
+
+  my $pair = _load_pair_file($opt->{pair_file}) or return;
+  if ($cmd eq 'run-dual') {
+    $opt->{handle}             //= $pair->{primary}{handle};
+    $opt->{password}           //= $pair->{primary}{password};
+    $opt->{secondary_handle}   //= $pair->{secondary}{handle};
+    $opt->{secondary_password} //= $pair->{secondary}{password};
+    $opt->{secondary_email}    //= $pair->{secondary}{email};
+    $opt->{_pair_loaded} = 1;
+    return;
+  }
+
+  if ($cmd eq 'run') {
+    $opt->{handle}   //= $pair->{primary}{handle};
+    $opt->{password} //= $pair->{primary}{password};
+    $opt->{_pair_loaded} = 1;
+  }
+}
+
+sub _load_pair_file {
+  my ($path) = @_;
+  return unless defined $path && length $path && -f $path;
+  open(my $fh, '<:raw', $path) or die "unable to read $path: $!";
+  local $/ = undef;
+  my $json = <$fh>;
+  close $fh;
+  my $pair = decode_json($json);
+  return unless ref($pair) eq 'HASH'
+    && ref($pair->{primary}) eq 'HASH'
+    && ref($pair->{secondary}) eq 'HASH';
+  return $pair;
+}
+
+sub _save_pair_file {
+  my ($path, $pair) = @_;
+  return unless defined $path && length $path;
+  my ($volume, $directories) = File::Spec->splitpath($path);
+  my $dir = File::Spec->catpath($volume, $directories, q());
+  make_path($dir) if length $dir && !-d $dir;
+  my $payload = {
+    version  => 1,
+    saved_at => time,
+    primary  => $pair->{primary},
+    secondary => $pair->{secondary},
+  };
+  open(my $fh, '>:raw', $path) or die "unable to write $path: $!";
+  print {$fh} encode_json($payload);
+  close $fh;
+}
+
+sub _env_bool {
+  my ($value) = @_;
+  return 0 unless defined $value;
+  return 0 if $value =~ /\A(?:0|false|no|off)\z/i;
+  return 1;
 }
 
 sub _bootstrap_account {
