@@ -110,10 +110,40 @@ sub register_server_handlers ($registry, $app) {
     $c->store->claim_reserved_signing_key($did) if $reserved && !defined $reserved->{claimed_at};
     $c->append_event(
       did     => $account->{did},
+      type    => 'identity',
+      rev     => $account->{repo_rev},
+      payload => {
+        did    => $account->{did},
+        handle => $account->{handle},
+      },
+    );
+    $c->append_event(
+      did     => $account->{did},
       type    => 'account',
       rev     => $account->{repo_rev},
       payload => {
         active => JSON::PP::true,
+      },
+    );
+    $c->append_event(
+      did        => $account->{did},
+      type       => 'commit',
+      rev        => $account->{repo_rev},
+      commit_cid => $repo->{cid},
+      payload    => {
+        ops   => [],
+        since => undef,
+      },
+      car_bytes  => $repo->{car_bytes},
+    );
+    $c->append_event(
+      did        => $account->{did},
+      type       => 'sync',
+      rev        => $account->{repo_rev},
+      commit_cid => $repo->{cid},
+      car_bytes  => $repo->{sync_car_bytes},
+      payload    => {
+        did => $account->{did},
       },
     );
 
@@ -238,7 +268,7 @@ sub register_server_handlers ($registry, $app) {
 
   $registry->register('com.atproto.server.activateAccount', sub ($c, $endpoint) {
     my (undef, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
-    $c->store->update_account($account->{did}, deactivated_at => undef);
+    $account = $c->store->update_account($account->{did}, deactivated_at => undef);
     $c->append_event(
       did     => $account->{did},
       type    => 'account',
@@ -247,6 +277,37 @@ sub register_server_handlers ($registry, $app) {
         active => JSON::PP::true,
       },
     );
+    $c->append_event(
+      did     => $account->{did},
+      type    => 'identity',
+      rev     => $account->{repo_rev},
+      payload => {
+        did    => $account->{did},
+        handle => $account->{handle},
+      },
+    );
+    my $commit = $c->store->get_latest_commit($account->{did});
+    if ($commit) {
+      my $sync_car = $commit->{commit_bytes}
+        ? ATProto::PDS::Repo::CAR::write_car(
+            ATProto::PDS::Repo::CID->from_string($commit->{cid}),
+            [{
+              cid   => ATProto::PDS::Repo::CID->from_string($commit->{cid}),
+              bytes => $commit->{commit_bytes},
+            }],
+          )
+        : undef;
+      $c->append_event(
+        did        => $account->{did},
+        type       => 'sync',
+        rev        => $account->{repo_rev},
+        commit_cid => $commit->{cid},
+        car_bytes  => $sync_car,
+        payload    => {
+          did => $account->{did},
+        },
+      ) if defined $sync_car;
+    }
     return {};
   });
 

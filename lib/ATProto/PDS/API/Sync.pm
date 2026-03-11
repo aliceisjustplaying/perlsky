@@ -323,6 +323,16 @@ sub _event_frame ($event) {
     });
   }
 
+  if (($event->{type} // q()) eq 'sync') {
+    return encode_message_frame('#sync', {
+      seq    => 0 + $event->{seq},
+      did    => $event->{did},
+      rev    => $event->{rev},
+      blocks => ATProto::PDS::Repo::Bytes->new($event->{car_bytes} // q()),
+      time   => iso8601($event->{created_at}),
+    });
+  }
+
   if (($event->{type} // q()) eq 'identity') {
     return encode_message_frame('#identity', {
       seq    => 0 + $event->{seq},

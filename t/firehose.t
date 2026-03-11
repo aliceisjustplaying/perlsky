@@ -52,6 +52,36 @@ my $session = $t->tx->res->json;
 my $did     = $session->{did};
 my $access  = $session->{accessJwt};
 
+my $bootstrap = Test::Mojo->new($app);
+$bootstrap->websocket_ok('/xrpc/com.atproto.sync.subscribeRepos?cursor=0');
+
+$bootstrap->message_ok('bootstrap identity event arrived');
+my $identity = decode_frame($bootstrap->message->[1]);
+is($identity->{header}{t}, '#identity', 'bootstrap frame starts with identity');
+is($identity->{body}{did}, $did, 'identity event identifies the account');
+is($identity->{body}{handle}, 'alice.example.test', 'identity event carries the handle');
+
+$bootstrap->message_ok('bootstrap account event arrived');
+my $account_evt = decode_frame($bootstrap->message->[1]);
+is($account_evt->{header}{t}, '#account', 'bootstrap account event follows identity');
+ok($account_evt->{body}{active}, 'bootstrap account event marks the account active');
+
+$bootstrap->message_ok('bootstrap commit event arrived');
+my $bootstrap_commit = decode_frame($bootstrap->message->[1]);
+is($bootstrap_commit->{header}{t}, '#commit', 'bootstrap commit event is emitted');
+is_deeply($bootstrap_commit->{body}{ops}, [], 'bootstrap commit contains no record ops');
+ok(!defined $bootstrap_commit->{body}{since}, 'bootstrap commit since is null');
+
+$bootstrap->message_ok('bootstrap sync event arrived');
+my $bootstrap_sync = decode_frame($bootstrap->message->[1]);
+is($bootstrap_sync->{header}{t}, '#sync', 'bootstrap sync event is emitted');
+is($bootstrap_sync->{body}{did}, $did, 'bootstrap sync identifies the account');
+is($bootstrap_sync->{body}{rev}, $bootstrap_commit->{body}{rev}, 'bootstrap sync rev matches the bootstrap commit');
+my $bootstrap_sync_car = read_car($bootstrap_sync->{body}{blocks});
+is(scalar @{ $bootstrap_sync_car->{blocks} }, 1, 'bootstrap sync CAR contains only the commit block');
+is($bootstrap_sync_car->{roots}[0]->to_string, $bootstrap_commit->{body}{commit}->to_string, 'bootstrap sync CAR roots the bootstrap commit');
+$bootstrap->finish_ok;
+
 my $baseline_seq = $app->store->latest_event_seq;
 my $prior_rev = $app->store->get_latest_commit($did)->{rev};
 

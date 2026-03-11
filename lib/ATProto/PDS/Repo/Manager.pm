@@ -35,7 +35,7 @@ sub generate_signing_key ($self) {
 }
 
 sub initialize_repo ($self, $account) {
-  return $self->apply_writes($account, []);
+  return $self->apply_writes($account, [], emit_event => 0);
 }
 
 sub apply_writes ($self, $account, $writes, %opts) {
@@ -154,6 +154,9 @@ sub apply_writes ($self, $account, $writes, %opts) {
     } values %$records,
   );
   my $car_bytes = write_car($commit_cid, \@blocks);
+  my $sync_car_bytes = write_car($commit_cid, [
+    { cid => $commit_cid, bytes => $commit_bytes },
+  ]);
 
   $store->txn(sub ($dbh) {
     for my $block (@blocks) {
@@ -176,28 +179,31 @@ sub apply_writes ($self, $account, $writes, %opts) {
       commit_bytes => $commit_bytes,
       car_bytes   => $car_bytes,
     );
-    $store->append_event(
-      did        => $did,
-      type       => 'commit',
-      rev        => $rev,
-      commit_cid => $commit_cid->to_string,
-      payload    => {
-        ops      => \@ops,
-        since    => $latest ? $latest->{rev} : undef,
-        prevData => $latest ? $latest->{root_cid} : undef,
-      },
-      car_bytes  => $car_bytes,
-    );
+    if ($opts{emit_event} // 1) {
+      $store->append_event(
+        did        => $did,
+        type       => 'commit',
+        rev        => $rev,
+        commit_cid => $commit_cid->to_string,
+        payload    => {
+          ops      => \@ops,
+          since    => $latest ? $latest->{rev} : undef,
+          prevData => $latest ? $latest->{root_cid} : undef,
+        },
+        car_bytes  => $car_bytes,
+      );
+    }
   });
   $self->crawler_notifier->notify_of_update()
-    if $self->crawler_notifier;
+    if ($opts{emit_event} // 1) && $self->crawler_notifier;
 
   return {
-    cid      => $commit_cid->to_string,
-    rev      => $rev,
-    root_cid => $mst->{root}->to_string,
-    car_bytes => $car_bytes,
-    results  => \@results,
+    cid            => $commit_cid->to_string,
+    rev            => $rev,
+    root_cid       => $mst->{root}->to_string,
+    car_bytes      => $car_bytes,
+    sync_car_bytes => $sync_car_bytes,
+    results        => \@results,
   };
 }
 
