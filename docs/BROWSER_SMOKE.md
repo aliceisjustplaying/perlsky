@@ -109,6 +109,15 @@ repo-independent package much more straightforward.
 The wrapper now expects a standalone `atproto-smoke` checkout, either at the
 default sibling path `../atproto-smoke` or via `PERLSKY_BROWSER_SUITE_ROOT`.
 
+The easiest local layout is:
+
+```text
+.../perlsky
+.../atproto-smoke
+```
+
+so the default sibling lookup works without extra configuration.
+
 ## Notes
 
 - The reusable dual-account path is intentionally conservative about account creation. Fresh actors are only created through explicit `bootstrap-*` commands.
