@@ -9,6 +9,7 @@ use Exporter 'import';
 use File::Path qw(make_path);
 use File::Spec;
 use JSON::PP ();
+use Mojo::URL;
 
 use ATProto::PDS::API::Server qw(require_auth);
 use ATProto::PDS::API::Util qw(blob_ref resolve_repo xrpc_error);
@@ -68,7 +69,12 @@ sub register_repo_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.repo.getRecord', sub ($c, $endpoint) {
-    my $account = _readable_repo($c, $c->param('repo'));
+    my $account = resolve_repo($c, $c->param('repo'));
+    unless ($account) {
+      _proxy_remote_get_record($c);
+      return undef;
+    }
+    assert_repo_readable($c, $account);
     my $row = $c->store->get_record($account->{did}, $c->param('collection'), $c->param('rkey'));
     xrpc_error(404, 'RecordNotFound', 'Record was not found') unless $row;
     assert_record_readable($c, _record_uri($account->{did}, $row->{collection}, $row->{rkey}));
@@ -175,6 +181,67 @@ sub _readable_repo ($c, $repo, %args) {
   xrpc_error(404, 'RepoNotFound', 'Repository was not found') unless $account;
   assert_repo_readable($c, $account, %args);
   return $account;
+}
+
+sub _proxy_remote_get_record ($c) {
+  xrpc_error(404, 'RepoNotFound', 'Repository was not found')
+    unless defined($c->config_value('bsky_appview_url')) && length($c->config_value('bsky_appview_url'));
+
+  my $url = Mojo::URL->new($c->config_value('bsky_appview_url'));
+  $url->path($c->req->url->path->to_string);
+  $url->query($c->req->url->query->clone);
+
+  my %headers = (
+    'Accept-Encoding' => 'identity',
+  );
+  for my $pair (
+    ['Accept-Language', 'Accept-Language'],
+    ['Atproto-Accept-Labelers', 'Atproto-Accept-Labelers'],
+    ['X-Bsky-Topics', 'X-Bsky-Topics'],
+  ) {
+    my ($source, $dest) = @$pair;
+    my $value = $c->req->headers->header($source);
+    $headers{$dest} = $value if defined $value && length $value;
+  }
+
+  my $res = $c->service_proxy->_perform_upstream_request(
+    method  => $c->req->method,
+    url     => $url,
+    headers => \%headers,
+  );
+
+  my $status = $res->code // 502;
+  my $headers_out = $c->res->headers;
+  for my $name (
+    qw(
+      Content-Type
+      Content-Language
+      Cache-Control
+      ETag
+      Last-Modified
+      Expires
+      Atproto-Repo-Rev
+      Atproto-Content-Labelers
+      Retry-After
+      WWW-Authenticate
+      DPoP-Nonce
+    )
+  ) {
+    my $value = $res->headers->header($name);
+    $headers_out->header($name => $value) if defined $value && length $value;
+  }
+
+  if ($c->req->method eq 'HEAD') {
+    $c->res->code($status);
+    $c->rendered($status);
+    return;
+  }
+
+  $c->render(
+    status => $status,
+    data   => $res->body,
+  );
+  return;
 }
 
 sub _apply_single_write ($c, $body, $write, %args) {

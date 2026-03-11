@@ -5,6 +5,9 @@ use Config ();
 use File::Path qw(remove_tree);
 use File::Spec;
 use FindBin qw($Bin);
+use IO::Socket::INET;
+use Mojo::Server::Daemon;
+use Mojolicious;
 use Test::More;
 
 BEGIN {
@@ -21,9 +24,40 @@ use Test::Mojo;
 use ATProto::PDS;
 use ATProto::PDS::Repo::CAR qw(read_car);
 
+my @mock_pids;
+END {
+  my $status = $?;
+  kill 'TERM', @mock_pids if @mock_pids;
+  waitpid($_, 0) for @mock_pids;
+  $? = $status;
+}
+
 my $root = File::Spec->rel2abs(File::Spec->catdir($Bin, '..'));
 my $tmp  = File::Spec->catdir($root, 'data', 'tmp-tests', 'repo-api');
 remove_tree($tmp) if -d $tmp;
+
+my $appview_app = Mojolicious->new;
+$appview_app->routes->any('/xrpc/*nsid')->to(cb => sub {
+  my ($c) = @_;
+  return $c->render(text => 'ok') if ($c->stash('nsid') // q()) eq 'ready';
+  if (($c->stash('nsid') // q()) eq 'com.atproto.repo.getRecord') {
+    $c->res->headers->header('ETag' => 'W/"remote-record"');
+    return $c->render(json => {
+      uri   => 'at://did:plc:by3jhwdqgbtrcc7q4tkkv3cf/app.bsky.feed.post/3mgsm5nr5i22a',
+      cid   => 'bafyreifakedremote',
+      value => {
+        '$type'   => 'app.bsky.feed.post',
+        text      => 'remote record from appview fallback',
+        createdAt => '2026-03-11T22:00:00Z',
+      },
+    });
+  }
+  $c->render(status => 404, json => {
+    error => 'NotFound',
+  });
+});
+
+my $appview_url = _start_mock_server($appview_app);
 
 my $t = Test::Mojo->new(ATProto::PDS->new(
   project_root => $root,
@@ -34,6 +68,7 @@ my $t = Test::Mojo->new(ATProto::PDS->new(
     jwt_secret            => 'repo-secret',
     data_dir              => $tmp,
     db_path               => File::Spec->catfile($tmp, 'perlsky.sqlite'),
+    bsky_appview_url      => $appview_url,
   },
 ));
 
@@ -128,6 +163,11 @@ $t->get_ok("/xrpc/com.atproto.sync.getLatestCommit?did=$did")
 $t->get_ok("/xrpc/com.atproto.repo.getRecord?repo=$did&collection=app.bsky.feed.post&rkey=created-via-put")
   ->status_is(200)
   ->json_is('/value/text' => 'put created this record');
+
+$t->get_ok('/xrpc/com.atproto.repo.getRecord?repo=did:plc:by3jhwdqgbtrcc7q4tkkv3cf&collection=app.bsky.feed.post&rkey=3mgsm5nr5i22a')
+  ->status_is(200)
+  ->header_is('ETag' => 'W/"remote-record"')
+  ->json_is('/value/text' => 'remote record from appview fallback');
 
 $t->get_ok("/xrpc/com.atproto.sync.getLatestCommit?did=$did")
   ->status_is(200)
@@ -248,3 +288,45 @@ $t->get_ok("/xrpc/com.atproto.sync.getLatestCommit?did=$did")
   ->json_is('/rev' => $pre_missing_delete_commit->{rev});
 
 done_testing;
+
+sub _start_mock_server {
+  my ($app) = @_;
+  my $listen = IO::Socket::INET->new(
+    Listen    => 5,
+    LocalAddr => '127.0.0.1',
+    LocalPort => 0,
+    Proto     => 'tcp',
+    ReuseAddr => 1,
+  ) or die "listen socket: $!";
+  my $port = $listen->sockport;
+  close $listen;
+
+  my $pid = fork();
+  die "fork failed: $!" unless defined $pid;
+  if ($pid == 0) {
+    my $daemon = Mojo::Server::Daemon->new(
+      app    => $app,
+      listen => ["http://127.0.0.1:$port"],
+      silent => 1,
+    );
+    $daemon->run;
+    exit 0;
+  }
+
+  push @mock_pids, $pid;
+  my $url = "http://127.0.0.1:$port";
+  my $ready = 0;
+  for (1 .. 50) {
+    if (eval {
+      require Mojo::UserAgent;
+      my $tx = Mojo::UserAgent->new(max_redirects => 0)->get("$url/xrpc/ready");
+      ($tx->result->code // 0) == 200;
+    }) {
+      $ready = 1;
+      last;
+    }
+    select undef, undef, undef, 0.05;
+  }
+  die "mock server failed to start on $url" unless $ready;
+  return $url;
+}
