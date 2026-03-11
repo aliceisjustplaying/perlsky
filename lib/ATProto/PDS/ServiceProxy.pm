@@ -309,8 +309,6 @@ sub _get_posts ($self, $c) {
     unless $c->req->method eq 'GET';
 
   my @uris = grep { defined($_) && length($_) } $c->every_param('uris');
-  push @uris, $c->param('uris')
-    if !@uris && defined($c->param('uris')) && length($c->param('uris'));
   xrpc_error(400, 'InvalidRequest', 'uris is required') unless @uris;
 
   my @resolved = map { $self->_resolve_local_post_uri($c, $_) } @uris;
