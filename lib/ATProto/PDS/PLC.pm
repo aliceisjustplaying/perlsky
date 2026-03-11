@@ -133,7 +133,7 @@ sub create_signed_plc_operation ($config, $operation) {
 }
 
 sub submit_plc_operation ($config, $did, $operation) {
-  my $ua = Mojo::UserAgent->new(max_redirects => 0);
+  my $ua = _plc_ua($config);
   my $tx = $ua->post(
     _plc_endpoint($config, $did) => {
       'Content-Type' => 'application/json',
@@ -152,7 +152,7 @@ sub refresh_plc_did_doc ($config, $did) {
 }
 
 sub fetch_plc_document_data ($config, $did) {
-  my $ua = Mojo::UserAgent->new(max_redirects => 0);
+  my $ua = _plc_ua($config);
   my $tx = $ua->get(_plc_endpoint($config, $did, 'data'));
   my $res = $tx->result;
   die 'PLC document lookup failed: ' . ($res->body || $res->message || 'unknown error')
@@ -161,7 +161,7 @@ sub fetch_plc_document_data ($config, $did) {
 }
 
 sub get_last_plc_operation ($config, $did) {
-  my $ua = Mojo::UserAgent->new(max_redirects => 0);
+  my $ua = _plc_ua($config);
   my $tx = $ua->get(_plc_endpoint($config, $did, 'log', 'last'));
   my $res = $tx->result;
   die 'PLC operation lookup failed: ' . ($res->body || $res->message || 'unknown error')
@@ -206,6 +206,12 @@ sub _did_for_create_op ($operation) {
 
 sub _plc_url ($config) {
   return $config->{plc_url} // 'https://plc.directory';
+}
+
+sub _plc_ua ($config) {
+  state %ua_for;
+  my $origin = _plc_url($config);
+  return $ua_for{$origin} ||= Mojo::UserAgent->new(max_redirects => 0);
 }
 
 sub _plc_endpoint ($config, @segments) {
