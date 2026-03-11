@@ -419,6 +419,67 @@ ok(!$deleted_account->{body}{active}, 'admin deletion marks the account inactive
 is($deleted_account->{body}{status}, 'deleted', 'admin deletion reports deleted status');
 $delete_account_watch->finish_ok;
 
+my $bulk_start = $app->store->latest_event_seq;
+for my $n (1 .. 105) {
+  my $minute = int(($n - 1) / 60);
+  my $second = ($n - 1) % 60;
+  $t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
+    Authorization => "Bearer $access",
+  } => json => {
+    repo       => $did,
+    collection => 'app.bsky.feed.post',
+    rkey       => sprintf('bulk-%03d', $n),
+    record     => {
+      '$type'   => 'app.bsky.feed.post',
+      text      => "bulk replay $n",
+      createdAt => sprintf('2026-03-10T00:%02d:%02dZ', $minute, $second),
+    },
+  })->status_is(200);
+}
+
+my $bulk_watch = Test::Mojo->new($app);
+$bulk_watch->websocket_ok("/xrpc/com.atproto.sync.subscribeRepos?cursor=$bulk_start");
+
+my @replayed_seqs;
+for my $n (1 .. 100) {
+  $bulk_watch->message_ok("bulk replay frame $n arrived")
+    ->message_like({binary => qr/.+/}, "bulk replay frame $n is binary");
+  my $frame = decode_frame($bulk_watch->message->[1]);
+  is($frame->{header}{t}, '#commit', "bulk replay frame $n is a commit");
+  push @replayed_seqs, $frame->{body}{seq};
+}
+
+$t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
+  Authorization => "Bearer $access",
+} => json => {
+  repo       => $did,
+  collection => 'app.bsky.feed.post',
+  rkey       => 'bulk-live',
+  record     => {
+    '$type'   => 'app.bsky.feed.post',
+    text      => 'bulk replay live cutover',
+    createdAt => '2026-03-10T00:03:00Z',
+  },
+})->status_is(200);
+
+my $bulk_live;
+for my $n (101 .. 106) {
+  $bulk_watch->message_ok("bulk replay frame $n arrived")
+    ->message_like({binary => qr/.+/}, "bulk replay frame $n is binary");
+  my $frame = decode_frame($bulk_watch->message->[1]);
+  is($frame->{header}{t}, '#commit', "bulk replay frame $n is a commit");
+  push @replayed_seqs, $frame->{body}{seq};
+  $bulk_live = $frame if ($frame->{body}{ops}[0]{path} // q()) eq 'app.bsky.feed.post/bulk-live';
+}
+
+is_deeply(
+  \@replayed_seqs,
+  [ ($bulk_start + 1) .. ($bulk_start + 106) ],
+  'page-boundary replay stays gap-free and duplicate-free across backfill and live cutover',
+);
+ok($bulk_live, 'page-boundary replay reaches the live cutover commit');
+$bulk_watch->finish_ok;
+
 my $firehose_latest = $app->store->latest_event_seq;
 my $exclusive = Test::Mojo->new($app);
 $exclusive->websocket_ok("/xrpc/com.atproto.sync.subscribeRepos?cursor=$firehose_latest");
