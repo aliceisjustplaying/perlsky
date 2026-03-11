@@ -354,6 +354,59 @@ sub first_frame ($url, $timeout = 5) {
   return $frame;
 }
 
+sub frames_until_quiet ($url, $quiet_seconds = 0.25, $timeout = 5) {
+  my $ua = Mojo::UserAgent->new;
+  my @frames;
+  my $error;
+  my $done = 0;
+  my $deadline = time + $timeout;
+
+  $ua->websocket($url => sub ($ua, $tx) {
+    unless ($tx->is_websocket) {
+      $error = $tx->res->error->{message} // 'websocket handshake failed';
+      $done = 1;
+      Mojo::IOLoop->stop;
+      return;
+    }
+
+    my $quiet_timer;
+    my $reset_quiet = sub {
+      Mojo::IOLoop->remove($quiet_timer) if defined $quiet_timer;
+      $quiet_timer = Mojo::IOLoop->timer($quiet_seconds => sub {
+        $done = 1;
+        $tx->finish(1000);
+      });
+    };
+    $reset_quiet->();
+
+    my $watchdog;
+    $watchdog = Mojo::IOLoop->recurring(0.1 => sub {
+      if (time >= $deadline) {
+        $error = "timed out waiting for websocket frames at $url";
+        Mojo::IOLoop->remove($watchdog);
+        Mojo::IOLoop->remove($quiet_timer) if defined $quiet_timer;
+        $done = 1;
+        $tx->finish(1000);
+      }
+    });
+
+    $tx->on(binary => sub ($tx, $bytes) {
+      push @frames, decode_frame($bytes);
+      $reset_quiet->();
+    });
+
+    $tx->on(finish => sub ($tx, $code, $reason = undef) {
+      Mojo::IOLoop->remove($watchdog) if defined $watchdog;
+      Mojo::IOLoop->remove($quiet_timer) if defined $quiet_timer;
+      Mojo::IOLoop->stop if $done || defined $error;
+    });
+  });
+
+  Mojo::IOLoop->start unless Mojo::IOLoop->is_running;
+  die "$error\n" if defined $error;
+  return \@frames;
+}
+
 sub normalize_commit_frame ($frame, $did) {
   my $header = $frame->{header} || {};
   my $body   = $frame->{body}   || {};
@@ -390,6 +443,46 @@ sub normalize_commit_frame ($frame, $did) {
     commit_block_present => $commit_block_present,
     commit_prev_is_null => $commit_prev_is_null,
   };
+}
+
+sub normalize_bootstrap_frames ($frames, $did, $handle) {
+  return [
+    map {
+      my $header = $_->{header} || {};
+      my $body   = $_->{body}   || {};
+      my $type   = $header->{t} // q();
+      my %normalized = (
+        type => $type,
+      );
+      if ($type eq '#identity') {
+        %normalized = (
+          %normalized,
+          did_match    => (($body->{did} // q()) eq $did) ? 1 : 0,
+          handle_match => (($body->{handle} // q()) eq $handle) ? 1 : 0,
+        );
+      } elsif ($type eq '#account') {
+        %normalized = (
+          %normalized,
+          did_match => (($body->{did} // q()) eq $did) ? 1 : 0,
+          active    => $body->{active} ? 1 : 0,
+        );
+      } elsif ($type eq '#commit') {
+        %normalized = (
+          %normalized,
+          repo_match => (($body->{repo} // q()) eq $did) ? 1 : 0,
+          ops_count  => 0 + @{ $body->{ops} || [] },
+          has_blocks => length($body->{blocks} // q()) > 0 ? 1 : 0,
+        );
+      } elsif ($type eq '#sync') {
+        %normalized = (
+          %normalized,
+          did_match  => (($body->{did} // q()) eq $did) ? 1 : 0,
+          has_blocks => length($body->{blocks} // q()) > 0 ? 1 : 0,
+        );
+      }
+      \%normalized;
+    } @$frames
+  ];
 }
 
 sub same_hash ($left, $right) {
@@ -665,6 +758,22 @@ for my $name (sort keys %server) {
   check(($res->json->{did} // q()) eq $server{$name}{did}, "$name resolveHandle returns the created DID");
 }
 
+note('Comparing subscribeRepos bootstrap backfill');
+for my $name (sort keys %server) {
+  my $frames = frames_until_quiet("$server{$name}{origin}/xrpc/com.atproto.sync.subscribeRepos?cursor=0");
+  $server{$name}{bootstrap_firehose} = normalize_bootstrap_frames(
+    $frames,
+    $server{$name}{did},
+    $server{$name}{handle},
+  );
+  check(@$frames >= 1, "$name subscribeRepos emits bootstrap frames from cursor=0");
+}
+
+check(
+  same_hash($server{reference}{bootstrap_firehose}, $server{perlsky}{bootstrap_firehose}),
+  'subscribeRepos bootstrap backfill matches the official reference PDS semantics',
+);
+
 note('Comparing crawler notifications');
 for my $name (sort keys %server) {
   my $state = wait_for_crawler_requests("$name crawler", $server{$name}{crawler_origin});
@@ -692,6 +801,53 @@ for my $name (sort keys %server) {
   check(($json->{did} // q()) eq $server{$name}{did}, "$name getSession returns the created DID");
   check(($json->{handle} // q()) eq $server{$name}{handle}, "$name getSession returns the created handle");
 }
+
+note('Comparing refreshSession token rotation');
+for my $name (sort keys %server) {
+  my $res = post_empty(
+    $server{$name}{origin},
+    'com.atproto.server.refreshSession',
+    auth_header($server{$name}{refresh}),
+  );
+  check($res->is_success, "$name refreshSession succeeds");
+  next unless $res->is_success;
+  my $json = $res->json || {};
+  my $old_access = $server{$name}{access};
+  my $old_refresh = $server{$name}{refresh};
+  $server{$name}{access} = $json->{accessJwt};
+  $server{$name}{refresh} = $json->{refreshJwt};
+
+  my $old_access_res = get_json(
+    $server{$name}{origin},
+    'com.atproto.server.getSession',
+    undef,
+    auth_header($old_access),
+  );
+  my $old_refresh_res = post_empty(
+    $server{$name}{origin},
+    'com.atproto.server.refreshSession',
+    auth_header($old_refresh),
+  );
+  my $new_access_res = get_json(
+    $server{$name}{origin},
+    'com.atproto.server.getSession',
+    undef,
+    auth_header($server{$name}{access}),
+  );
+
+  $server{$name}{refresh_rotation} = {
+    has_access_jwt   => length($json->{accessJwt} // q()) ? 1 : 0,
+    has_refresh_jwt  => length($json->{refreshJwt} // q()) ? 1 : 0,
+    access_rotated   => (($json->{accessJwt} // q()) ne $old_access) ? 1 : 0,
+    refresh_rotated  => (($json->{refreshJwt} // q()) ne $old_refresh) ? 1 : 0,
+    new_access_works => $new_access_res->is_success ? 1 : 0,
+  };
+}
+
+check(
+  same_hash($server{reference}{refresh_rotation}, $server{perlsky}{refresh_rotation}),
+  'refreshSession token rotation matches the official reference PDS semantics',
+);
 
 if ($diff_account_did_method eq 'did:plc') {
   note('Comparing PLC identity semantics');
@@ -789,6 +945,53 @@ for my $name (sort keys %server) {
   check(($json->{uri} // q()) =~ m{/app\.bsky\.feed\.post/diffpost\z}, "$name createRecord returns the expected record URI");
   check(defined $json->{cid} && length $json->{cid}, "$name createRecord returns a CID");
 }
+
+note('Comparing putRecord update and create semantics');
+for my $name (sort keys %server) {
+  my $update_res = post_json($server{$name}{origin}, 'com.atproto.repo.putRecord', {
+    repo       => $server{$name}{did},
+    collection => 'app.bsky.feed.post',
+    rkey       => 'diffpost',
+    record     => {
+      %{$record},
+      text => "put update validation for $name",
+    },
+  }, auth_header($server{$name}{access}));
+  check($update_res->is_success, "$name putRecord updates an existing record");
+
+  my $create_res = post_json($server{$name}{origin}, 'com.atproto.repo.putRecord', {
+    repo       => $server{$name}{did},
+    collection => 'app.bsky.feed.post',
+    rkey       => 'put-created',
+    record     => {
+      %{$record},
+      text => "put create validation for $name",
+    },
+  }, auth_header($server{$name}{access}));
+  check($create_res->is_success, "$name putRecord creates a missing record");
+
+  my $created_record = get_form($server{$name}{origin}, 'com.atproto.repo.getRecord', {
+    repo       => $server{$name}{did},
+    collection => 'app.bsky.feed.post',
+    rkey       => 'put-created',
+  });
+
+  $server{$name}{put_record} = {
+    update_ok            => $update_res->is_success ? 1 : 0,
+    update_uri_expected  => (($update_res->json || {})->{uri} // q()) =~ m{/app\.bsky\.feed\.post/diffpost\z} ? 1 : 0,
+    update_has_cid       => defined(($update_res->json || {})->{cid}) && length(($update_res->json || {})->{cid}) ? 1 : 0,
+    create_ok            => $create_res->is_success ? 1 : 0,
+    create_uri_expected  => (($create_res->json || {})->{uri} // q()) =~ m{/app\.bsky\.feed\.post/put-created\z} ? 1 : 0,
+    create_has_cid       => defined(($create_res->json || {})->{cid}) && length(($create_res->json || {})->{cid}) ? 1 : 0,
+    created_record_reads => $created_record->is_success ? 1 : 0,
+    created_text_ok      => (($created_record->json || {})->{value}{text} // q()) =~ /^put create validation / ? 1 : 0,
+  };
+}
+
+check(
+  same_hash($server{reference}{put_record}, $server{perlsky}{put_record}),
+  'putRecord create-or-update semantics match the official reference PDS',
+);
 
 note('Comparing moderation takedown behavior');
 for my $name (sort keys %server) {
@@ -895,6 +1098,21 @@ for my $name (sort keys %server) {
     list_success  => $list_records->is_success ? 1 : 0,
   };
 
+  my $sync_record = get_form($server{$name}{origin}, 'com.atproto.sync.getRecord', {
+    did        => $server{$name}{did},
+    collection => $collection,
+    rkey       => $rkey,
+  });
+  my $sync_car = $sync_record->is_success ? read_car($sync_record->body // q()) : undef;
+  $server{$name}{record_takedown_sync} = {
+    proof_ok         => $sync_record->is_success ? 1 : 0,
+    proof_is_car     => (($sync_record->headers->content_type // q()) =~ m{application/vnd\.ipld\.car}) ? 1 : 0,
+    proof_has_record => (
+      $sync_car
+      && scalar(grep { $_->{cid}->to_string eq $server{$name}{record_cid} } @{ $sync_car->{blocks} || [] })
+    ) ? 1 : 0,
+  };
+
   $res = post_json(
     $server{$name}{origin},
     'com.atproto.admin.updateSubjectStatus',
@@ -921,6 +1139,11 @@ check(
   'record takedown visibility semantics match the official reference PDS',
 );
 
+check(
+  same_hash($server{reference}{record_takedown_sync}, $server{perlsky}{record_takedown_sync}),
+  'record takedown sync proof semantics match the official reference PDS',
+);
+
 note('Comparing listRecords');
 for my $name (sort keys %server) {
   my $res = get_form($server{$name}{origin}, 'com.atproto.repo.listRecords', {
@@ -931,8 +1154,23 @@ for my $name (sort keys %server) {
   next unless $res->is_success;
   my $records = $res->json->{records} || [];
   check(@{$records} >= 1, "$name listRecords returns at least one record");
-  check(($records->[0]{value}{text} // q()) eq $record->{text}, "$name listRecords returns the created text");
+  my %by_rkey = map {
+    my ($rkey) = (($_->{uri} // q()) =~ m{/([^/?#]+)\z});
+    ($rkey // q()) => $_;
+  } @$records;
+  $server{$name}{list_records} = {
+    count               => 0 + @$records,
+    has_diffpost        => exists $by_rkey{diffpost} ? 1 : 0,
+    diffpost_updated    => (($by_rkey{diffpost}{value}{text} // q()) =~ /^put update validation /) ? 1 : 0,
+    has_put_created     => exists $by_rkey{'put-created'} ? 1 : 0,
+    put_created_matches => (($by_rkey{'put-created'}{value}{text} // q()) =~ /^put create validation /) ? 1 : 0,
+  };
 }
+
+check(
+  same_hash($server{reference}{list_records}, $server{perlsky}{list_records}),
+  'listRecords returns the same normalized record set as the official reference PDS',
+);
 
 note('Comparing getLatestCommit');
 for my $name (sort keys %server) {
@@ -944,6 +1182,22 @@ for my $name (sort keys %server) {
   check(defined $json->{rev} && length $json->{rev}, "$name getLatestCommit returns a rev");
 }
 
+note('Comparing getHead');
+for my $name (sort keys %server) {
+  my $res = get_form($server{$name}{origin}, 'com.atproto.sync.getHead', { did => $server{$name}{did} });
+  check($res->is_success, "$name getHead succeeds");
+  next unless $res->is_success;
+  my $json = $res->json || {};
+  $server{$name}{head} = {
+    has_root => defined($json->{root}) && length($json->{root}) ? 1 : 0,
+  };
+}
+
+check(
+  same_hash($server{reference}{head}, $server{perlsky}{head}),
+  'getHead matches the official reference PDS semantics',
+);
+
 note('Comparing getRepo CAR exports');
 for my $name (sort keys %server) {
   my $res = get_form($server{$name}{origin}, 'com.atproto.sync.getRepo', { did => $server{$name}{did} });
@@ -954,6 +1208,40 @@ for my $name (sort keys %server) {
   check(length($res->body // q()) > 0, "$name getRepo CAR payload is non-empty");
   $server{$name}{repo_snapshot_car} = $res->body;
 }
+
+note('Comparing getCheckout CAR exports');
+for my $name (sort keys %server) {
+  my $res = get_form($server{$name}{origin}, 'com.atproto.sync.getCheckout', { did => $server{$name}{did} });
+  check($res->is_success, "$name getCheckout succeeds");
+  next unless $res->is_success;
+  my $ctype = $res->headers->content_type // q();
+  $server{$name}{checkout} = {
+    car_type => $ctype =~ m{application/vnd\.ipld\.car} ? 1 : 0,
+    nonempty => length($res->body // q()) > 0 ? 1 : 0,
+  };
+}
+
+check(
+  same_hash($server{reference}{checkout}, $server{perlsky}{checkout}),
+  'getCheckout matches the official reference PDS semantics',
+);
+
+note('Comparing listMissingBlobs empty-state semantics');
+for my $name (sort keys %server) {
+  my $res = get_form($server{$name}{origin}, 'com.atproto.repo.listMissingBlobs', {}, auth_header($server{$name}{access}));
+  check($res->is_success, "$name listMissingBlobs succeeds");
+  next unless $res->is_success;
+  my $json = $res->json || {};
+  $server{$name}{list_missing_blobs} = {
+    blobs_empty => (($json->{blobs} && ref($json->{blobs}) eq 'ARRAY' && !@{$json->{blobs}}) ? 1 : 0),
+    has_cursor  => exists $json->{cursor} ? 1 : 0,
+  };
+}
+
+check(
+  same_hash($server{reference}{list_missing_blobs}, $server{perlsky}{list_missing_blobs}),
+  'listMissingBlobs empty-state semantics match the official reference PDS',
+);
 
 note('Comparing importRepo snapshot restore');
 for my $name (sort keys %server) {
@@ -986,9 +1274,16 @@ for my $name (sort keys %server) {
   check($res->is_success, "$name listRecords succeeds after importRepo");
   next unless $res->is_success;
   my $records = $res->json->{records} || [];
+  my @rkeys = sort map {
+    my ($rkey) = (($_->{uri} // q()) =~ m{/([^/?#]+)\z});
+    $rkey // q();
+  } @$records;
   $server{$name}{import_repo_state} = {
-    record_count => 0 + @$records,
-    texts        => [ map { $_->{value}{text} } @$records ],
+    record_count     => 0 + @$records,
+    rkeys            => \@rkeys,
+    restored_diffpost => scalar(grep { $_ eq 'diffpost' } @rkeys) ? 1 : 0,
+    restored_put     => scalar(grep { $_ eq 'put-created' } @rkeys) ? 1 : 0,
+    dropped_import   => scalar(grep { $_ eq 'import-diff' } @rkeys) ? 0 : 1,
   };
 }
 
@@ -1044,6 +1339,36 @@ for my $name (sort keys %server) {
 check(
   same_hash($server{reference}{future_cursor}, $server{perlsky}{future_cursor}),
   'subscribeRepos agrees on future cursor errors',
+);
+
+note('Comparing deleteSession revocation behavior');
+for my $name (sort keys %server) {
+  my $session = post_json($server{$name}{origin}, 'com.atproto.server.createSession', {
+    identifier => $server{$name}{renamed_handle} || $server{$name}{handle},
+    password   => 'hunter22',
+  });
+  check($session->is_success, "$name createSession succeeds before deleteSession");
+  next unless $session->is_success;
+  my $json = $session->json || {};
+  my $delete = post_empty(
+    $server{$name}{origin},
+    'com.atproto.server.deleteSession',
+    auth_header($json->{refreshJwt}),
+  );
+  my $get_session = get_json(
+    $server{$name}{origin},
+    'com.atproto.server.getSession',
+    undef,
+    auth_header($json->{accessJwt}),
+  );
+  $server{$name}{delete_session} = {
+    delete_ok => $delete->is_success ? 1 : 0,
+  };
+}
+
+check(
+  same_hash($server{reference}{delete_session}, $server{perlsky}{delete_session}),
+  'deleteSession revocation behavior matches the official reference PDS',
 );
 
 if ($failed) {

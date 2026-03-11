@@ -19,6 +19,7 @@ BEGIN {
 
 use Test::Mojo;
 use ATProto::PDS;
+use ATProto::PDS::Repo::CAR qw(read_car);
 
 my $root = File::Spec->rel2abs(File::Spec->catdir($Bin, '..'));
 my $tmp  = File::Spec->catdir($root, 'data', 'tmp-tests', 'repo-api');
@@ -71,6 +72,7 @@ $t->post_ok('/xrpc/com.atproto.repo.putRecord' => { Authorization => "Bearer $ac
 })->status_is(200)
   ->json_is('/uri' => "at://$did/app.bsky.feed.post/first-post")
   ->json_like('/cid' => qr/\Ab/);
+my $updated_cid = $t->tx->res->json->{cid};
 
 $t->post_ok('/xrpc/com.atproto.repo.createRecord' => { Authorization => "Bearer $refresh" } => json => {
   repo       => $did,
@@ -96,6 +98,17 @@ $t->get_ok("/xrpc/com.atproto.sync.getLatestCommit?did=$did")
   ->status_is(200)
   ->json_like('/cid' => qr/\Ab/)
   ->json_has('/rev');
+my $latest_commit_cid = $t->tx->res->json->{cid};
+
+$t->get_ok("/xrpc/com.atproto.sync.getRecord?did=$did&collection=app.bsky.feed.post&rkey=first-post")
+  ->status_is(200)
+  ->content_type_like(qr{application/vnd\.ipld\.car});
+my $record_proof = read_car($t->tx->res->body);
+is($record_proof->{roots}[0]->to_string, $latest_commit_cid, 'sync.getRecord roots the latest commit');
+ok(
+  scalar(grep { $_->{cid}->to_string eq $updated_cid } @{ $record_proof->{blocks} || [] }),
+  'sync.getRecord proof includes the current record block',
+);
 
 $t->get_ok("/xrpc/com.atproto.sync.getRepoStatus?did=$did")
   ->status_is(200)
@@ -129,5 +142,15 @@ $t->post_ok('/xrpc/com.atproto.repo.deleteRecord' => { Authorization => "Bearer 
 $t->get_ok("/xrpc/com.atproto.repo.getRecord?repo=$did&collection=app.bsky.feed.post&rkey=first-post")
   ->status_is(404)
   ->json_is('/error' => 'RecordNotFound');
+
+$t->get_ok("/xrpc/com.atproto.sync.getRecord?did=$did&collection=app.bsky.feed.post&rkey=first-post")
+  ->status_is(200)
+  ->content_type_like(qr{application/vnd\.ipld\.car});
+my $missing_record_proof = read_car($t->tx->res->body);
+ok(@{ $missing_record_proof->{blocks} || [] } >= 2, 'missing sync proof still includes commit and MST blocks');
+ok(
+  !scalar(grep { $_->{cid}->to_string eq $updated_cid } @{ $missing_record_proof->{blocks} || [] }),
+  'missing sync proof omits the deleted record block',
+);
 
 done_testing;

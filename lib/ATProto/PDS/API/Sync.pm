@@ -11,10 +11,11 @@ use JSON::PP ();
 use ATProto::PDS::EventStream qw(encode_message_frame);
 use ATProto::PDS::API::Util qw(flatten_params iso8601 pump_event_subscription resolve_did_account subscription_start_seq xrpc_error);
 use ATProto::PDS::Identity qw(service_host);
-use ATProto::PDS::Moderation qw(assert_blob_readable assert_record_readable assert_repo_readable);
+use ATProto::PDS::Moderation qw(assert_blob_readable assert_repo_readable);
 use ATProto::PDS::Repo::CAR qw(write_car);
 use ATProto::PDS::Repo::CID;
 use ATProto::PDS::Repo::Bytes;
+use ATProto::PDS::Repo::MST qw(build_mst);
 
 our @EXPORT_OK = qw(register_sync_handlers);
 
@@ -70,10 +71,15 @@ sub register_sync_handlers ($registry, $app) {
 
   $registry->register('com.atproto.sync.getRecord', sub ($c, $endpoint) {
     my $account = _readable_repo_by_did($c);
-    my $record = $c->store->get_record($account->{did}, $c->param('collection'), $c->param('rkey'));
-    xrpc_error(404, 'RecordNotFound', 'Record was not found') unless $record;
-    assert_record_readable($c, _record_uri($account->{did}, $record->{collection}, $record->{rkey}));
-    return _render_repo_car($c, $account->{did});
+    return _render_car(
+      $c,
+      _record_proof_car(
+        $c,
+        $account->{did},
+        $c->param('collection') // q(),
+        $c->param('rkey') // q(),
+      ),
+    );
   });
 
   $registry->register('com.atproto.sync.getBlocks', sub ($c, $endpoint) {
@@ -286,14 +292,37 @@ sub _render_repo_car ($c, $did, %args) {
   return _render_car($c, $car);
 }
 
+sub _record_proof_car ($c, $did, $collection, $rkey) {
+  my $head = $c->store->get_latest_commit($did);
+  xrpc_error(404, 'RepoNotFound', 'Repository was not found') unless $head;
+  my $records = $c->store->all_records_for_did($did);
+  my %mst_input = map {
+    $_->{collection} . '/' . $_->{rkey} => ATProto::PDS::Repo::CID->from_string($_->{cid})
+  } @$records;
+  my $mst = build_mst(\%mst_input);
+  my @blocks = (
+    {
+      cid   => ATProto::PDS::Repo::CID->from_string($head->{cid}),
+      bytes => $head->{commit_bytes},
+    },
+    @{ $mst->{blocks} },
+  );
+
+  my $record = $c->store->get_record($did, $collection, $rkey);
+  if ($record) {
+    push @blocks, {
+      cid   => ATProto::PDS::Repo::CID->from_string($record->{cid}),
+      bytes => $record->{record_bytes},
+    };
+  }
+
+  return write_car($blocks[0]{cid}, \@blocks);
+}
+
 sub _render_car ($c, $car) {
   $c->res->headers->content_type('application/vnd.ipld.car');
   $c->render(data => $car);
   return;
-}
-
-sub _record_uri ($did, $collection, $rkey) {
-  return "at://$did/$collection/$rkey";
 }
 
 sub _event_frame ($event) {

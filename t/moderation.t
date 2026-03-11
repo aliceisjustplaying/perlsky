@@ -21,6 +21,7 @@ BEGIN {
 use Test::Mojo;
 use Mojo::URL;
 use ATProto::PDS;
+use ATProto::PDS::Repo::CAR qw(read_car);
 
 my $root = File::Spec->rel2abs(File::Spec->catdir($Bin, '..'));
 my $tmp  = tempdir(CLEANUP => 1);
@@ -88,8 +89,13 @@ $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.getRecord')->query(
   did        => $did,
   collection => 'app.bsky.feed.post',
   rkey       => 'visible-post',
-))->status_is(404)
-  ->json_is('/error', 'RecordNotFound');
+))->status_is(200)
+  ->content_type_like(qr{application/vnd\.ipld\.car});
+my $sync_record_proof = read_car($t->tx->res->body);
+ok(
+  scalar(grep { $_->{cid}->to_string eq $record_cid } @{ $sync_record_proof->{blocks} || [] }),
+  'sync.getRecord still exposes a proof CAR for taken-down records',
+);
 
 $t->post_ok('/xrpc/com.atproto.admin.updateSubjectStatus' => {
   Authorization => 'Bearer admin-secret',
