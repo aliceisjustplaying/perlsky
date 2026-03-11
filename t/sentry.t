@@ -85,7 +85,7 @@ ok(
   'capture_exception reports success for a 200 response',
 );
 is(scalar @requests, 1, 'capture_exception submits one store request');
-is($requests[0]{url}, 'http://127.0.0.1:9999/api/42/store/?sentry_key=public&sentry_secret=secret&sentry_version=7', 'dsn is converted into the expected store URL');
+is($requests[0]{url}, 'http://127.0.0.1:9999/api/42/store/', 'dsn is converted into the expected store URL');
 like($requests[0]{headers}{'X-Sentry-Auth'}, qr/sentry_key=public/, 'sentry auth header includes the public key');
 is($requests[0]{payload}{tags}{nsid}, 'com.atproto.server.describeServer', 'payload includes the nsid tag');
 is($requests[0]{payload}{exception}{values}[0]{type}, 'UnhandledXRPCException', 'payload includes exception type');

@@ -120,11 +120,7 @@ sub _parse_dsn ($dsn) {
   my $store = $url->clone;
   $store->userinfo(undef);
   $store->path('/' . join('/', grep { length } @prefix, 'api', $project_id, 'store') . '/');
-  $store->query({
-    sentry_key     => $url->username,
-    sentry_version => 7,
-    ((defined($url->password) && length($url->password)) ? (sentry_secret => $url->password) : ()),
-  });
+  $store->query(undef);
   return {
     public_key => $url->username,
     secret_key => $url->password,
