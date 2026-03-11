@@ -15,6 +15,7 @@ use ATProto::PDS::Auth::Password qw(hash_password random_hex);
 use ATProto::PDS::Constants qw(
   ACTION_TOKEN_PLC_OPERATION
   EVENT_TYPE_IDENTITY
+  EVENT_TYPE_LABEL
   TOKEN_AUD_ACCESS
 );
 use ATProto::PDS::EventStream qw(encode_message_frame);
@@ -215,7 +216,7 @@ sub register_misc_handlers ($registry, $app) {
     );
     return unless defined $next_seq;
     pump_event_subscription($c, $next_seq, sub ($event) {
-      return unless ($event->{type} // q()) eq 'label';
+      return unless ($event->{type} // q()) eq EVENT_TYPE_LABEL;
       my $labels = $event->{payload}{labels} || [];
       return unless @$labels;
       return (
@@ -223,7 +224,7 @@ sub register_misc_handlers ($registry, $app) {
           seq    => 0 + $event->{seq},
           labels => $labels,
         }),
-        'label',
+        EVENT_TYPE_LABEL,
       );
     });
     return;

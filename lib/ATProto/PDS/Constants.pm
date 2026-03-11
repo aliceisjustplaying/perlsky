@@ -14,6 +14,7 @@ our @EXPORT_OK = qw(
   EVENT_TYPE_ACCOUNT
   EVENT_TYPE_COMMIT
   EVENT_TYPE_IDENTITY
+  EVENT_TYPE_LABEL
   EVENT_TYPE_SYNC
   SERVICE_ID_BSKY_APPVIEW
   SERVICE_ID_BSKY_CHAT
@@ -36,6 +37,7 @@ use constant ACTION_TOKEN_PLC_OPERATION  => 'plc_operation';
 use constant EVENT_TYPE_COMMIT   => 'commit';
 use constant EVENT_TYPE_IDENTITY => 'identity';
 use constant EVENT_TYPE_ACCOUNT  => 'account';
+use constant EVENT_TYPE_LABEL    => 'label';
 use constant EVENT_TYPE_SYNC     => 'sync';
 
 use constant SERVICE_ID_BSKY_APPVIEW => 'bsky_appview';
