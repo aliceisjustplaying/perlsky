@@ -25,6 +25,16 @@ sub new ($class, %args) {
     [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10],
   );
   $self->_register_counter(
+    'perlsky_xrpc_errors_total',
+    'Total rendered XRPC errors by method, endpoint, type, status, and error code.',
+    [qw(method nsid endpoint_type status error)],
+  );
+  $self->_register_counter(
+    'perlsky_xrpc_unhandled_exceptions_total',
+    'Total unhandled internal exceptions on XRPC routes by method, endpoint, and type.',
+    [qw(method nsid endpoint_type)],
+  );
+  $self->_register_counter(
     'perlsky_service_proxy_requests_total',
     'Total service-proxy requests handled locally or upstream by NSID, source, and status.',
     [qw(nsid source status)],

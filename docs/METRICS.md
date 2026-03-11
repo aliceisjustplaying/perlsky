@@ -14,6 +14,10 @@
   Counts HTTP XRPC requests by method, NSID, endpoint type, and status.
 - `perlsky_xrpc_request_duration_seconds`
   Histogram for HTTP XRPC latency with the same labels.
+- `perlsky_xrpc_errors_total`
+  Counts rendered XRPC failures by method, NSID, endpoint type, status, and error code.
+- `perlsky_xrpc_unhandled_exceptions_total`
+  Counts true unhandled exceptions on XRPC routes by method, NSID, and endpoint type.
 - `perlsky_subscription_connections_total`
   Counts websocket subscription opens by NSID.
 - `perlsky_subscription_active`
@@ -74,6 +78,8 @@ This is enough to understand the hot PDS paths under load without trying to wrap
 ## Suggested Alerts
 
 - high error rate on `perlsky_xrpc_requests_total`
+- spikes in `perlsky_xrpc_errors_total` for a specific `nsid` or `error`
+- any growth in `perlsky_xrpc_unhandled_exceptions_total`
 - sustained increase in `perlsky_xrpc_request_duration_seconds`
 - non-zero `perlsky_subscription_active` with no corresponding frame growth
 - crawler errors from `perlsky_crawler_requests_total{result="error"}`

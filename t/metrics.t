@@ -99,6 +99,24 @@ $t->get_ok('/xrpc/app.bsky.feed.getPostThread?uri=' . url_escape('at://' . $did 
   Authorization => "Bearer $access",
 })->status_is(200);
 
+$t->post_ok('/xrpc/com.atproto.server.createSession' => json => {
+  identifier => 'alice.test',
+  password   => 'wrong-password',
+})->status_is(401)
+  ->json_is('/error' => 'AuthRequired');
+
+$t->get_ok('/xrpc/example.unsupported.method')
+  ->status_is(404)
+  ->json_is('/error' => 'UnknownMethod');
+
+$app->api_registry->register('com.atproto.server.describeServer', sub {
+  die "forced metrics failure\n";
+});
+
+$t->get_ok('/xrpc/com.atproto.server.describeServer')
+  ->status_is(500)
+  ->json_is('/error' => 'InternalServerError');
+
 $t->websocket_ok('/xrpc/com.atproto.sync.subscribeRepos')
   ->finish_ok;
 
@@ -122,6 +140,26 @@ like(
   $metrics,
   qr/perlsky_xrpc_request_duration_seconds_count\{endpoint_type="procedure",method="POST",nsid="com\.atproto\.server\.createAccount",status="200"\} 1\b/,
   'createAccount latency histogram is exported',
+);
+like(
+  $metrics,
+  qr/perlsky_xrpc_errors_total\{endpoint_type="procedure",error="AuthRequired",method="POST",nsid="com\.atproto\.server\.createSession",status="401"\} 1\b/,
+  'handled XRPC errors are exported with their error code',
+);
+like(
+  $metrics,
+  qr/perlsky_xrpc_errors_total\{endpoint_type="unknown",error="UnknownMethod",method="GET",nsid="example\.unsupported\.method",status="404"\} 1\b/,
+  'unknown-method XRPC errors are exported',
+);
+like(
+  $metrics,
+  qr/perlsky_xrpc_errors_total\{endpoint_type="query",error="InternalServerError",method="GET",nsid="com\.atproto\.server\.describeServer",status="500"\} 1\b/,
+  'internal XRPC failures are exported as 500 errors',
+);
+like(
+  $metrics,
+  qr/perlsky_xrpc_unhandled_exceptions_total\{endpoint_type="query",method="GET",nsid="com\.atproto\.server\.describeServer"\} 1\b/,
+  'unhandled XRPC exceptions are exported separately',
 );
 like(
   $metrics,

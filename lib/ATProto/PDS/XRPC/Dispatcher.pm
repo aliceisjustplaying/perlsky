@@ -78,22 +78,46 @@ sub register_routes ($self) {
         $labels,
       );
     };
+    my $observe_error = sub ($status, $error, $endpoint_type = 'unknown', $error_nsid = $c->stash('nsid') // 'unknown') {
+      $c->app->metrics->increment_counter('perlsky_xrpc_errors_total', 1, {
+        method        => $method,
+        nsid          => $error_nsid,
+        endpoint_type => $endpoint_type,
+        status        => $status,
+        error         => $error,
+      });
+    };
+    my $render_error = sub ($status, $error, $message, $endpoint_type = 'unknown', $error_nsid = $c->stash('nsid') // 'unknown') {
+      $finish_metrics->($status, $endpoint_type, $error_nsid);
+      $observe_error->($status, $error, $endpoint_type, $error_nsid);
+      return $c->render(
+        status => $status,
+        json   => {
+          error   => $error,
+          message => $message,
+        },
+      );
+    };
+    my $render_internal_error = sub ($err, $endpoint_type = 'unknown', $error_nsid = $c->stash('nsid') // 'unknown') {
+      my $message = "$err";
+      chomp $message;
+      $c->app->log->error("Unhandled XRPC exception for $error_nsid: $message");
+      $c->app->metrics->increment_counter('perlsky_xrpc_unhandled_exceptions_total', 1, {
+        method        => $method,
+        nsid          => $error_nsid,
+        endpoint_type => $endpoint_type,
+      });
+      return $render_error->(500, 'InternalServerError', 'Internal server error', $endpoint_type, $error_nsid);
+    };
 
     my $endpoint = $by_id{$nsid};
     unless ($endpoint) {
       my $proxied_status = eval { $c->service_proxy->proxy_xrpc_request($c, $nsid) };
       if (my $err = $@) {
         if (ref($err) eq 'HASH' && $err->{error}) {
-          $finish_metrics->($err->{status} // 400, 'proxy', $nsid);
-          return $c->render(
-            status => $err->{status} // 400,
-            json   => {
-              error   => $err->{error},
-              message => $err->{message} // $err->{error},
-            },
-          );
+          return $render_error->($err->{status} // 400, $err->{error}, $err->{message} // $err->{error}, 'proxy', $nsid);
         }
-        die $err;
+        return $render_internal_error->($err, 'proxy', $nsid);
       }
 
       if (defined $proxied_status) {
@@ -101,52 +125,25 @@ sub register_routes ($self) {
         return;
       }
 
-      $finish_metrics->(404);
-      return $c->render(
-        status => 404,
-        json   => {
-          error   => 'UnknownMethod',
-          message => 'Unknown XRPC method',
-        },
-      );
+      return $render_error->(404, 'UnknownMethod', 'Unknown XRPC method');
     }
 
     if ($endpoint->{type} eq 'subscription') {
-      $finish_metrics->(426, $endpoint->{type}, $endpoint->{id});
-      return $c->render(
-        status => 426,
-        json   => {
-          error   => 'UpgradeRequired',
-          message => "$endpoint->{id} requires a websocket upgrade",
-        },
-      );
+      return $render_error->(426, 'UpgradeRequired', "$endpoint->{id} requires a websocket upgrade", $endpoint->{type}, $endpoint->{id});
     }
 
     if ($endpoint->{type} eq 'query' && $c->req->method ne 'GET') {
-      $finish_metrics->(405, $endpoint->{type}, $endpoint->{id});
-      return $c->render(
-        status => 405,
-        json   => {
-          error   => 'MethodNotAllowed',
-          message => "$endpoint->{id} expects GET",
-        },
-      );
+      return $render_error->(405, 'MethodNotAllowed', "$endpoint->{id} expects GET", $endpoint->{type}, $endpoint->{id});
     }
 
     if ($endpoint->{type} eq 'procedure' && $c->req->method ne 'POST') {
-      $finish_metrics->(405, $endpoint->{type}, $endpoint->{id});
-      return $c->render(
-        status => 405,
-        json   => {
-          error   => 'MethodNotAllowed',
-          message => "$endpoint->{id} expects POST",
-        },
-      );
+      return $render_error->(405, 'MethodNotAllowed', "$endpoint->{id} expects POST", $endpoint->{type}, $endpoint->{id});
     }
 
     my $handler = $c->app->api_registry->handler_for($endpoint->{id});
     unless ($handler) {
       $finish_metrics->(501, $endpoint->{type}, $endpoint->{id});
+      $observe_error->(501, 'NotImplemented', $endpoint->{type}, $endpoint->{id});
       return $c->render(
         status => 501,
         json   => {
@@ -161,16 +158,9 @@ sub register_routes ($self) {
     my $result = eval { $handler->($c, $endpoint) };
     if (my $err = $@) {
       if (ref($err) eq 'HASH' && $err->{error}) {
-        $finish_metrics->($err->{status} // 400, $endpoint->{type}, $endpoint->{id});
-        return $c->render(
-          status => $err->{status} // 400,
-          json   => {
-            error   => $err->{error},
-            message => $err->{message} // $err->{error},
-          },
-        );
+        return $render_error->($err->{status} // 400, $err->{error}, $err->{message} // $err->{error}, $endpoint->{type}, $endpoint->{id});
       }
-      die $err;
+      return $render_internal_error->($err, $endpoint->{type}, $endpoint->{id});
     }
 
     if (!defined $result) {
