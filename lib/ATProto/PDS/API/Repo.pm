@@ -89,9 +89,10 @@ sub register_repo_handlers ($registry, $app) {
   $registry->register('com.atproto.repo.applyWrites', sub ($c, $endpoint) {
     my $body = $c->req->json || {};
     my $account = _require_repo_owner($c, $body->{repo});
+    my @writes = map { _normalize_apply_writes_input($_) } @{ $body->{writes} || [] };
     my $commit = $c->repo_manager->apply_writes(
       $account,
-      $body->{writes} || [],
+      \@writes,
       swap_commit => $body->{swapCommit},
     );
     return {
@@ -252,6 +253,19 @@ sub _list_visible_records ($c, $did, $collection, %args) {
   return {
     items  => \@visible,
     cursor => $out_cursor,
+  };
+}
+
+sub _normalize_apply_writes_input ($write) {
+  my $type = $write->{'$type'} // q();
+  my $action =
+      $type =~ /#create\z/ ? 'create'
+    : $type =~ /#update\z/ ? 'update'
+    : $type =~ /#delete\z/ ? 'delete'
+    : $write->{action};
+  return {
+    %$write,
+    action => $action,
   };
 }
 

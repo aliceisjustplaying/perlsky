@@ -59,6 +59,32 @@ $t->post_ok('/xrpc/com.atproto.server.createInviteCode' => {
 
 my $invite_code = $t->tx->res->json->{code};
 
+$t->post_ok('/xrpc/com.atproto.repo.applyWrites' => {
+  Authorization => "Bearer $access",
+} => json => {
+  repo   => $did,
+  writes => [
+    {
+      '$type'     => 'com.atproto.repo.applyWrites#create',
+      collection  => 'app.bsky.feed.post',
+      value       => {
+        '$type'   => 'app.bsky.feed.post',
+        text      => 'applyWrites union smoke',
+        createdAt => '2026-03-11T00:00:00Z',
+      },
+    },
+    {
+      '$type'     => 'com.atproto.repo.applyWrites#delete',
+      collection  => 'app.bsky.feed.post',
+      rkey        => 'missing-rkey-ok',
+    },
+  ],
+})->status_is(200)
+  ->json_is('/results/0/$type', 'com.atproto.repo.applyWrites#createResult')
+  ->json_has('/results/0/uri')
+  ->json_has('/results/0/cid')
+  ->json_is('/results/1/$type', 'com.atproto.repo.applyWrites#deleteResult');
+
 $t->get_ok('/xrpc/com.atproto.server.getAccountInviteCodes' => {
   Authorization => "Bearer $access",
 })->status_is(200)

@@ -73,7 +73,9 @@ sub apply_writes ($self, $account, $writes, %opts) {
       my $path = join('/', grep { defined && length } $write->{collection}, $write->{rkey});
       my $previous = $previous_records{$path};
       delete $records->{$path};
-      push @results, {};
+      push @results, {
+        '$type' => 'com.atproto.repo.applyWrites#deleteResult',
+      };
       push @ops, {
         action => 'delete',
         path   => $path,
@@ -112,6 +114,7 @@ sub apply_writes ($self, $account, $writes, %opts) {
       record_bytes => $bytes,
     };
     push @results, {
+      '$type'           => $previous ? 'com.atproto.repo.applyWrites#updateResult' : 'com.atproto.repo.applyWrites#createResult',
       uri              => "at://$did/$collection/$rkey",
       cid              => $cid->to_string,
       validationStatus => 'unknown',
