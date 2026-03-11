@@ -45,15 +45,7 @@ sub encode_info_frame ($name, $message = undef) {
 }
 
 sub decode_frame ($bytes) {
-  my $decoder = CBOR::XS->new->filter(sub {
-    my ($tag, $value) = @_;
-    if ($tag == 42 && !ref($value)) {
-      my $cid_bytes = substr($value, 1);
-      return ATProto::PDS::Repo::CID->from_bytes($cid_bytes);
-    }
-    return;
-  });
-
+  my $decoder = _frame_decoder();
   my ($header, $header_len) = $decoder->decode_prefix($bytes);
   my ($body, $body_len) = $decoder->decode_prefix(substr($bytes, $header_len));
   return {
@@ -61,6 +53,18 @@ sub decode_frame ($bytes) {
     body     => $body,
     consumed => $header_len + $body_len,
   };
+}
+
+sub _frame_decoder {
+  state $decoder = CBOR::XS->new->filter(sub {
+    my ($tag, $value) = @_;
+    if ($tag == 42 && !ref($value)) {
+      my $cid_bytes = substr($value, 1);
+      return ATProto::PDS::Repo::CID->from_bytes($cid_bytes);
+    }
+    return;
+  });
+  return $decoder;
 }
 
 1;

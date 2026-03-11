@@ -25,7 +25,14 @@ sub decode_dag_cbor {
   if (utf8::is_utf8($octets)) {
     utf8::downgrade($octets, 1) or utf8::encode($octets);
   }
-  my $decoder = CBOR::XS->new->filter(sub {
+  {
+    no warnings 'uninitialized';
+    return _dag_cbor_decoder()->decode($octets);
+  }
+}
+
+sub _dag_cbor_decoder {
+  state $decoder = CBOR::XS->new->filter(sub {
     my ($tag, $value) = @_;
     if ($tag == 42 && !ref($value)) {
       my $cid_bytes = substr($value, 1);
@@ -33,10 +40,7 @@ sub decode_dag_cbor {
     }
     return;
   });
-  {
-    no warnings 'uninitialized';
-    return $decoder->decode($octets);
-  }
+  return $decoder;
 }
 
 sub _encode_value {
