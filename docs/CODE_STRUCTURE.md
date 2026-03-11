@@ -108,3 +108,13 @@ The pattern used for these splits is:
 4. only then move to the next slice
 
 That is the safest way to keep simplifying the codebase without losing reference parity or label/moderation correctness.
+
+## Local Reference Sources
+
+`tools/reference` is a local-only convenience bundle for source checkouts of the upstream Bluesky reference repos used during audits and parity work.
+
+- it is intentionally not tracked
+- it may contain nested `.git` directories
+- it should not be treated as production input or committed project content
+
+If you need those sources again on a fresh machine, reclone them locally instead of trying to recover them from this repo history.
