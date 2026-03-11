@@ -124,8 +124,8 @@ ok(
   'initial firehose CAR includes the created record block',
 );
 my $initial_commit = decode_dag_cbor($initial_commit_block->{bytes});
-ok(exists $initial_commit->{prev}, 'initial commit includes prev for compatibility');
-ok(!defined $initial_commit->{prev}, 'initial commit prev is null');
+is($initial_commit->{did}, $did, 'initial commit block belongs to the repo');
+is($initial_commit->{rev}, $decoded->{body}{rev}, 'initial commit block rev matches the event');
 
 my $initial_rev = $decoded->{body}{rev};
 
@@ -175,8 +175,8 @@ ok(
   'second firehose CAR does not resend unchanged prior record blocks',
 );
 my $second_commit = decode_dag_cbor($second_commit_block->{bytes});
-ok(exists $second_commit->{prev}, 'subsequent commit includes prev for compatibility');
-ok(!defined $second_commit->{prev}, 'subsequent commit prev is null');
+is($second_commit->{did}, $did, 'subsequent commit block belongs to the repo');
+is($second_commit->{rev}, $second->{body}{rev}, 'subsequent commit block rev matches the event');
 $follow->finish_ok;
 
 my $future = Test::Mojo->new($app);

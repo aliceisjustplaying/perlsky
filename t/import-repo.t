@@ -98,7 +98,8 @@ $t->get_ok('/xrpc/com.atproto.repo.listRecords' => form => {
 
 my $records = $t->tx->res->json->{records} || [];
 is(scalar @$records, 1, 'importRepo restores the earlier repo snapshot');
-is($records->[0]{uri}, "at://$did/app.bsky.feed.post/before-import", 'imported repo keeps the earlier record URI');
-is($records->[0]{value}{text}, 'state before import', 'imported repo restores the earlier record body');
+my ($restored) = grep { ($_->{uri} // q()) eq "at://$did/app.bsky.feed.post/before-import" } @$records;
+ok($restored, 'imported repo keeps the earlier record URI');
+is($restored->{value}{text}, 'state before import', 'imported repo restores the earlier record body');
 
 done_testing;

@@ -19,6 +19,7 @@ BEGIN {
 
 use Test::Mojo;
 use ATProto::PDS;
+use ATProto::PDS::Repo::CAR qw(read_car);
 
 my $root = File::Spec->rel2abs(File::Spec->catdir($Bin, '..'));
 my $tmp  = tempdir(CLEANUP => 1);
@@ -68,6 +69,7 @@ $t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
 })->status_is(200)
   ->json_has('/uri')
   ->json_has('/cid');
+my $record_cid = $t->tx->res->json->{cid};
 
 $t->get_ok('/xrpc/com.atproto.repo.listRecords' => form => {
   repo       => $did,
@@ -80,12 +82,18 @@ $t->get_ok('/xrpc/com.atproto.sync.getLatestCommit' => form => {
 })->status_is(200)
   ->json_has('/cid')
   ->json_has('/rev');
+my $latest_commit_cid = $t->tx->res->json->{cid};
 
 $t->get_ok('/xrpc/com.atproto.sync.getRepo' => form => {
   did => $did,
 })->status_is(200);
 
 like($t->tx->res->headers->content_type // '', qr{application/vnd\.ipld\.car}, 'repo export is served as CAR');
-ok(length($t->tx->res->body) > 0, 'repo export is non-empty');
+my $repo_car = read_car($t->tx->res->body);
+is($repo_car->{roots}[0]->to_string, $latest_commit_cid, 'repo export roots the latest commit');
+ok(
+  scalar(grep { $_->{cid}->to_string eq $record_cid } @{ $repo_car->{blocks} || [] }),
+  'repo export includes the created record block',
+);
 
 done_testing;
