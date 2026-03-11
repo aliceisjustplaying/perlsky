@@ -2259,10 +2259,12 @@ sub _matches_uri_patterns ($uri, $patterns = undef) {
 }
 
 sub _random_id {
-  open(my $fh, '<:raw', '/dev/urandom') or die "open(/dev/urandom): $!";
+  state $fh = do {
+    open(my $random_fh, '<:raw', '/dev/urandom') or die "open(/dev/urandom): $!";
+    $random_fh;
+  };
   my $bytes = q();
   my $read = read($fh, $bytes, 12);
-  CORE::close($fh);
   die 'failed to read random bytes' unless defined $read && $read == 12;
   return unpack('H*', $bytes);
 }
