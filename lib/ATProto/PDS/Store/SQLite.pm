@@ -49,9 +49,25 @@ use ATProto::PDS::Store::SQLite::Moderation qw(
   list_subject_statuses
   put_subject_status
 );
+use ATProto::PDS::Store::SQLite::Operations qw(
+  get_host_notice
+  get_repo_head
+  list_host_notices
+  log_outbound_email
+  set_repo_head
+  touch_host_notice
+);
 use ATProto::PDS::Store::SQLite::Preferences qw(
   list_preferences
   put_preferences
+);
+use ATProto::PDS::Store::SQLite::Reservations qw(
+  claim_reserved_signing_key
+  get_reserved_handle
+  get_reserved_signing_key
+  list_reserved_handles
+  reserve_handle
+  reserve_signing_key
 );
 
 our @EXPORT_OK = qw(default_migrations);
@@ -969,61 +985,6 @@ sub search_accounts ($self, %args) {
   return $page;
 }
 
-sub reserve_signing_key ($self, %args) {
-  my $did = $args{did} // die 'did is required';
-  my $now = $args{created_at} // time;
-  _execute_sql(
-    $self->dbh,
-    q{
-      INSERT INTO reserved_signing_keys (
-        did, private_key, public_key, public_key_multibase, signing_key_did, created_at, claimed_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(did) DO UPDATE SET
-        private_key = excluded.private_key,
-        public_key = excluded.public_key,
-        public_key_multibase = excluded.public_key_multibase,
-        signing_key_did = excluded.signing_key_did,
-        created_at = excluded.created_at,
-        claimed_at = excluded.claimed_at
-    },
-    [
-      $did,
-      $args{private_key},
-      $args{public_key},
-      $args{public_key_multibase},
-      $args{signing_key_did},
-      $now,
-      $args{claimed_at},
-    ],
-    _blob_bind_positions_for_names(
-      [qw(
-        did private_key public_key public_key_multibase signing_key_did
-        created_at claimed_at
-      )],
-      qw(private_key public_key),
-    ),
-  );
-  return $self->get_reserved_signing_key($did);
-}
-
-sub get_reserved_signing_key ($self, $did) {
-  return _row_from_blob_columns($self->dbh->selectrow_hashref(
-    q{SELECT * FROM reserved_signing_keys WHERE did = ?},
-    undef,
-    $did,
-  ), qw(private_key public_key));
-}
-
-sub claim_reserved_signing_key ($self, $did, %args) {
-  $self->dbh->do(
-    q{UPDATE reserved_signing_keys SET claimed_at = ? WHERE did = ?},
-    undef,
-    $args{claimed_at} // time,
-    $did,
-  );
-  return $self->get_reserved_signing_key($did);
-}
-
 sub repair_binary_columns ($self) {
   my %counts = (
     accounts              => 0,
@@ -1138,169 +1099,6 @@ sub repair_binary_columns ($self) {
   });
 
   return \%counts;
-}
-
-sub reserve_handle ($self, $handle, %args) {
-  my $now = $args{created_at} // time;
-  $self->dbh->do(
-    q{
-      INSERT INTO reserved_handles (handle, note, created_at)
-      VALUES (?, ?, ?)
-      ON CONFLICT(handle) DO UPDATE SET
-        note = excluded.note
-    },
-    undef,
-    $handle,
-    $args{note},
-    $now,
-  );
-  return $self->get_reserved_handle($handle);
-}
-
-sub get_reserved_handle ($self, $handle) {
-  return $self->dbh->selectrow_hashref(
-    q{SELECT * FROM reserved_handles WHERE handle = ?},
-    undef,
-    $handle,
-  );
-}
-
-sub list_reserved_handles ($self) {
-  return $self->dbh->selectall_arrayref(
-    q{SELECT * FROM reserved_handles ORDER BY handle},
-    { Slice => {} },
-  );
-}
-
-sub log_outbound_email ($self, %args) {
-  my $now = $args{created_at} // time;
-  $self->dbh->do(
-    q{
-      INSERT INTO outbound_emails (
-        recipient_did, recipient_email, sender_did, subject, content, comment, sent, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    },
-    undef,
-    $args{recipient_did},
-    $args{recipient_email},
-    $args{sender_did},
-    $args{subject},
-    $args{content},
-    $args{comment},
-    $args{sent} ? 1 : 0,
-    $now,
-  );
-  return $self->dbh->sqlite_last_insert_rowid;
-}
-
-sub touch_host_notice ($self, %args) {
-  my $hostname = $args{hostname} // die 'hostname is required';
-  my $now      = time;
-  my $requested_at = $args{requested_at};
-  my $notified_at  = $args{notified_at};
-  $self->dbh->do(
-    q{
-      INSERT INTO crawl_hosts (
-        hostname, requested_at, notified_at, last_seq, status_json
-      ) VALUES (?, ?, ?, ?, ?)
-      ON CONFLICT(hostname) DO UPDATE SET
-        requested_at = COALESCE(excluded.requested_at, crawl_hosts.requested_at),
-        notified_at = COALESCE(excluded.notified_at, crawl_hosts.notified_at),
-        last_seq = COALESCE(excluded.last_seq, crawl_hosts.last_seq),
-        status_json = COALESCE(excluded.status_json, crawl_hosts.status_json)
-    },
-    undef,
-    $hostname,
-    $requested_at,
-    $notified_at,
-    $args{last_seq},
-    _maybe_json($args{status}),
-  );
-  return $now && $self->get_host_notice($hostname);
-}
-
-sub get_host_notice ($self, $hostname) {
-  my $row = $self->dbh->selectrow_hashref(
-    q{SELECT * FROM crawl_hosts WHERE hostname = ?},
-    undef,
-    $hostname,
-  );
-  return _row_from_json_columns($row, qw(status_json));
-}
-
-sub list_host_notices ($self, %args) {
-  my $limit = $args{limit} // 200;
-  $limit = 1000 if $limit > 1000;
-  my $cursor = $args{cursor};
-  my @bind;
-  my $sql = q{SELECT * FROM crawl_hosts};
-  if (defined $cursor && length $cursor) {
-    $sql .= q{ WHERE hostname > ?};
-    push @bind, $cursor;
-  }
-  $sql .= q{ ORDER BY hostname LIMIT ?};
-  push @bind, $limit + 1;
-  my $rows = $self->dbh->selectall_arrayref($sql, { Slice => {} }, @bind);
-  my $page = _paginate($rows, $limit, 'hostname');
-  $page->{items} = [ map { _row_from_json_columns($_, qw(status_json)) } @{ $page->{items} } ];
-  return $page;
-}
-
-sub set_repo_head ($self, %args) {
-  my $did = $args{did} // die 'did is required';
-  my $now = $args{indexed_at} // time;
-  $self->dbh->do(
-    q{
-      INSERT INTO repo_heads (did, indexed_at)
-      VALUES (?, ?)
-      ON CONFLICT(did) DO UPDATE SET
-        commit_cid = NULL,
-        rev = NULL,
-        root_cid = NULL,
-        indexed_at = excluded.indexed_at
-    },
-    undef,
-    $did,
-    $now,
-  );
-  $self->dbh->do(
-    q{
-      UPDATE accounts
-      SET repo_commit_cid = ?, repo_root_cid = ?, repo_rev = ?, updated_at = ?
-      WHERE did = ?
-    },
-    undef,
-    $args{commit_cid},
-    $args{root_cid},
-    $args{rev},
-    $now,
-    $did,
-  );
-  return {
-    did        => $did,
-    commit_cid => $args{commit_cid},
-    rev        => $args{rev},
-    root_cid   => $args{root_cid},
-    indexed_at => $now,
-  };
-}
-
-sub get_repo_head ($self, $did) {
-  return $self->dbh->selectrow_hashref(
-    q{
-      SELECT
-        accounts.did,
-        accounts.repo_commit_cid AS commit_cid,
-        accounts.repo_rev AS rev,
-        accounts.repo_root_cid AS root_cid,
-        repo_heads.indexed_at
-      FROM accounts
-      LEFT JOIN repo_heads ON repo_heads.did = accounts.did
-      WHERE accounts.did = ? AND accounts.repo_commit_cid IS NOT NULL
-    },
-    undef,
-    $did,
-  );
 }
 
 sub default_migrations {
