@@ -149,7 +149,15 @@ sub _perform_upstream_request ($self, %args) {
       next;
     }
 
-    my $res = $tx->result;
+    my $res = eval { $tx->result };
+    if (my $err = $@) {
+      my $message = "$err";
+      xrpc_error(502, 'UpstreamFailure', $message || 'Upstream service unreachable')
+        if $attempt >= $attempts;
+      select undef, undef, undef, 0.2 * $attempt;
+      next;
+    }
+
     if (my $err = $res->error) {
       if (!$res->code) {
         xrpc_error(502, 'UpstreamFailure', $err->{message} // 'Upstream service unreachable')
