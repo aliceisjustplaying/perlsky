@@ -28,11 +28,13 @@ use ATProto::PDS::ServiceProxy;
 
   sub get_account_by_handle {
     my ($self, $handle) = @_;
+    $self->{get_account_by_handle_calls}{$handle}++;
     return $self->{accounts_by_handle}{$handle};
   }
 
   sub get_account_by_did {
     my ($self, $did) = @_;
+    $self->{get_account_by_did_calls}{$did}++;
     return $self->{accounts_by_did}{$did};
   }
 
@@ -77,6 +79,7 @@ use ATProto::PDS::ServiceProxy;
 
   sub get_record {
     my ($self, $did, $collection, $rkey) = @_;
+    $self->{get_record_calls}{"$did|$collection|$rkey"}++;
     return $self->{records}{"$did|$collection|$rkey"};
   }
 }
@@ -146,6 +149,33 @@ is($resolved->[1]{rkey}, 'present-post', 'local post lookup returns the local re
 my $resolved_by_handle = $proxy->_resolve_local_post_uri($c, 'at://alice.test/app.bsky.feed.post/present-post');
 is($resolved_by_handle->[0]{did}, $did, 'handle-form local post lookup returns the local account');
 is($resolved_by_handle->[1]{rkey}, 'present-post', 'handle-form local post lookup returns the local record');
+
+my $cached_resolved_by_did = $proxy->_resolve_local_post_uri($c, "at://$did/app.bsky.feed.post/present-post");
+is($cached_resolved_by_did->[0]{did}, $did, 'repeat local post lookup reuses the cached account resolution');
+is($cached_resolved_by_did->[1]{rkey}, 'present-post', 'repeat local post lookup reuses the cached record resolution');
+is($store->{get_account_by_did_calls}{$did}, 1, 'repeat did-form local post lookup avoids another account lookup');
+is($store->{get_record_calls}{"$did|app.bsky.feed.post|present-post"}, 2, 'repeat did-form local post lookup avoids another record fetch');
+
+my $index_context = LocalTestContext->new($store);
+$index_context->stash(local_post_index => {
+  posts => {
+    "at://$did/app.bsky.feed.post/present-post" => $resolved,
+  },
+});
+my $indexed_resolved = $proxy->_resolve_local_post_uri($index_context, "at://$did/app.bsky.feed.post/present-post");
+is($indexed_resolved, $resolved, 'local post lookup can reuse the request local-post index');
+is($store->{get_record_calls}{"$did|app.bsky.feed.post|present-post"}, 2, 'indexed local post lookup avoids another record fetch');
+
+$store->{records}{"$did|app.bsky.actor.profile|self"} = {
+  collection => 'app.bsky.actor.profile',
+  rkey       => 'self',
+  cid        => 'bafyreiprofile',
+  value      => { displayName => 'Alice Example' },
+};
+my $profile_first = $proxy->_profile_record_value($c, $store->{accounts_by_did}{$did});
+my $profile_second = $proxy->_profile_record_value($c, $store->{accounts_by_did}{$did});
+is($profile_first, $profile_second, 'repeat profile lookup reuses the cached profile value');
+is($store->{get_record_calls}{"$did|app.bsky.actor.profile|self"}, 1, 'repeat profile lookup avoids another record fetch');
 
 eval { $proxy->_resolve_local_post_uri($c, "at://$did/app.bsky.feed.post/missing-post") };
 my $missing = $@;

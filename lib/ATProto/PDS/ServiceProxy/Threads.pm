@@ -237,6 +237,7 @@ sub _build_local_post_index ($self, $c) {
     @{ $c->store->get_accounts_by_dids([ sort keys %did_seen ]) };
   my $index = {
     replies => {},
+    posts   => {},
     stats   => {},
     viewer  => {},
   };
@@ -247,6 +248,7 @@ sub _build_local_post_index ($self, $c) {
     next unless ref($value) eq 'HASH';
 
     if (($row->{collection} // q()) eq 'app.bsky.feed.post') {
+      $index->{posts}{ $self->_post_uri($account, $row) } = [ $account, $row ];
       my $reply = $value->{reply};
       if (ref($reply) eq 'HASH') {
         my $parent_uri = $reply->{parent}{uri} // q();

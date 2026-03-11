@@ -50,8 +50,14 @@ sub _get_local_profile ($self, $c) {
 }
 
 sub _profile_record_value ($self, $c, $account) {
+  my $cache = $c->stash('service_proxy_profile_record_value_cache') || {};
+  return $cache->{ $account->{did} } if exists $cache->{ $account->{did} };
+
   my $profile = $c->store->get_record($account->{did}, 'app.bsky.actor.profile', 'self');
-  return (ref($profile) eq 'HASH' && ref($profile->{value}) eq 'HASH') ? $profile->{value} : {};
+  my $value = (ref($profile) eq 'HASH' && ref($profile->{value}) eq 'HASH') ? $profile->{value} : {};
+  $cache->{ $account->{did} } = $value;
+  $c->stash(service_proxy_profile_record_value_cache => $cache);
+  return $value;
 }
 
 sub _profile_view_basic ($self, $c, $account, $profile_value = undef) {
