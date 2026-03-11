@@ -124,7 +124,6 @@ sub register_misc_handlers ($registry, $app) {
       if ($account->{handle} // q()) && ($primary_aka ne 'at://' . $account->{handle});
     submit_plc_operation($c->app->settings, $account->{did}, $operation);
     my $did_doc = refresh_plc_did_doc($c->app->settings, $account->{did});
-    $c->store->update_account($account->{did}, did_doc => $did_doc);
     $account = $c->store->update_account($account->{did}, did_doc => $did_doc);
     _append_identity_event($c, $account);
     return {};

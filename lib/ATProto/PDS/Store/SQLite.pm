@@ -187,6 +187,19 @@ sub get_account_by_did ($self, $did) {
   ));
 }
 
+sub get_accounts_by_dids ($self, $dids) {
+  return [] unless $dids && @$dids;
+  my $placeholders = join(', ', ('?') x @$dids);
+  return [
+    map { $self->_row_to_account($_) }
+    @{ $self->dbh->selectall_arrayref(
+      "SELECT * FROM accounts WHERE did IN ($placeholders)",
+      { Slice => {} },
+      @$dids,
+    ) }
+  ];
+}
+
 sub get_account_by_id ($self, $account_id) {
   return $self->_row_to_account($self->dbh->selectrow_hashref(
     q{SELECT * FROM accounts WHERE account_id = ? OR id = ?},
@@ -1064,34 +1077,56 @@ sub list_invite_codes ($self, %args) {
   my $limit = $args{limit} // 100;
   $limit = 500 if $limit > 500;
   my $cursor = $args{cursor};
+  my $sort = $args{sort} // 'recent';
   my @bind;
-  my $sql = q{SELECT * FROM invite_codes};
-  if (defined $cursor && length $cursor) {
-    $sql .= q{ WHERE code > ?};
-    push @bind, $cursor;
-  }
-  if (($args{sort} // 'recent') eq 'usage') {
-    $sql .= defined($cursor) && length($cursor)
-      ? q{ ORDER BY use_count DESC, code ASC}
-      : q{ ORDER BY use_count DESC, code ASC};
+  my @where;
+  my $sql = q{
+    SELECT invite_codes.*, COUNT(invite_code_uses.code) AS use_count_consumed
+    FROM invite_codes
+    LEFT JOIN invite_code_uses ON invite_code_uses.code = invite_codes.code
+  };
+  if ($sort eq 'usage') {
+    if (defined $cursor && length $cursor) {
+      my ($cursor_use_count, $cursor_code) = _parse_usage_cursor($cursor);
+      push @where, q{(invite_codes.use_count < ? OR (invite_codes.use_count = ? AND invite_codes.code > ?))};
+      push @bind, $cursor_use_count, $cursor_use_count, $cursor_code;
+    }
+    $sql .= q{ WHERE } . join(q{ AND }, @where) if @where;
+    $sql .= q{ GROUP BY invite_codes.code ORDER BY invite_codes.use_count DESC, invite_codes.code ASC};
   } else {
-    $sql .= q{ ORDER BY created_at DESC, code DESC};
+    if (defined $cursor && length $cursor) {
+      push @where, q{invite_codes.code > ?};
+      push @bind, $cursor;
+    }
+    $sql .= q{ WHERE } . join(q{ AND }, @where) if @where;
+    $sql .= q{ GROUP BY invite_codes.code ORDER BY invite_codes.created_at DESC, invite_codes.code DESC};
   }
   $sql .= q{ LIMIT ?};
   push @bind, $limit + 1;
   my $rows = $self->dbh->selectall_arrayref($sql, { Slice => {} }, @bind);
-  my $page = _paginate($rows, $limit, 'code');
-  $page->{items} = [ map { $self->get_invite_code($_->{code}) } @{ $page->{items} } ];
+  my $page = _paginate(
+    $rows,
+    $limit,
+    $sort eq 'usage'
+      ? sub ($row) { _usage_cursor($row->{use_count}, $row->{code}) }
+      : 'code',
+  );
   return $page;
 }
 
 sub list_invite_codes_for_account ($self, $did) {
-  my $rows = $self->dbh->selectall_arrayref(
-    q{SELECT * FROM invite_codes WHERE for_account = ? ORDER BY created_at DESC, code DESC},
+  return $self->dbh->selectall_arrayref(
+    q{
+      SELECT invite_codes.*, COUNT(invite_code_uses.code) AS use_count_consumed
+      FROM invite_codes
+      LEFT JOIN invite_code_uses ON invite_code_uses.code = invite_codes.code
+      WHERE invite_codes.for_account = ?
+      GROUP BY invite_codes.code
+      ORDER BY invite_codes.created_at DESC, invite_codes.code DESC
+    },
     { Slice => {} },
     $did,
   );
-  return [ map { $self->get_invite_code($_->{code}) } @$rows ];
 }
 
 sub record_invite_code_use ($self, %args) {
@@ -2185,12 +2220,26 @@ sub _paginate ($rows, $limit, $cursor_key) {
   my $cursor;
   if (@items > $limit) {
     my $last = pop @items;
-    $cursor = $last->{$cursor_key};
+    $cursor = ref($cursor_key) eq 'CODE'
+      ? $cursor_key->($last)
+      : $last->{$cursor_key};
   }
   return {
     items  => \@items,
     cursor => $cursor,
   };
+}
+
+sub _usage_cursor ($use_count, $code) {
+  return join("\t", $use_count // 0, $code // q());
+}
+
+sub _parse_usage_cursor ($cursor) {
+  die 'invalid usage cursor' unless defined $cursor;
+  my ($use_count, $code) = split(/\t/, $cursor, 2);
+  die 'invalid usage cursor'
+    unless defined $use_count && $use_count =~ /\A\d+\z/ && defined $code;
+  return (0 + $use_count, $code);
 }
 
 sub _maybe_json ($value) {

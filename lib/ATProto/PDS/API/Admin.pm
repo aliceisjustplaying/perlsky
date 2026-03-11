@@ -28,11 +28,12 @@ sub register_admin_handlers ($registry, $app) {
   $registry->register('com.atproto.admin.getAccountInfos', sub ($c, $endpoint) {
     require_admin($c);
     my @dids = flatten_params($c->every_param('dids'));
+    my %accounts_by_did = map { $_->{did} => $_ } @{ $c->store->get_accounts_by_dids(\@dids) };
     return {
       infos => [
         map { account_view($_) }
         grep { defined }
-        map { $c->store->get_account_by_did($_) } @dids
+        map { $accounts_by_did{$_} } @dids
       ],
     };
   });
@@ -76,14 +77,14 @@ sub register_admin_handlers ($registry, $app) {
     );
     _sync_hide_label($c, $subject, $existing, $status);
     if (exists($subject->{did}) && !exists($subject->{uri}) && !exists($subject->{cid}) && exists($body->{deactivated})) {
-      $c->store->update_account(
+      my $account = $c->store->update_account(
         $subject->{did},
         deactivated_at => $body->{deactivated}{applied} ? time : undef,
       );
       $c->append_event(
         did     => $subject->{did},
         type    => 'account',
-        rev     => ($c->store->get_account_by_did($subject->{did})->{repo_rev} // undef),
+        rev     => ($account->{repo_rev} // undef),
         payload => {
           active => $body->{deactivated}{applied} ? JSON::PP::false : JSON::PP::true,
           ($body->{deactivated}{applied} ? (status => 'deactivated') : ()),
@@ -209,27 +210,13 @@ sub register_admin_handlers ($registry, $app) {
   $registry->register('com.atproto.admin.disableAccountInvites', sub ($c, $endpoint) {
     require_admin($c);
     my $body = $c->req->json || {};
-    my $account = $c->store->get_account_by_did($body->{account} // q());
-    xrpc_error(404, 'AccountNotFound', 'Account was not found') unless $account;
-    $c->store->update_account(
-      $account->{did},
-      invites_disabled => 1,
-      invite_note      => $body->{note},
-    );
-    return {};
+    return _set_account_invites($c, $body->{account}, 1, $body->{note});
   });
 
   $registry->register('com.atproto.admin.enableAccountInvites', sub ($c, $endpoint) {
     require_admin($c);
     my $body = $c->req->json || {};
-    my $account = $c->store->get_account_by_did($body->{account} // q());
-    xrpc_error(404, 'AccountNotFound', 'Account was not found') unless $account;
-    $c->store->update_account(
-      $account->{did},
-      invites_disabled => 0,
-      invite_note      => $body->{note},
-    );
-    return {};
+    return _set_account_invites($c, $body->{account}, 0, $body->{note});
   });
 
   $registry->register('com.atproto.admin.updateAccountSigningKey', sub ($c, $endpoint) {
@@ -345,6 +332,17 @@ sub _label_uri_and_cid ($subject) {
     return ('at://' . $subject->{did}, $subject->{cid});
   }
   return ('at://' . ($subject->{did} // q()), undef);
+}
+
+sub _set_account_invites ($c, $identifier, $disabled, $note) {
+  my $account = $c->store->get_account_by_did($identifier // q());
+  xrpc_error(404, 'AccountNotFound', 'Account was not found') unless $account;
+  $c->store->update_account(
+    $account->{did},
+    invites_disabled => $disabled ? 1 : 0,
+    invite_note      => $note,
+  );
+  return {};
 }
 
 1;
