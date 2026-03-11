@@ -1746,12 +1746,28 @@ sub set_repo_head ($self, %args) {
     $now,
     $did,
   );
-  return $self->get_repo_head($did);
+  return {
+    did        => $did,
+    commit_cid => $args{commit_cid},
+    rev        => $args{rev},
+    root_cid   => $args{root_cid},
+    indexed_at => $now,
+  };
 }
 
 sub get_repo_head ($self, $did) {
   return $self->dbh->selectrow_hashref(
-    q{SELECT * FROM repo_heads WHERE did = ?},
+    q{
+      SELECT
+        accounts.did,
+        accounts.repo_commit_cid AS commit_cid,
+        accounts.repo_rev AS rev,
+        accounts.repo_root_cid AS root_cid,
+        repo_heads.indexed_at
+      FROM accounts
+      LEFT JOIN repo_heads ON repo_heads.did = accounts.did
+      WHERE accounts.did = ? AND accounts.repo_commit_cid IS NOT NULL
+    },
     undef,
     $did,
   );

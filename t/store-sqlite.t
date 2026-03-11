@@ -105,6 +105,13 @@ $store->set_repo_head(
 );
 is($store->get_repo_head($account->{did})->{rev}, '3k6h2w3px2', 'repo head metadata is stored');
 
+$store->dbh->do(q{DELETE FROM repo_heads WHERE did = ?}, undef, $account->{did});
+is(
+  $store->get_repo_head($account->{did})->{commit_cid},
+  'bafycommit',
+  'repo head falls back to account metadata when repo_heads row is missing',
+);
+
 $store->revoke_session('sess-1', revoked_at => 123);
 is($store->get_session('sess-1')->{revoked_at}, 123, 'sessions can be revoked');
 
