@@ -40,6 +40,7 @@ const ignoredConsole = [
   /events\.bsky\.app\/.*ERR_BLOCKED_BY_CLIENT/i,
   /slider-vertical/i,
   /Password field is not contained in a form/i,
+  /Failed to load resource: the server responded with a status of 400 \(\)/i,
 ];
 
 const ignoredRequestFailure = [
@@ -56,6 +57,7 @@ const ignoredRequestFailure = [
 
 const ignoredHttpFailure = [
   { url: /c\.1password\.com\/richicons/i, status: 404 },
+  { url: /\/xrpc\/app\.bsky\.graph\.getList\?/, status: 400 },
 ];
 
 const browserCandidates = async () => {
@@ -330,6 +332,38 @@ const listOwnRecords = async (account, collection, limit = 100) => {
 const listOwnPosts = async (account, limit = 100) =>
   listOwnRecords(account, 'app.bsky.feed.post', limit);
 
+const deleteOwnRecord = async (account, collection, record) => {
+  const rkey = recordRkey(record);
+  if (!rkey) {
+    throw new Error(`unable to determine rkey for ${collection} on ${account.handle}`);
+  }
+  const result = await xrpcJson('com.atproto.repo.deleteRecord', {
+    method: 'POST',
+    token: account.accessJwt,
+    body: {
+      repo: account.did,
+      collection,
+      rkey,
+    },
+  });
+  if (!result.ok) {
+    throw new Error(
+      `deleteRecord failed for ${account.handle} ${collection} ${rkey}: ${result.status} ${result.text}`,
+    );
+  }
+  return { rkey };
+};
+
+const purgeOwnRecords = async (account, collection, predicate, limit = 100) => {
+  const records = await listOwnRecords(account, collection, limit);
+  const doomed = records.filter(predicate);
+  for (const record of doomed) {
+    await deleteOwnRecord(account, collection, record);
+    await sleep(250);
+  }
+  return doomed.length;
+};
+
 const waitForOwnRecord = async (account, collection, predicate, timeoutMs = 60000) => {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
@@ -359,6 +393,39 @@ const waitForFollowRecord = async (account, subjectDid, timeoutMs = 60000) =>
     (record) => record?.value?.subject === subjectDid,
     timeoutMs,
   );
+
+const waitForNoOwnRecord = async (account, collection, predicate, timeoutMs = 60000) => {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const records = await listOwnRecords(account, collection);
+    if (!records.find(predicate)) {
+      return true;
+    }
+    await sleep(2000);
+  }
+  throw new Error(`record still present for ${account.handle} in ${collection}`);
+};
+
+const waitForOwnListRecord = async (account, name, timeoutMs = 60000) =>
+  waitForOwnRecord(
+    account,
+    'app.bsky.graph.list',
+    (record) => record?.value?.name === name,
+    timeoutMs,
+  );
+
+const waitForOwnListItemRecord = async (account, listUri, subjectDid, timeoutMs = 60000) =>
+  waitForOwnRecord(
+    account,
+    'app.bsky.graph.listitem',
+    (record) => record?.value?.list === listUri && record?.value?.subject === subjectDid,
+    timeoutMs,
+  );
+
+const recordRkey = (recordOrUri) => {
+  const uri = typeof recordOrUri === 'string' ? recordOrUri : recordOrUri?.uri;
+  return uri?.split('/').pop();
+};
 
 const createSession = async (handle, password) => {
   const result = await xrpcJson('com.atproto.server.createSession', {
@@ -415,8 +482,53 @@ const accountFromConfig = (entry) => ({
   shortHandle: entry.handle.replace(/^@/, ''),
 });
 
-const primary = accountFromConfig(config.primary);
+const runToken = summary.startedAt.replace(/\D/g, '').slice(0, 14);
+const primary = accountFromConfig({
+  ...config.primary,
+  listName: config.primary.listName || `Smoke List ${runToken}`,
+  listDescription: config.primary.listDescription || `smoke list description ${runToken}`,
+  listUpdatedName: config.primary.listUpdatedName || `Updated Smoke List ${runToken}`,
+  listUpdatedDescription:
+    config.primary.listUpdatedDescription || `updated smoke list description ${runToken}`,
+});
 const secondary = accountFromConfig(config.secondary);
+
+const stalePostPrefixesFor = (account) => {
+  if (/secondary/i.test(account.postText)) {
+    return ['perlsky browser secondary '];
+  }
+  return ['perlsky browser smoke '];
+};
+
+const staleListPrefixes = ['Smoke List ', 'Updated Smoke List '];
+
+const cleanupStaleSmokeArtifacts = async (account) => {
+  const postPrefixes = stalePostPrefixesFor(account);
+  const deletedPosts = await purgeOwnRecords(
+    account,
+    'app.bsky.feed.post',
+    (record) => postPrefixes.some((prefix) => (record?.value?.text || '').startsWith(prefix)),
+  );
+  const lists = await listOwnRecords(account, 'app.bsky.graph.list', 100);
+  const doomedLists = lists.filter((record) =>
+    staleListPrefixes.some((prefix) => (record?.value?.name || '').startsWith(prefix)),
+  );
+  const doomedListUris = new Set(doomedLists.map((record) => record.uri));
+  const deletedListItems = doomedListUris.size
+    ? await purgeOwnRecords(
+        account,
+        'app.bsky.graph.listitem',
+        (record) => doomedListUris.has(record?.value?.list),
+      )
+    : 0;
+  let deletedLists = 0;
+  for (const record of doomedLists) {
+    await deleteOwnRecord(account, 'app.bsky.graph.list', record);
+    deletedLists += 1;
+    await sleep(250);
+  }
+  return { deletedPosts, deletedListItems, deletedLists };
+};
 
 const pageFor = (name) => (name === 'primary' ? primaryPage : secondaryPage);
 
@@ -1004,6 +1116,211 @@ const maybeUnfollow = async (page) => {
   return { note: 'unfollow attempted' };
 };
 
+const openLists = async (page) => {
+  await page.goto(`${appBaseUrl}/lists`, {
+    waitUntil: 'domcontentloaded',
+    timeout: 60000,
+  });
+  await wait(page, 3000);
+  const newList = page.getByTestId('newUserListBtn').first();
+  if (await newList.count()) {
+    await newList.waitFor({ state: 'visible', timeout: 15000 });
+  }
+};
+
+const openListPage = async (page, handle, listRkey) => {
+  await page.goto(`${appBaseUrl}/profile/${encodeURIComponent(handle)}/lists/${encodeURIComponent(listRkey)}`, {
+    waitUntil: 'domcontentloaded',
+    timeout: 60000,
+  });
+  await wait(page, 3000);
+};
+
+const waitForListTitle = async (page, title, timeout = 20000) => {
+  await page.getByText(title, { exact: true }).first().waitFor({ state: 'visible', timeout });
+};
+
+const fillListEditor = async (page, name, description) => {
+  const dialog = page.locator('[role="dialog"]').last();
+  await dialog.waitFor({ state: 'visible', timeout: 15000 });
+  await dialog.getByTestId('editListNameInput').fill(name);
+  await dialog.getByTestId('editListDescriptionInput').fill(description);
+  return dialog;
+};
+
+const saveListEditor = async (page) => {
+  const dialog = page.locator('[role="dialog"]').last();
+  const save = dialog.getByTestId('editProfileSaveBtn').last();
+  await save.waitFor({ state: 'visible', timeout: 15000 });
+  await page.waitForFunction(() => {
+    const btn = document.querySelector('[data-testid="editProfileSaveBtn"]');
+    return !!btn && !btn.hasAttribute('disabled') && btn.getAttribute('aria-disabled') !== 'true';
+  }, undefined, { timeout: 15000 });
+  await save.click({ noWaitAfter: true });
+  await dialog.waitFor({ state: 'hidden', timeout: 20000 });
+  await wait(page, 3000);
+};
+
+const createList = async (page, name, description) => {
+  await openLists(page);
+  await page.getByTestId('newUserListBtn').first().click({ noWaitAfter: true });
+  await wait(page, 1000);
+  await fillListEditor(page, name, description);
+  await saveListEditor(page);
+  await wait(page, 3000);
+  return { url: page.url() };
+};
+
+const openCurrentListOptions = async (page) => {
+  const btn = page.getByTestId('moreOptionsBtn').first();
+  await btn.waitFor({ state: 'visible', timeout: 15000 });
+  await btn.click({ noWaitAfter: true });
+  const menu = page.locator('[role="menu"]').last();
+  await menu.waitFor({ state: 'visible', timeout: 10000 });
+  return menu;
+};
+
+const editCurrentList = async (page, name, description) => {
+  await openCurrentListOptions(page);
+  await page.getByRole('menuitem', { name: /edit list details/i }).click({ noWaitAfter: true });
+  await wait(page, 800);
+  await fillListEditor(page, name, description);
+  await saveListEditor(page);
+  await wait(page, 2000);
+  return { listName: name, listDescription: description };
+};
+
+const deleteCurrentList = async (page) => {
+  const beforeUrl = page.url();
+  await openCurrentListOptions(page);
+  await page.getByRole('menuitem', { name: /delete list/i }).click({ noWaitAfter: true });
+  const dialog = page.locator('[role="dialog"]').last();
+  await dialog.waitFor({ state: 'visible', timeout: 15000 });
+  const confirm = dialog.getByRole('button', { name: /^delete$/i }).last();
+  await confirm.click({ noWaitAfter: true });
+  await dialog.waitFor({ state: 'hidden', timeout: 20000 });
+  await page.waitForFunction(
+    (url) => window.location.href !== url && !/\/lists\/[^/?#]+/.test(window.location.pathname),
+    beforeUrl,
+    { timeout: 20000 },
+  );
+  await wait(page, 3000);
+  return { url: page.url() };
+};
+
+const openListPeopleTab = async (page) => {
+  await page.getByRole('tab', { name: /^People$/i }).click({ noWaitAfter: true });
+  await wait(page, 1500);
+};
+
+const openAddPeopleToList = async (page) => {
+  await openListPeopleTab(page);
+  const add = page.getByRole('button', { name: /start adding people|add people/i }).last();
+  await add.waitFor({ state: 'visible', timeout: 15000 });
+  await add.click({ noWaitAfter: true });
+  await page.getByText(/^Add people to list$/i).last().waitFor({ state: 'visible', timeout: 15000 });
+  await wait(page, 1000);
+};
+
+const closeAddPeopleToList = async (page) => {
+  const close = page.getByRole('button', { name: /^close$/i }).last();
+  if (await close.count()) {
+    await close.click({ noWaitAfter: true }).catch(() => undefined);
+  } else {
+    await page.keyboard.press('Escape').catch(() => undefined);
+  }
+  await wait(page, 1000);
+};
+
+const searchAddPeopleList = async (page, handle) => {
+  const search = page.getByPlaceholder('Search').last();
+  await search.fill(handle.replace(/^@/, ''));
+  await wait(page, 2500);
+  await page.getByText(`@${handle.replace(/^@/, '')}`).last().waitFor({ state: 'visible', timeout: 15000 });
+};
+
+const addUserToCurrentList = async (page, handle) => {
+  await openAddPeopleToList(page);
+  await searchAddPeopleList(page, handle);
+  const add = page.getByRole('button', { name: /add user to list/i }).last();
+  await add.click({ noWaitAfter: true });
+  await wait(page, 2000);
+  const remove = page.getByRole('button', { name: /remove user from list/i }).last();
+  await remove.waitFor({ state: 'visible', timeout: 15000 });
+  await closeAddPeopleToList(page);
+  await page.getByText(`@${handle.replace(/^@/, '')}`).first().waitFor({ state: 'visible', timeout: 15000 });
+  return { handle };
+};
+
+const removeUserFromCurrentList = async (page, handle) => {
+  await openListPeopleTab(page);
+  await page.getByText(`@${handle.replace(/^@/, '')}`).first().waitFor({ state: 'visible', timeout: 15000 });
+  const edit = page.getByTestId(`user-${handle}-editBtn`).first();
+  await edit.waitFor({ state: 'visible', timeout: 15000 });
+  await edit.click({ noWaitAfter: true });
+  await wait(page, 1000);
+  let remove = page.getByTestId(`user-${handle}-addBtn`).first();
+  if (!(await remove.count())) {
+    remove = page.getByRole('button', { name: /^remove$/i }).last();
+  }
+  await remove.click({ noWaitAfter: true });
+  await wait(page, 2000);
+  const done = page.getByRole('button', { name: /^done$/i }).last();
+  if (await done.count()) {
+    await done.click({ noWaitAfter: true });
+    await wait(page, 1000);
+  }
+  return { handle };
+};
+
+const openSettingRoute = async (page, route) => {
+  await page.goto(`${appBaseUrl}${route}`, {
+    waitUntil: 'domcontentloaded',
+    timeout: 60000,
+  });
+  await wait(page, 3000);
+};
+
+const roleSetting = (page, role, name) => page.getByRole(role, { name }).first();
+
+const settingState = async (page, role, name) => {
+  const locator = roleSetting(page, role, name);
+  await locator.waitFor({ state: 'visible', timeout: 15000 });
+  return (await locator.getAttribute('aria-checked')) === 'true';
+};
+
+const setCheckboxSetting = async (page, route, name, desired) => {
+  await openSettingRoute(page, route);
+  const locator = roleSetting(page, 'checkbox', name);
+  const current = await settingState(page, 'checkbox', name);
+  if (current !== desired) {
+    await locator.click({ noWaitAfter: true });
+    await wait(page, 2000);
+  }
+  await openSettingRoute(page, route);
+  const verified = await settingState(page, 'checkbox', name);
+  if (verified !== desired) {
+    throw new Error(`checkbox setting ${name} on ${route} expected ${desired} but saw ${verified}`);
+  }
+  return { desired, verified };
+};
+
+const setRadioSetting = async (page, route, name) => {
+  await openSettingRoute(page, route);
+  const locator = roleSetting(page, 'radio', name);
+  const current = await settingState(page, 'radio', name);
+  if (!current) {
+    await locator.click({ noWaitAfter: true });
+    await wait(page, 2000);
+  }
+  await openSettingRoute(page, route);
+  const verified = await settingState(page, 'radio', name);
+  if (!verified) {
+    throw new Error(`radio setting ${name} on ${route} did not persist`);
+  }
+  return { selected: name };
+};
+
 const openNotifications = async (page) => {
   await page.goto(`${appBaseUrl}/notifications`, {
     waitUntil: 'domcontentloaded',
@@ -1113,6 +1430,9 @@ try {
   secondary.accessJwt = secondary.session.accessJwt;
   secondary.did = secondary.session.did;
 
+  await step('primary-preclean-stale-artifacts', async () => cleanupStaleSmokeArtifacts(primary));
+  await step('secondary-preclean-stale-artifacts', async () => cleanupStaleSmokeArtifacts(secondary));
+
   await step('primary-compose-root-post', () => composePost(primaryPage, primary.postText), {
     pageNames: ['primary'],
   });
@@ -1173,6 +1493,83 @@ try {
   await step('secondary-local-profile-after-edit', () => verifyLocalProfileAfterEdit(secondary));
 
   await step('secondary-public-profile-after-edit', () => verifyPublicProfileAfterEdit(secondary));
+
+  await step('primary-create-list', async () => {
+    return createList(primaryPage, primary.listName, primary.listDescription);
+  }, { pageNames: ['primary'] });
+
+  await step('primary-list-record', async () => {
+    primary.listRecord = await waitForOwnListRecord(primary, primary.listName);
+    primary.listRkey = recordRkey(primary.listRecord);
+    if (primary.listRecord.value?.description !== primary.listDescription) {
+      throw new Error('list record description did not match after create');
+    }
+    return {
+      uri: primary.listRecord.uri,
+      rkey: primary.listRkey,
+      description: primary.listRecord.value?.description,
+    };
+  });
+
+  await step('primary-edit-list', async () => {
+    await openListPage(primaryPage, primary.handle, primary.listRkey);
+    return editCurrentList(primaryPage, primary.listUpdatedName, primary.listUpdatedDescription);
+  }, { pageNames: ['primary'] });
+
+  await step('primary-list-record-after-edit', async () => {
+    primary.listRecord = await waitForOwnListRecord(primary, primary.listUpdatedName);
+    primary.listRkey = recordRkey(primary.listRecord);
+    if (primary.listRecord.value?.description !== primary.listUpdatedDescription) {
+      throw new Error('list record description did not match after edit');
+    }
+    return {
+      uri: primary.listRecord.uri,
+      rkey: primary.listRkey,
+      description: primary.listRecord.value?.description,
+    };
+  });
+
+  await step('primary-list-add-secondary-member', async () => {
+    await openListPage(primaryPage, primary.handle, primary.listRkey);
+    return addUserToCurrentList(primaryPage, secondary.handle);
+  }, { pageNames: ['primary'] });
+
+  await step('primary-list-member-record', async () => {
+    primary.listItemRecord = await waitForOwnListItemRecord(primary, primary.listRecord.uri, secondary.did);
+    return {
+      uri: primary.listItemRecord.uri,
+      rkey: recordRkey(primary.listItemRecord),
+    };
+  });
+
+  await step('primary-list-remove-secondary-member', async () => {
+    await openListPage(primaryPage, primary.handle, primary.listRkey);
+    return removeUserFromCurrentList(primaryPage, secondary.handle);
+  }, { pageNames: ['primary'] });
+
+  await step('primary-list-member-record-removed', async () => {
+    await waitForNoOwnRecord(
+      primary,
+      'app.bsky.graph.listitem',
+      (record) =>
+        record?.value?.list === primary.listRecord.uri && record?.value?.subject === secondary.did,
+    );
+    return { listUri: primary.listRecord.uri, subject: secondary.did };
+  });
+
+  await step('primary-delete-list', async () => {
+    await openListPage(primaryPage, primary.handle, primary.listRkey);
+    return deleteCurrentList(primaryPage);
+  }, { pageNames: ['primary'] });
+
+  await step('primary-list-record-removed', async () => {
+    await waitForNoOwnRecord(
+      primary,
+      'app.bsky.graph.list',
+      (record) => recordRkey(record) === primary.listRkey,
+    );
+    return { rkey: primary.listRkey };
+  });
 
   const primaryWaveStarted = Date.now() - 1000;
   await step('primary-open-secondary-profile', async () => {
@@ -1318,6 +1715,62 @@ try {
   await step('secondary-unblock-primary', async () => {
     return unblockProfile(secondaryPage);
   }, { pageNames: ['secondary'] });
+
+  await step('primary-settings-likes-people-i-follow', async () => {
+    return setRadioSetting(primaryPage, '/settings/notifications/likes', 'People I follow');
+  }, { pageNames: ['primary'] });
+
+  await step('primary-settings-likes-everyone', async () => {
+    return setRadioSetting(primaryPage, '/settings/notifications/likes', 'Everyone');
+  }, { pageNames: ['primary'] });
+
+  await step('primary-settings-threads-oldest', async () => {
+    return setRadioSetting(primaryPage, '/settings/threads', 'Oldest replies first');
+  }, { pageNames: ['primary'] });
+
+  await step('primary-settings-threads-tree-view-on', async () => {
+    return setCheckboxSetting(primaryPage, '/settings/threads', 'Tree view', true);
+  }, { pageNames: ['primary'] });
+
+  await step('primary-settings-threads-tree-view-off', async () => {
+    return setCheckboxSetting(primaryPage, '/settings/threads', 'Tree view', false);
+  }, { pageNames: ['primary'] });
+
+  await step('primary-settings-threads-top-replies', async () => {
+    return setRadioSetting(primaryPage, '/settings/threads', 'Top replies first');
+  }, { pageNames: ['primary'] });
+
+  await step('primary-settings-following-feed-hide-replies', async () => {
+    return setCheckboxSetting(primaryPage, '/settings/following-feed', 'Show replies', false);
+  }, { pageNames: ['primary'] });
+
+  await step('primary-settings-following-feed-show-replies', async () => {
+    return setCheckboxSetting(primaryPage, '/settings/following-feed', 'Show replies', true);
+  }, { pageNames: ['primary'] });
+
+  await step('primary-settings-autoplay-off', async () => {
+    return setCheckboxSetting(primaryPage, '/settings/content-and-media', 'Autoplay videos and GIFs', false);
+  }, { pageNames: ['primary'] });
+
+  await step('primary-settings-autoplay-on', async () => {
+    return setCheckboxSetting(primaryPage, '/settings/content-and-media', 'Autoplay videos and GIFs', true);
+  }, { pageNames: ['primary'] });
+
+  await step('primary-settings-accessibility-require-alt-on', async () => {
+    return setCheckboxSetting(primaryPage, '/settings/accessibility', 'Require alt text before posting', true);
+  }, { pageNames: ['primary'] });
+
+  await step('primary-settings-accessibility-require-alt-off', async () => {
+    return setCheckboxSetting(primaryPage, '/settings/accessibility', 'Require alt text before posting', false);
+  }, { pageNames: ['primary'] });
+
+  await step('primary-settings-accessibility-large-badges-on', async () => {
+    return setCheckboxSetting(primaryPage, '/settings/accessibility', 'Display larger alt text badges', true);
+  }, { pageNames: ['primary'] });
+
+  await step('primary-settings-accessibility-large-badges-off', async () => {
+    return setCheckboxSetting(primaryPage, '/settings/accessibility', 'Display larger alt text badges', false);
+  }, { pageNames: ['primary'] });
 
   await step('primary-cleanup-unlike-secondary-post', async () => {
     await gotoProfile(primaryPage, secondary.handle);

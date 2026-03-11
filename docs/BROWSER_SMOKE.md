@@ -38,11 +38,13 @@ PERL5LIB=local/lib/perl5 perl script/perlsky-browser-smoke run-dual \
 
 The current reusable dual-account smoke exercises these `bsky.app` flows:
 
+- pre-run cleanup of stale smoke-created posts and lists for the reusable pair
 - login and age-gate completion
 - root post creation
 - image-post creation and record verification
 - profile edit plus avatar upload
 - local and public profile verification after edit
+- list lifecycle: create, edit, add member, remove member, delete
 - follow and unfollow between the two smoke accounts
 - like, bookmark, repost, quote, and reply
 - saved-posts page verification
@@ -51,6 +53,8 @@ The current reusable dual-account smoke exercises these `bsky.app` flows:
 - mute and unmute
 - block and unblock
 - report-post draft flow without submitting the external report
+- settings-depth verification for:
+  `notifications/likes`, `threads`, `following-feed`, `content-and-media`, and `accessibility`
 - cleanup of created posts plus undo of follow/like/bookmark/repost state
 
 Two notification checks are intentionally different:
@@ -81,6 +85,7 @@ It also fails the test run if the browser harness finishes with `summary.ok = fa
 ## Notes
 
 - The reusable dual-account path is intentionally conservative about account creation. Fresh actors are only created through explicit `bootstrap-*` commands.
+- Before each dual-account run, the harness deletes old smoke-created posts and smoke-list records for the reusable pair so those actors do not accumulate endless test artifacts.
 - The report flow stops at the draft/submit screen on purpose so smoke runs do not send moderation reports to external services.
 - The current broad smoke automates only dedicated smoke accounts. It does not log into `@alice.mosphere.at`.
 - The smoke accounts can still visit and interact with `@alice.mosphere.at` as a public target, but the harness does not authenticate as that account.
