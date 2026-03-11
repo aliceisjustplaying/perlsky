@@ -25,6 +25,48 @@ sub new ($class, %args) {
     [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10],
   );
   $self->_register_counter(
+    'perlsky_service_proxy_requests_total',
+    'Total service-proxy requests handled locally or upstream by NSID, source, and status.',
+    [qw(nsid source status)],
+  );
+  $self->_register_histogram(
+    'perlsky_service_proxy_request_duration_seconds',
+    'Service-proxy request duration in seconds.',
+    [qw(nsid source status)],
+    [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10],
+  );
+  $self->_register_counter(
+    'perlsky_service_proxy_local_post_index_cache_access_total',
+    'Total local post-index cache accesses by result.',
+    [qw(result)],
+  );
+  $self->_register_histogram(
+    'perlsky_service_proxy_local_post_index_rebuild_duration_seconds',
+    'Local post-index rebuild duration in seconds.',
+    [],
+    [0.0005, 0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1],
+  );
+  $self->_register_gauge(
+    'perlsky_service_proxy_local_post_index_entries',
+    'Current process-wide local post-index entry counts by kind.',
+    [qw(kind)],
+  );
+  $self->_register_counter(
+    'perlsky_service_proxy_local_post_resolution_total',
+    'Total local post URI resolutions by source.',
+    [qw(source)],
+  );
+  $self->_register_counter(
+    'perlsky_service_proxy_profile_record_cache_total',
+    'Total local profile record cache accesses by result.',
+    [qw(result)],
+  );
+  $self->_register_counter(
+    'perlsky_repo_resolution_total',
+    'Total repo/account resolution attempts by resolver path and source.',
+    [qw(resolver source)],
+  );
+  $self->_register_counter(
     'perlsky_subscription_connections_total',
     'Total websocket subscription connections opened.',
     [qw(nsid)],

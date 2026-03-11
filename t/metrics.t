@@ -5,6 +5,7 @@ use Config ();
 use File::Spec;
 use File::Temp qw(tempdir);
 use FindBin qw($Bin);
+use Mojo::Util qw(url_escape);
 use Test::More;
 
 BEGIN {
@@ -45,12 +46,58 @@ $t->post_ok('/xrpc/com.atproto.server.createAccount' => json => {
   password => 'hunter22',
 })->status_is(200);
 
-my $access = $t->tx->res->json->{accessJwt};
+my $created = $t->tx->res->json;
+my $access = $created->{accessJwt};
+my $did = $created->{did};
 
 $t->post_ok('/xrpc/com.atproto.repo.uploadBlob' => {
   Authorization => "Bearer $access",
   'Content-Type' => 'text/plain',
 } => 'hello')->status_is(200);
+
+$t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
+  Authorization => "Bearer $access",
+} => json => {
+  repo       => $did,
+  collection => 'app.bsky.feed.post',
+  rkey       => 'metrics-root',
+  record     => {
+    '$type'   => 'app.bsky.feed.post',
+    text      => 'metrics root',
+    createdAt => '2026-03-11T19:00:00Z',
+  },
+})->status_is(200);
+
+my $root_post = $t->tx->res->json;
+
+$t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
+  Authorization => "Bearer $access",
+} => json => {
+  repo       => $did,
+  collection => 'app.bsky.feed.post',
+  rkey       => 'metrics-reply',
+  record     => {
+    '$type'   => 'app.bsky.feed.post',
+    text      => 'metrics reply',
+    reply     => {
+      root   => { uri => $root_post->{uri}, cid => $root_post->{cid} },
+      parent => { uri => $root_post->{uri}, cid => $root_post->{cid} },
+    },
+    createdAt => '2026-03-11T19:01:00Z',
+  },
+})->status_is(200);
+
+$t->get_ok("/xrpc/app.bsky.actor.getProfile?actor=$did" => {
+  Authorization => "Bearer $access",
+})->status_is(200);
+
+$t->get_ok("/xrpc/app.bsky.feed.getAuthorFeed?actor=$did&limit=10" => {
+  Authorization => "Bearer $access",
+})->status_is(200);
+
+$t->get_ok('/xrpc/app.bsky.feed.getPostThread?uri=' . url_escape('at://' . $did . '/app.bsky.feed.post/metrics-reply') => {
+  Authorization => "Bearer $access",
+})->status_is(200);
 
 $t->websocket_ok('/xrpc/com.atproto.sync.subscribeRepos')
   ->finish_ok;
@@ -95,6 +142,46 @@ like(
   $metrics,
   qr/perlsky_store_operations_total\{operation="append_event",status="ok"\} [1-9]\d*\b/,
   'store operation counters are exported',
+);
+like(
+  $metrics,
+  qr/perlsky_service_proxy_requests_total\{nsid="app\.bsky\.actor\.getProfile",source="local",status="200"\} 1\b/,
+  'local service-proxy request counters are exported',
+);
+like(
+  $metrics,
+  qr/perlsky_service_proxy_request_duration_seconds_count\{nsid="app\.bsky\.feed\.getPostThread",source="local",status="200"\} 1\b/,
+  'local service-proxy latency histograms are exported',
+);
+like(
+  $metrics,
+  qr/perlsky_service_proxy_local_post_index_cache_access_total\{result="rebuild"\} [1-9]\d*\b/,
+  'local post-index rebuild counters are exported',
+);
+like(
+  $metrics,
+  qr/perlsky_service_proxy_local_post_index_cache_access_total\{result="process_cache_hit"\} [1-9]\d*\b/,
+  'local post-index process-cache hits are exported',
+);
+like(
+  $metrics,
+  qr/perlsky_service_proxy_local_post_index_entries\{kind="posts"\} 2\b/,
+  'local post-index entry gauges are exported',
+);
+like(
+  $metrics,
+  qr/perlsky_service_proxy_local_post_resolution_total\{source="index_cache"\} [1-9]\d*\b/,
+  'local post-resolution source counters are exported',
+);
+like(
+  $metrics,
+  qr/perlsky_service_proxy_profile_record_cache_total\{result="miss"\} [1-9]\d*\b/,
+  'profile cache metrics are exported',
+);
+like(
+  $metrics,
+  qr/perlsky_repo_resolution_total\{resolver="did_account",source="exact"\} [1-9]\d*\b/,
+  'repo-resolution cache metrics are exported',
 );
 like(
   $metrics,

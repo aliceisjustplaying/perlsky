@@ -56,10 +56,14 @@ sub resolve_did_account ($c, $did) {
   my $target = lc($did // q());
   $target =~ s/%3a/:/ig;
   my $cache = $c->can('stash') ? ($c->stash('resolve_did_account_cache') || {}) : {};
-  return $cache->{$target} if exists $cache->{$target};
+  if (exists $cache->{$target}) {
+    _observe_repo_resolution($c, 'did_account', 'request_cache');
+    return $cache->{$target};
+  }
 
   my $account = $c->store->get_account_by_did($did);
   if ($account) {
+    _observe_repo_resolution($c, 'did_account', 'exact');
     $cache->{$target} = $account if $c->can('stash');
     $c->stash(resolve_did_account_cache => $cache) if $c->can('stash');
     return $account;
@@ -69,6 +73,7 @@ sub resolve_did_account ($c, $did) {
     my $candidate = lc($row->{did} // q());
     $candidate =~ s/%3a/:/ig;
     if ($candidate eq $target) {
+      _observe_repo_resolution($c, 'did_account', 'list_scan');
       if ($c->can('stash')) {
         $cache->{$target} = $row;
         $c->stash(resolve_did_account_cache => $cache);
@@ -80,6 +85,7 @@ sub resolve_did_account ($c, $did) {
     $cache->{$target} = undef;
     $c->stash(resolve_did_account_cache => $cache);
   }
+  _observe_repo_resolution($c, 'did_account', 'miss');
   return undef;
 }
 
@@ -87,17 +93,25 @@ sub resolve_repo ($c, $repo) {
   return undef unless defined $repo && length $repo;
   my $cache = $c->can('stash') ? ($c->stash('resolve_repo_cache') || {}) : {};
   my $cache_key = lc($repo);
-  return $cache->{$cache_key} if exists $cache->{$cache_key};
+  if (exists $cache->{$cache_key}) {
+    _observe_repo_resolution($c, 'repo', 'request_cache');
+    return $cache->{$cache_key};
+  }
 
   if ($repo !~ /\Adid:/i) {
     my $normalized = normalize_handle($repo, $c->config_value('service_handle_domain', 'localhost'));
-    my $account = $c->store->get_account_by_handle($repo)
-      || (defined($normalized) ? $c->store->get_account_by_handle($normalized) : undef);
+    my $account = $c->store->get_account_by_handle($repo);
+    my $source = 'exact';
+    if (!$account && defined($normalized)) {
+      $account = $c->store->get_account_by_handle($normalized);
+      $source = 'normalized' if $account;
+    }
     if ($c->can('stash')) {
       $cache->{$cache_key} = $account;
       $cache->{ lc($normalized) } = $account if defined $normalized && length $normalized;
       $c->stash(resolve_repo_cache => $cache);
     }
+    _observe_repo_resolution($c, 'repo', $account ? $source : 'miss');
     return $account;
   }
   my $account = resolve_did_account($c, $repo);
@@ -105,7 +119,22 @@ sub resolve_repo ($c, $repo) {
     $cache->{$cache_key} = $account;
     $c->stash(resolve_repo_cache => $cache);
   }
+  _observe_repo_resolution($c, 'repo', $account ? 'did_account' : 'miss');
   return $account;
+}
+
+sub _observe_repo_resolution ($c, $resolver, $source) {
+  return unless $c && $c->can('app');
+  my $app = eval { $c->app } or return;
+  my $metrics = eval { $app->metrics } or return;
+  $metrics->increment_counter(
+    'perlsky_repo_resolution_total',
+    1,
+    {
+      resolver => $resolver,
+      source   => $source,
+    },
+  );
 }
 
 sub subscription_start_seq ($c, %args) {

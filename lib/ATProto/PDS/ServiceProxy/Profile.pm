@@ -51,8 +51,20 @@ sub _get_local_profile ($self, $c) {
 
 sub _profile_record_value ($self, $c, $account) {
   my $cache = $c->stash('service_proxy_profile_record_value_cache') || {};
-  return $cache->{ $account->{did} } if exists $cache->{ $account->{did} };
+  if (exists $cache->{ $account->{did} }) {
+    $c->app->metrics->increment_counter(
+      'perlsky_service_proxy_profile_record_cache_total',
+      1,
+      { result => 'hit' },
+    );
+    return $cache->{ $account->{did} };
+  }
 
+  $c->app->metrics->increment_counter(
+    'perlsky_service_proxy_profile_record_cache_total',
+    1,
+    { result => 'miss' },
+  );
   my $profile = $c->store->get_record($account->{did}, 'app.bsky.actor.profile', 'self');
   my $value = (ref($profile) eq 'HASH' && ref($profile->{value}) eq 'HASH') ? $profile->{value} : {};
   $cache->{ $account->{did} } = $value;

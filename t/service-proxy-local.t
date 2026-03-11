@@ -85,16 +85,38 @@ use ATProto::PDS::ServiceProxy;
 }
 
 {
+  package LocalTestMetrics;
+
+  sub increment_counter { return 1 }
+  sub observe_histogram { return 1 }
+  sub set_gauge         { return 1 }
+}
+
+{
+  package LocalTestApp;
+
+  sub metrics { return bless {}, 'LocalTestMetrics' }
+}
+
+{
   package LocalTestContext;
 
   sub new {
     my ($class, $store) = @_;
-    return bless { store => $store }, $class;
+    return bless {
+      store => $store,
+      app   => bless({}, 'LocalTestApp'),
+    }, $class;
   }
 
   sub store {
     my ($self) = @_;
     return $self->{store};
+  }
+
+  sub app {
+    my ($self) = @_;
+    return $self->{app};
   }
 
   sub config_value {

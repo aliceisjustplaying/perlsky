@@ -7,6 +7,7 @@ no warnings 'experimental::signatures';
 
 use Exporter 'import';
 use JSON::PP ();
+use Time::HiRes qw(time);
 
 use ATProto::PDS::API::Server qw(require_auth);
 use ATProto::PDS::API::Util qw(resolve_repo xrpc_error);
@@ -205,16 +206,58 @@ sub _post_counts_and_viewer ($self, $c, $post_uri, $viewer = undef) {
 
 sub _local_post_index ($self, $c) {
   my $index = $c->stash('local_post_index');
-  return $index if $index;
+  if ($index) {
+    $c->app->metrics->increment_counter(
+      'perlsky_service_proxy_local_post_index_cache_access_total',
+      1,
+      { result => 'request_cache_hit' },
+    );
+    return $index;
+  }
 
   my $event_seq = $c->store->latest_event_seq;
   my $cache = $self->local_post_index_cache;
   if ($cache && (($cache->{event_seq} // -1) == $event_seq)) {
+    $c->app->metrics->increment_counter(
+      'perlsky_service_proxy_local_post_index_cache_access_total',
+      1,
+      { result => 'process_cache_hit' },
+    );
     $c->stash(local_post_index => $cache->{index});
     return $cache->{index};
   }
 
+  my $started = time;
   $index = _build_local_post_index($self, $c);
+  $c->app->metrics->increment_counter(
+    'perlsky_service_proxy_local_post_index_cache_access_total',
+    1,
+    { result => 'rebuild' },
+  );
+  $c->app->metrics->observe_histogram(
+    'perlsky_service_proxy_local_post_index_rebuild_duration_seconds',
+    time - $started,
+  );
+  $c->app->metrics->set_gauge(
+    'perlsky_service_proxy_local_post_index_entries',
+    scalar(keys %{ $index->{posts} }),
+    { kind => 'posts' },
+  );
+  $c->app->metrics->set_gauge(
+    'perlsky_service_proxy_local_post_index_entries',
+    scalar(keys %{ $index->{replies} }),
+    { kind => 'reply_parents' },
+  );
+  $c->app->metrics->set_gauge(
+    'perlsky_service_proxy_local_post_index_entries',
+    scalar(keys %{ $index->{stats} }),
+    { kind => 'stats' },
+  );
+  $c->app->metrics->set_gauge(
+    'perlsky_service_proxy_local_post_index_entries',
+    scalar(keys %{ $index->{viewer} }),
+    { kind => 'viewer_subjects' },
+  );
   $self->local_post_index_cache({
     event_seq => $event_seq,
     index     => $index,

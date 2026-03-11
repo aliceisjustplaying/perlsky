@@ -22,23 +22,45 @@ our @EXPORT_OK = qw(
 sub _resolve_local_post_uri ($self, $c, $uri) {
   my $cache = $c->stash('service_proxy_local_post_uri_cache') || {};
   if (exists $cache->{$uri}) {
+    $c->app->metrics->increment_counter(
+      'perlsky_service_proxy_local_post_resolution_total',
+      1,
+      { source => 'request_cache' },
+    );
     return $cache->{$uri};
   }
 
   my ($repo, $collection, $rkey) = parse_at_uri($uri);
   return undef unless defined $repo && defined $collection && defined $rkey;
-  my $account = resolve_repo($c, $repo) or return undef;
+  my $account = resolve_repo($c, $repo) or do {
+    $c->app->metrics->increment_counter(
+      'perlsky_service_proxy_local_post_resolution_total',
+      1,
+      { source => 'non_local' },
+    );
+    return undef;
+  };
   xrpc_error(404, 'RecordNotFound', 'Record was not found')
     unless $collection eq 'app.bsky.feed.post';
   my $canonical_uri = 'at://' . $account->{did} . '/' . $collection . '/' . $rkey;
   my $local_post_index = $c->stash('local_post_index');
   if ($local_post_index && $local_post_index->{posts}{$canonical_uri}) {
+    $c->app->metrics->increment_counter(
+      'perlsky_service_proxy_local_post_resolution_total',
+      1,
+      { source => 'index_cache' },
+    );
     my $resolved = $local_post_index->{posts}{$canonical_uri};
     $cache->{$uri} = $resolved;
     $cache->{$canonical_uri} = $resolved;
     $c->stash(service_proxy_local_post_uri_cache => $cache);
     return $resolved;
   }
+  $c->app->metrics->increment_counter(
+    'perlsky_service_proxy_local_post_resolution_total',
+    1,
+    { source => 'store' },
+  );
   my $row = $c->store->get_record($account->{did}, $collection, $rkey);
   xrpc_error(404, 'RecordNotFound', 'Record was not found') unless $row;
   my $resolved = [ $account, $row ];

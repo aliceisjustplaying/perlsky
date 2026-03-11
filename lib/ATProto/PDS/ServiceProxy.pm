@@ -6,6 +6,7 @@ use warnings;
 use Mojo::Base -base, -signatures;
 use Mojo::URL;
 use Mojo::UserAgent;
+use Time::HiRes qw(time);
 
 use ATProto::PDS::API::Server qw(require_auth);
 use ATProto::PDS::API::Util qw(xrpc_error);
@@ -77,8 +78,17 @@ my %LOCAL_HANDLER_FOR = (
 );
 
 sub proxy_xrpc_request ($self, $c, $nsid) {
+  my $started = time;
   if (my $handler = $LOCAL_HANDLER_FOR{$nsid}) {
-    my $status = $self->$handler($c);
+    my $status = eval { $self->$handler($c) };
+    if (my $err = $@) {
+      if (ref($err) eq 'HASH' && $err->{error}) {
+        _observe_service_proxy_metrics($c, $nsid, 'local', $err->{status} // 400, $started);
+      }
+      die $err;
+    }
+    _observe_service_proxy_metrics($c, $nsid, 'local', $status, $started)
+      if defined $status;
     return $status if defined $status;
   }
 
@@ -127,12 +137,20 @@ sub proxy_xrpc_request ($self, $c, $nsid) {
     );
   }
 
-  my $res = $self->_perform_upstream_request(
-    method  => $method,
-    url     => $url,
-    headers => \%headers,
-    body    => ($c->req->body // q()),
-  );
+  my $res = eval {
+    $self->_perform_upstream_request(
+      method  => $method,
+      url     => $url,
+      headers => \%headers,
+      body    => ($c->req->body // q()),
+    );
+  };
+  if (my $err = $@) {
+    if (ref($err) eq 'HASH' && $err->{error}) {
+      _observe_service_proxy_metrics($c, $nsid, 'upstream', $err->{status} // 502, $started);
+    }
+    die $err;
+  }
 
   my $status = $res->code // 502;
   my $headers_out = $c->res->headers;
@@ -161,7 +179,23 @@ sub proxy_xrpc_request ($self, $c, $nsid) {
     status => $status,
     data   => $res->body,
   );
+  _observe_service_proxy_metrics($c, $nsid, 'upstream', $status, $started);
   return $status;
+}
+
+sub _observe_service_proxy_metrics ($c, $nsid, $source, $status, $started) {
+  my $metrics = $c->app->metrics;
+  my %labels = (
+    nsid   => $nsid // 'unknown',
+    source => $source // 'unknown',
+    status => defined $status ? $status : 'unknown',
+  );
+  $metrics->increment_counter('perlsky_service_proxy_requests_total', 1, \%labels);
+  $metrics->observe_histogram(
+    'perlsky_service_proxy_request_duration_seconds',
+    time - $started,
+    \%labels,
+  );
 }
 
 1;
