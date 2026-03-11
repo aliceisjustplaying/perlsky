@@ -40,7 +40,7 @@ const ignoredRequestFailure = [
   { url: /live-events\.workers\.bsky\.app\/config/i, error: /ERR_ABORTED/i },
   { url: /events\.bsky\.app\/t/i, error: /ERR_ABORTED/i },
   { url: /events\.bsky\.app\/gb\/api\/features\//i, error: /ERR_ABORTED/i },
-  { url: /video\.bsky\.app\/watch\/.*\/playlist\.m3u8/i, error: /ERR_ABORTED/i },
+  { url: /video\.bsky\.app\/watch\/.*\/(?:playlist\.m3u8|.*\.ts)/i, error: /ERR_ABORTED/i },
   { url: /\/xrpc\/chat\.bsky\.convo\.getLog/i, error: /ERR_ABORTED/i },
 ];
 
@@ -531,6 +531,7 @@ try {
   }, { optional: true });
 
   await step('quote-target-post', async () => {
+    await gotoProfile(config.targetHandle);
     const row = await findFirstFeedItem(20000);
     await clickQuote(row, `${config.quoteText} to @${config.targetHandle.replace(/^@/, '')}`);
     return { note: 'quoted target post' };
