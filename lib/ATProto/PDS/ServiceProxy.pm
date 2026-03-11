@@ -6,12 +6,19 @@ use warnings;
 use Mojo::Base -base, -signatures;
 use Mojo::URL;
 use Mojo::UserAgent;
-use JSON::PP ();
 
 use ATProto::PDS::API::Server qw(require_auth);
-use ATProto::PDS::API::Util qw(iso8601 resolve_repo xrpc_error);
+use ATProto::PDS::API::Util qw(xrpc_error);
 use ATProto::PDS::Auth::JWT qw(encode_service_jwt);
 use ATProto::PDS::Constants qw(TOKEN_AUD_ACCESS);
+use ATProto::PDS::ServiceProxy::Posts qw(
+  _non_negative_int_param
+  _post_indexed_at
+  _post_uri
+  _quoted_uri
+  _reply_parent_uri
+  _resolve_local_post_uri
+);
 use ATProto::PDS::ServiceProxy::Preferences qw(
   _default_notification_preferences
   _get_notification_preferences
@@ -29,13 +36,25 @@ use ATProto::PDS::ServiceProxy::Profile qw(
   _profile_view_basic
   _profile_view_detailed
 );
+use ATProto::PDS::ServiceProxy::Threads qw(
+  _get_author_feed
+  _get_post_thread
+  _get_posts
+  _local_post_index
+  _optional_auth_account
+  _post_counts_and_viewer
+  _post_embed_view
+  _post_view
+  _record_embed_view
+  _reply_rows
+  _thread_view
+);
 use ATProto::PDS::ServiceProxy::Upstream qw(
   _config
   _perform_upstream_request
   _target_for_request
   _target_from_proxy_header
 );
-use ATProto::PDS::Moderation qw(parse_at_uri);
 
 has settings => sub { {} };
 has ua => sub {
@@ -45,33 +64,20 @@ has ua => sub {
   return $ua;
 };
 
+my %LOCAL_HANDLER_FOR = (
+  'app.bsky.actor.getPreferences'         => '_get_preferences',
+  'app.bsky.actor.putPreferences'         => '_put_preferences',
+  'app.bsky.notification.getPreferences'  => '_get_notification_preferences',
+  'app.bsky.notification.putPreferencesV2' => '_put_notification_preferences_v2',
+  'app.bsky.actor.getProfile'             => '_get_local_profile',
+  'app.bsky.feed.getAuthorFeed'           => '_get_author_feed',
+  'app.bsky.feed.getPosts'                => '_get_posts',
+  'app.bsky.feed.getPostThread'           => '_get_post_thread',
+);
+
 sub proxy_xrpc_request ($self, $c, $nsid) {
-  if ($nsid eq 'app.bsky.actor.getPreferences') {
-    return $self->_get_preferences($c);
-  }
-  if ($nsid eq 'app.bsky.actor.putPreferences') {
-    return $self->_put_preferences($c);
-  }
-  if ($nsid eq 'app.bsky.notification.getPreferences') {
-    return $self->_get_notification_preferences($c);
-  }
-  if ($nsid eq 'app.bsky.notification.putPreferencesV2') {
-    return $self->_put_notification_preferences_v2($c);
-  }
-  if ($nsid eq 'app.bsky.actor.getProfile') {
-    my $status = $self->_get_local_profile($c);
-    return $status if defined $status;
-  }
-  if ($nsid eq 'app.bsky.feed.getAuthorFeed') {
-    my $status = $self->_get_author_feed($c);
-    return $status if defined $status;
-  }
-  if ($nsid eq 'app.bsky.feed.getPosts') {
-    my $status = $self->_get_posts($c);
-    return $status if defined $status;
-  }
-  if ($nsid eq 'app.bsky.feed.getPostThread') {
-    my $status = $self->_get_post_thread($c);
+  if (my $handler = $LOCAL_HANDLER_FOR{$nsid}) {
+    my $status = $self->$handler($c);
     return $status if defined $status;
   }
 
@@ -155,404 +161,6 @@ sub proxy_xrpc_request ($self, $c, $nsid) {
     data   => $res->body,
   );
   return $status;
-}
-
-sub _get_author_feed ($self, $c) {
-  xrpc_error(405, 'MethodNotAllowed', 'app.bsky.feed.getAuthorFeed expects GET')
-    unless $c->req->method eq 'GET';
-
-  my $actor = $c->param('actor') // q();
-  xrpc_error(400, 'InvalidRequest', 'actor is required') unless length $actor;
-
-  my $account = resolve_repo($c, $actor) or return undef;
-  my $viewer = $self->_optional_auth_account($c);
-  my $limit = $c->param('limit') // 50;
-  $limit = 1 if $limit < 1;
-  $limit = 100 if $limit > 100;
-
-  my $page = $c->store->list_records(
-    $account->{did},
-    'app.bsky.feed.post',
-    limit   => $limit,
-    cursor  => $c->param('cursor'),
-    reverse => 1,
-  );
-  my $profile_value = $self->_profile_record_value($c, $account);
-  my @feed = map {
-    +{
-      post => $self->_post_view($c, $account, $_, $profile_value, $viewer),
-    }
-  } @{ $page->{items} };
-
-  my %body = (feed => \@feed);
-  $body{cursor} = $page->{cursor} if defined $page->{cursor};
-  $c->render(json => \%body);
-  return 200;
-}
-
-sub _get_posts ($self, $c) {
-  xrpc_error(405, 'MethodNotAllowed', 'app.bsky.feed.getPosts expects GET')
-    unless $c->req->method eq 'GET';
-
-  my @uris = grep { defined($_) && length($_) } $c->every_param('uris');
-  xrpc_error(400, 'InvalidRequest', 'uris is required') unless @uris;
-
-  my @resolved = map { $self->_resolve_local_post_uri($c, $_) } @uris;
-  return undef if grep { !defined $_ } @resolved;
-
-  my $viewer = $self->_optional_auth_account($c);
-  my @posts = map {
-    my ($account, $row) = @$_;
-    my $profile_value = $self->_profile_record_value($c, $account);
-    $self->_post_view($c, $account, $row, $profile_value, $viewer);
-  } @resolved;
-
-  $c->render(json => { posts => \@posts });
-  return 200;
-}
-
-sub _get_post_thread ($self, $c) {
-  xrpc_error(405, 'MethodNotAllowed', 'app.bsky.feed.getPostThread expects GET')
-    unless $c->req->method eq 'GET';
-
-  my $uri = $c->param('uri') // q();
-  xrpc_error(400, 'InvalidRequest', 'uri is required') unless length $uri;
-
-  my $resolved = $self->_resolve_local_post_uri($c, $uri) or return undef;
-  my ($account, $row) = @$resolved;
-  my $viewer = $self->_optional_auth_account($c);
-  my $profile_value = $self->_profile_record_value($c, $account);
-  my $depth = $self->_non_negative_int_param($c, 'depth', 6);
-  my $parent_height = $self->_non_negative_int_param($c, 'parentHeight', 80);
-  my $thread = $self->_thread_view($c, $account, $row, $profile_value, $viewer, $depth, $parent_height);
-
-  $c->render(json => { thread => $thread });
-  return 200;
-}
-
-sub _optional_auth_account ($self, $c) {
-  my $auth = $c->req->headers->authorization;
-  return undef unless defined $auth && length $auth;
-  my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS);
-  return $account;
-}
-
-sub _resolve_local_post_uri ($self, $c, $uri) {
-  my ($repo, $collection, $rkey) = parse_at_uri($uri);
-  return undef unless defined $repo && defined $collection && defined $rkey;
-  my $account = resolve_repo($c, $repo) or return undef;
-  xrpc_error(404, 'RecordNotFound', 'Record was not found')
-    unless $collection eq 'app.bsky.feed.post';
-  my $row = $c->store->get_record($account->{did}, $collection, $rkey);
-  xrpc_error(404, 'RecordNotFound', 'Record was not found') unless $row;
-  return [ $account, $row ];
-}
-
-sub _post_uri ($self, $account, $row) {
-  return 'at://' . $account->{did} . '/' . $row->{collection} . '/' . $row->{rkey};
-}
-
-sub _post_indexed_at ($self, $row) {
-  return $row->{value}{createdAt}
-    if ref($row->{value}) eq 'HASH' && defined $row->{value}{createdAt};
-  return iso8601($row->{created_at} // $row->{updated_at});
-}
-
-sub _post_view ($self, $c, $account, $row, $profile_value = undef, $viewer = undef, $depth = 0) {
-  my $uri = $self->_post_uri($account, $row);
-  my $counts = $self->_post_counts_and_viewer($c, $uri, $viewer);
-  my $post = {
-    uri        => $uri,
-    cid        => $row->{cid},
-    author     => $self->_profile_view_basic($c, $account, $profile_value),
-    record     => $row->{value},
-    bookmarkCount => 0,
-    replyCount => $counts->{replyCount},
-    repostCount => $counts->{repostCount},
-    likeCount  => $counts->{likeCount},
-    quoteCount => $counts->{quoteCount},
-    indexedAt  => $self->_post_indexed_at($row),
-    labels     => [],
-  };
-  if ($depth < 2) {
-    my $embed = $self->_post_embed_view($c, $account, $row->{value}, $viewer, $depth + 1);
-    $post->{embed} = $embed if defined $embed;
-  }
-  $post->{viewer} = $counts->{viewer} if %{ $counts->{viewer} };
-  return $post;
-}
-
-sub _non_negative_int_param ($self, $c, $name, $default) {
-  my $value = $c->param($name);
-  return $default unless defined $value && length $value;
-  $value = int($value);
-  return $value < 0 ? 0 : $value;
-}
-
-sub _reply_parent_uri ($self, $row) {
-  return undef unless ref($row->{value}) eq 'HASH';
-  my $reply = $row->{value}{reply};
-  return undef unless ref($reply) eq 'HASH';
-  my $parent = $reply->{parent};
-  return undef unless ref($parent) eq 'HASH';
-  my $uri = $parent->{uri} // q();
-  return length($uri) ? $uri : undef;
-}
-
-sub _thread_view ($self, $c, $account, $row, $profile_value = undef, $viewer = undef, $depth = 6, $parent_height = 80) {
-  my $thread = {
-    '$type' => 'app.bsky.feed.defs#threadViewPost',
-    post    => $self->_post_view($c, $account, $row, $profile_value, $viewer),
-  };
-
-  if ($parent_height > 0) {
-    my $parent_uri = $self->_reply_parent_uri($row);
-    if (defined $parent_uri) {
-      my $parent = eval { $self->_resolve_local_post_uri($c, $parent_uri) };
-      if ($parent) {
-        my ($parent_account, $parent_row) = @$parent;
-        $thread->{parent} = $self->_thread_view(
-          $c,
-          $parent_account,
-          $parent_row,
-          undef,
-          $viewer,
-          0,
-          $parent_height - 1,
-        );
-      }
-    }
-  }
-
-  return $thread if $depth <= 0;
-
-  my $uri = $self->_post_uri($account, $row);
-  my @replies;
-  for my $reply ($self->_reply_rows($c, $uri)) {
-    my ($reply_account, $reply_row) = @$reply;
-    push @replies, $self->_thread_view(
-      $c,
-      $reply_account,
-      $reply_row,
-      undef,
-      $viewer,
-      $depth - 1,
-      0,
-    );
-  }
-  $thread->{replies} = \@replies if @replies;
-  return $thread;
-}
-
-sub _reply_rows ($self, $c, $parent_uri) {
-  my $index = $self->_local_post_index($c);
-  return @{ $index->{replies}{$parent_uri} || [] };
-}
-
-sub _post_counts_and_viewer ($self, $c, $post_uri, $viewer = undef) {
-  my $index = $self->_local_post_index($c);
-  my $viewer_did = $viewer ? $viewer->{did} : undef;
-  my $base = $index->{stats}{$post_uri} || {
-    likeCount   => 0,
-    repostCount => 0,
-    replyCount  => 0,
-    quoteCount  => 0,
-  };
-  my $stats = {
-    %$base,
-    viewer => {},
-  };
-  if (defined $viewer_did) {
-    my $viewer = $index->{viewer}{$post_uri} || {};
-    $stats->{viewer}{like} = $viewer->{like}{$viewer_did}
-      if defined $viewer->{like}{$viewer_did};
-    $stats->{viewer}{repost} = $viewer->{repost}{$viewer_did}
-      if defined $viewer->{repost}{$viewer_did};
-  }
-  return $stats;
-}
-
-sub _quoted_uri ($self, $value) {
-  return undef unless ref($value) eq 'HASH';
-  my $embed = $value->{embed};
-  return undef unless ref($embed) eq 'HASH';
-  return $embed->{record}{uri}
-    if (($embed->{'$type'} // q()) eq 'app.bsky.embed.record')
-      && ref($embed->{record}) eq 'HASH';
-  return $embed->{record}{record}{uri}
-    if (($embed->{'$type'} // q()) eq 'app.bsky.embed.recordWithMedia')
-      && ref($embed->{record}) eq 'HASH'
-      && ref($embed->{record}{record}) eq 'HASH';
-  return undef;
-}
-
-sub _local_post_index ($self, $c) {
-  my $index = $c->stash('local_post_index');
-  return $index if $index;
-
-  $index = {
-    replies => {},
-    stats   => {},
-    viewer  => {},
-  };
-
-  for my $account (@{ $c->store->list_accounts }) {
-    for my $row (@{ $c->store->all_records_for_did($account->{did}) }) {
-      my $value = $row->{value};
-      next unless ref($value) eq 'HASH';
-
-      if (($row->{collection} // q()) eq 'app.bsky.feed.post') {
-        my $reply = $value->{reply};
-        if (ref($reply) eq 'HASH') {
-          my $parent_uri = $reply->{parent}{uri} // q();
-          if (length $parent_uri) {
-            push @{ $index->{replies}{$parent_uri} }, [ $account, $row ];
-            _local_post_stats($index, $parent_uri)->{replyCount}++;
-          }
-        }
-
-        my $quoted_uri = $self->_quoted_uri($value) // q();
-        _local_post_stats($index, $quoted_uri)->{quoteCount}++
-          if length $quoted_uri;
-        next;
-      }
-
-      if (($row->{collection} // q()) eq 'app.bsky.feed.like') {
-        my $subject_uri = $value->{subject}{uri} // q();
-        next unless length $subject_uri;
-        _local_post_stats($index, $subject_uri)->{likeCount}++;
-        $index->{viewer}{$subject_uri}{like}{$account->{did}} = $self->_post_uri($account, $row);
-        next;
-      }
-
-      if (($row->{collection} // q()) eq 'app.bsky.feed.repost') {
-        my $subject_uri = $value->{subject}{uri} // q();
-        next unless length $subject_uri;
-        _local_post_stats($index, $subject_uri)->{repostCount}++;
-        $index->{viewer}{$subject_uri}{repost}{$account->{did}} = $self->_post_uri($account, $row);
-      }
-    }
-  }
-
-  for my $parent_uri (keys %{ $index->{replies} }) {
-    my @sorted = sort {
-      $self->_post_indexed_at($a->[1]) cmp $self->_post_indexed_at($b->[1])
-    } @{ $index->{replies}{$parent_uri} };
-    $index->{replies}{$parent_uri} = \@sorted;
-  }
-
-  $c->stash(local_post_index => $index);
-  return $index;
-}
-
-sub _local_post_stats ($index, $post_uri) {
-  return $index->{stats}{$post_uri} ||= {
-    likeCount   => 0,
-    repostCount => 0,
-    replyCount  => 0,
-    quoteCount  => 0,
-  };
-}
-
-sub _post_embed_view ($self, $c, $account, $value, $viewer = undef, $depth = 0) {
-  return undef unless ref($value) eq 'HASH';
-  my $embed = $value->{embed};
-  return undef unless ref($embed) eq 'HASH';
-
-  my $type = $embed->{'$type'} // q();
-  if ($type eq 'app.bsky.embed.images') {
-    my @images = map {
-      my $cid = $self->_blob_cid($_->{image});
-      +{
-        thumb    => $self->_blob_url($c, $account->{did}, $cid),
-        fullsize => $self->_blob_url($c, $account->{did}, $cid),
-        alt      => $_->{alt} // q(),
-        (ref($_->{aspectRatio}) eq 'HASH' ? (aspectRatio => $_->{aspectRatio}) : ()),
-      }
-    } grep { ref($_) eq 'HASH' && $self->_blob_cid($_->{image}) } @{ $embed->{images} // [] };
-
-    return undef unless @images;
-    return {
-      '$type' => 'app.bsky.embed.images#view',
-      images  => \@images,
-    };
-  }
-
-  if ($type eq 'app.bsky.embed.external' && ref($embed->{external}) eq 'HASH') {
-    my $external = $embed->{external};
-    my %view = (
-      uri         => $external->{uri} // q(),
-      title       => $external->{title} // q(),
-      description => $external->{description} // q(),
-    );
-    if (my $cid = $self->_blob_cid($external->{thumb})) {
-      $view{thumb} = $self->_blob_url($c, $account->{did}, $cid);
-    }
-    return {
-      '$type'    => 'app.bsky.embed.external#view',
-      external   => \%view,
-    };
-  }
-
-  if ($type eq 'app.bsky.embed.record' && ref($embed->{record}) eq 'HASH') {
-    return {
-      '$type' => 'app.bsky.embed.record#view',
-      record  => $self->_record_embed_view($c, $embed->{record}, $viewer, $depth),
-    };
-  }
-
-  if ($type eq 'app.bsky.embed.recordWithMedia'
-      && ref($embed->{record}) eq 'HASH'
-      && ref($embed->{media}) eq 'HASH') {
-    my $record = $self->_record_embed_view($c, $embed->{record}{record} // $embed->{record}, $viewer, $depth);
-    my $media = $self->_post_embed_view(
-      $c,
-      $account,
-      { embed => $embed->{media} },
-      $viewer,
-      $depth,
-    );
-    return undef unless defined $record && defined $media;
-    return {
-      '$type'  => 'app.bsky.embed.recordWithMedia#view',
-      record   => {
-        '$type' => 'app.bsky.embed.record#view',
-        record  => $record,
-      },
-      media => $media,
-    };
-  }
-
-  return undef;
-}
-
-sub _record_embed_view ($self, $c, $record_ref, $viewer = undef, $depth = 0) {
-  my $uri = $record_ref->{uri} // q();
-  my $resolved = $self->_resolve_local_post_uri($c, $uri);
-  return {
-    '$type'    => 'app.bsky.embed.record#viewNotFound',
-    uri        => $uri,
-    notFound   => JSON::PP::true,
-  } unless $resolved;
-
-  my ($account, $row) = @$resolved;
-  my $profile_value = $self->_profile_record_value($c, $account);
-  my $post_view = $self->_post_view($c, $account, $row, $profile_value, $viewer, $depth);
-  my %record_view = (
-    '$type'     => 'app.bsky.embed.record#viewRecord',
-    uri         => $post_view->{uri},
-    cid         => $post_view->{cid},
-    author      => $post_view->{author},
-    value       => $post_view->{record},
-    indexedAt   => $post_view->{indexedAt},
-  );
-  $record_view{labels} = $post_view->{labels} if $post_view->{labels};
-  $record_view{replyCount} = $post_view->{replyCount} if defined $post_view->{replyCount};
-  $record_view{repostCount} = $post_view->{repostCount} if defined $post_view->{repostCount};
-  $record_view{likeCount} = $post_view->{likeCount} if defined $post_view->{likeCount};
-  $record_view{quoteCount} = $post_view->{quoteCount} if defined $post_view->{quoteCount};
-  $record_view{embeds} = [ $post_view->{embed} ] if defined $post_view->{embed};
-  return \%record_view;
 }
 
 1;
