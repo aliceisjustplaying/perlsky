@@ -15,7 +15,7 @@ use ATProto::PDS::API::Registry;
 use ATProto::PDS::API::Server qw(register_server_handlers);
 use ATProto::PDS::API::Sync qw(register_sync_handlers);
 use ATProto::PDS::Crawlers;
-use ATProto::PDS::Identity qw(account_did_doc service_did);
+use ATProto::PDS::Identity qw(account_did_doc normalize_handle service_did);
 use ATProto::PDS::LexiconCatalog qw(endpoint_catalog);
 use ATProto::PDS::LexiconRegistry;
 use ATProto::PDS::Metrics;
@@ -148,6 +148,20 @@ sub startup ($self) {
 
     $c->res->headers->content_type('text/plain; version=0.0.4; charset=utf-8');
     $c->render(data => $c->app->metrics->render_prometheus);
+  });
+
+  $routes->get('/_allow-cert')->to(cb => sub ($c) {
+    my $domain = lc($c->param('domain') // q());
+    my $suffix = lc($c->config_value('service_handle_domain', 'localhost'));
+    my $hostname = lc($c->config_value('hostname', $suffix));
+    my $allowed = length($domain)
+      && (
+        $domain eq $hostname
+        || defined normalize_handle($domain, $suffix, { no_append => 1 })
+      );
+
+    return $c->render(status => 403, text => 'forbidden') unless $allowed;
+    $c->render(text => 'ok');
   });
 
   $routes->get('/.well-known/did.json')->to(cb => sub ($c) {

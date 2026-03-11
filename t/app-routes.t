@@ -39,21 +39,35 @@ $t->get_ok('/xrpc/com.atproto.server.describeServer')
   ->json_is('/availableUserDomains/0' => 'localhost')
   ->json_like('/did' => qr/\Adid:web:/);
 
+my $suffix = time . int(rand(1_000_000));
+my $routeprobe_handle = "routeprobe-$suffix.localhost";
+
 $t->post_ok('/xrpc/com.atproto.server.createAccount' => json => {
-  handle   => 'routeprobe.localhost',
-  email    => 'routeprobe@example.com',
+  handle   => $routeprobe_handle,
+  email    => "routeprobe-$suffix\@example.com",
   password => 'hunter42',
 })->status_is(200);
 
 my $routeprobe_did = $t->tx->res->json->{did};
 
-$t->get_ok('/.well-known/atproto-did' => { Host => 'routeprobe.localhost' })
+$t->get_ok('/.well-known/atproto-did' => { Host => $routeprobe_handle })
   ->status_is(200)
   ->content_type_like(qr{text/plain})
   ->content_is($routeprobe_did);
 
 $t->get_ok('/.well-known/atproto-did' => { Host => 'missing.localhost' })
   ->status_is(404);
+
+$t->get_ok("/_allow-cert?domain=$routeprobe_handle")
+  ->status_is(200)
+  ->content_is('ok');
+
+$t->get_ok('/_allow-cert?domain=localhost')
+  ->status_is(200)
+  ->content_is('ok');
+
+$t->get_ok('/_allow-cert?domain=example.com')
+  ->status_is(403);
 
 $t->post_ok('/xrpc/com.atproto.repo.createRecord' => json => {})
   ->status_is(404)

@@ -169,6 +169,35 @@ pds.example.com {
 
 For public user handles you also need a matching wildcard-capable site or on-demand TLS path for `*.pds.example.com`.
 
+One practical Caddy pattern is on-demand TLS restricted to domains that `perlsky` approves:
+
+```caddy
+{
+  on_demand_tls {
+    ask http://127.0.0.1:7755/_allow-cert
+  }
+}
+
+pds.example.com {
+  encode gzip
+  reverse_proxy 127.0.0.1:7755
+}
+
+https:// {
+  tls {
+    on_demand
+  }
+
+  @perlsky_handles host *.pds.example.com
+  handle @perlsky_handles {
+    encode gzip
+    reverse_proxy 127.0.0.1:7755
+  }
+}
+```
+
+This still requires wildcard DNS or per-handle DNS records so public ACME validation can reach the server.
+
 A minimal nginx site looks like:
 
 ```nginx
