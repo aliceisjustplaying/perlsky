@@ -1,0 +1,345 @@
+#!/usr/bin/env perl
+
+use v5.34;
+use warnings;
+
+use Config ();
+use File::Spec;
+use File::Temp qw(tempdir);
+use FindBin qw($Bin);
+use Getopt::Long qw(GetOptions);
+use IO::Socket::INET;
+use JSON::PP qw(encode_json decode_json);
+use Mojo::Server::Daemon;
+use Mojo::UserAgent;
+use POSIX qw(strftime);
+use Time::HiRes qw(time sleep);
+
+BEGIN {
+  require lib;
+  my $root = File::Spec->rel2abs(File::Spec->catdir($Bin, '..'));
+  lib->import(
+    File::Spec->catdir($root, 'lib'),
+    File::Spec->catdir($root, 'local', 'lib', 'perl5'),
+    File::Spec->catdir($root, 'local', 'lib', 'perl5', $Config::Config{archname}),
+  );
+}
+
+use ATProto::PDS;
+
+my %opt = (
+  iterations => 50,
+  warmup     => 10,
+  posts      => 50,
+  replies    => 8,
+  feed_limit => 25,
+  format     => 'text',
+  keep_tmp   => 0,
+);
+
+GetOptions(
+  'iterations=i' => \$opt{iterations},
+  'warmup=i'     => \$opt{warmup},
+  'posts=i'      => \$opt{posts},
+  'replies=i'    => \$opt{replies},
+  'feed-limit=i' => \$opt{feed_limit},
+  'format=s'     => \$opt{format},
+  'keep-tmp!'    => \$opt{keep_tmp},
+) or die "usage: $0 [--iterations N] [--warmup N] [--posts N] [--replies N] [--feed-limit N] [--format text|json] [--keep-tmp]\n";
+
+die "--iterations must be >= 1\n" unless $opt{iterations} >= 1;
+die "--warmup must be >= 0\n" unless $opt{warmup} >= 0;
+die "--posts must be >= 1\n" unless $opt{posts} >= 1;
+die "--replies must be >= 0\n" unless $opt{replies} >= 0;
+die "--feed-limit must be >= 1\n" unless $opt{feed_limit} >= 1;
+die "--format must be text or json\n" unless $opt{format} eq 'text' || $opt{format} eq 'json';
+
+my $root = File::Spec->rel2abs(File::Spec->catdir($Bin, '..'));
+my $tmp = tempdir('perlsky-bench-XXXXXX', TMPDIR => 1, CLEANUP => !$opt{keep_tmp});
+my $data_dir = File::Spec->catdir($tmp, 'data');
+my $db_path  = File::Spec->catfile($tmp, 'perlsky.sqlite');
+my $port     = _find_free_port();
+my $base_url = "http://127.0.0.1:$port";
+my $metrics_token = 'benchmark-metrics-token';
+my @server_pids;
+
+END {
+  my $status = $?;
+  kill 'TERM', @server_pids if @server_pids;
+  waitpid($_, 0) for @server_pids;
+  $? = $status;
+}
+
+my $app = ATProto::PDS->new(
+  project_root => $root,
+  settings     => {
+    host                  => '127.0.0.1',
+    port                  => $port,
+    base_url              => $base_url,
+    hostname              => '127.0.0.1',
+    service_did_method    => 'did:web',
+    service_handle_domain => 'benchmark.test',
+    jwt_secret            => 'benchmark-secret',
+    admin_password        => 'benchmark-admin-secret',
+    metrics_token         => $metrics_token,
+    data_dir              => $data_dir,
+    db_path               => $db_path,
+  },
+);
+$app->log->level('fatal');
+
+_start_server($app, $port);
+
+my $ua = Mojo::UserAgent->new(max_redirects => 0);
+$ua->request_timeout(30);
+$ua->inactivity_timeout(30);
+
+my $account = _post_json($ua, "$base_url/xrpc/com.atproto.server.createAccount", {}, {
+  handle   => 'alice.benchmark.test',
+  email    => 'alice@benchmark.test',
+  password => 'benchmark-password',
+});
+
+my $access = $account->{accessJwt} or die "createAccount did not return accessJwt\n";
+my $did    = $account->{did} or die "createAccount did not return did\n";
+
+my $root_post = _post_record(
+  $ua,
+  $base_url,
+  $access,
+  $did,
+  'bench-root',
+  {
+    '$type'   => 'app.bsky.feed.post',
+    text      => 'benchmark root',
+    createdAt => '2026-03-11T19:00:00Z',
+  },
+);
+
+for my $index (1 .. $opt{posts} - 1) {
+  _post_record(
+    $ua,
+    $base_url,
+    $access,
+    $did,
+    sprintf('bench-post-%03d', $index),
+    {
+      '$type'   => 'app.bsky.feed.post',
+      text      => "benchmark post $index",
+      createdAt => sprintf('2026-03-11T19:%02d:%02dZ', int($index / 60), $index % 60),
+    },
+  );
+}
+
+my $parent = $root_post;
+for my $index (1 .. $opt{replies}) {
+  $parent = _post_record(
+    $ua,
+    $base_url,
+    $access,
+    $did,
+    sprintf('bench-reply-%03d', $index),
+    {
+      '$type'   => 'app.bsky.feed.post',
+      text      => "benchmark reply $index",
+      reply     => {
+        root   => { uri => $root_post->{uri}, cid => $root_post->{cid} },
+        parent => { uri => $parent->{uri}, cid => $parent->{cid} },
+      },
+      createdAt => sprintf('2026-03-11T20:%02d:%02dZ', int($index / 60), $index % 60),
+    },
+  );
+}
+
+my %headers = (Authorization => "Bearer $access");
+my %scenarios = (
+  get_profile => {
+    url => "$base_url/xrpc/app.bsky.actor.getProfile?actor=" . _uri_escape($did),
+  },
+  get_author_feed => {
+    url => "$base_url/xrpc/app.bsky.feed.getAuthorFeed?actor="
+      . _uri_escape($did)
+      . '&limit=' . $opt{feed_limit},
+  },
+  get_post_thread => {
+    url => "$base_url/xrpc/app.bsky.feed.getPostThread?uri=" . _uri_escape($parent->{uri}),
+  },
+);
+
+for my $scenario (values %scenarios) {
+  _exercise_endpoint($ua, $scenario->{url}, \%headers) for 1 .. $opt{warmup};
+}
+
+my %results;
+for my $name (sort keys %scenarios) {
+  my @samples;
+  for (1 .. $opt{iterations}) {
+    push @samples, _exercise_endpoint($ua, $scenarios{$name}{url}, \%headers);
+  }
+  $results{$name} = _summarize_samples(\@samples);
+}
+
+my $metrics_body = _get_text(
+  $ua,
+  "$base_url/metrics",
+  { Authorization => "Bearer $metrics_token" },
+);
+my @metrics_excerpt = grep {
+  /^perlsky_service_proxy_(?:request|requests|local_post_index|local_post_resolution|profile_record_cache)/
+    || /^perlsky_repo_resolution_total/
+} split /\n/, $metrics_body;
+
+my $report = {
+  generated_at => strftime('%Y-%m-%dT%H:%M:%SZ', gmtime),
+  base_url     => $base_url,
+  temp_dir     => $tmp,
+  scenario     => {
+    posts      => $opt{posts},
+    replies    => $opt{replies},
+    iterations => $opt{iterations},
+    warmup     => $opt{warmup},
+    feed_limit => $opt{feed_limit},
+  },
+  results         => \%results,
+  metrics_excerpt => \@metrics_excerpt,
+};
+
+if ($opt{format} eq 'json') {
+  print encode_json($report), "\n";
+  exit 0;
+}
+
+print "perlsky local appview benchmark\n";
+print "base_url: $base_url\n";
+print "temp_dir: $tmp\n";
+print "scenario: posts=$opt{posts} replies=$opt{replies} iterations=$opt{iterations} warmup=$opt{warmup} feed_limit=$opt{feed_limit}\n";
+for my $name (sort keys %results) {
+  my $summary = $results{$name};
+  printf "%s: avg=%.4fs p50=%.4fs p95=%.4fs max=%.4fs req/s=%.1f\n",
+    $name,
+    @{$summary}{qw(avg p50 p95 max requests_per_second)};
+}
+print "\nmetrics excerpt:\n";
+print "$_\n" for @metrics_excerpt;
+
+sub _post_record {
+  my ($ua, $base_url, $access, $did, $rkey, $record) = @_;
+  return _post_json(
+    $ua,
+    "$base_url/xrpc/com.atproto.repo.createRecord",
+    { Authorization => "Bearer $access" },
+    {
+      repo       => $did,
+      collection => 'app.bsky.feed.post',
+      rkey       => $rkey,
+      record     => $record,
+    },
+  );
+}
+
+sub _exercise_endpoint {
+  my ($ua, $url, $headers) = @_;
+  my $started = time;
+  my $tx = $ua->get($url => $headers);
+  my $res = $tx->result;
+  die "GET $url failed: " . ($res->code // 'unknown') . ' ' . ($res->body // q())
+    unless ($res->code // 0) == 200;
+  decode_json($res->body // '{}');
+  return time - $started;
+}
+
+sub _post_json {
+  my ($ua, $url, $headers, $payload) = @_;
+  my $tx = $ua->post($url => $headers => json => $payload);
+  my $res = $tx->result;
+  die "POST $url failed: " . ($res->code // 'unknown') . ' ' . ($res->body // q())
+    unless ($res->code // 0) == 200;
+  return decode_json($res->body // '{}');
+}
+
+sub _get_text {
+  my ($ua, $url, $headers) = @_;
+  my $tx = $ua->get($url => $headers);
+  my $res = $tx->result;
+  die "GET $url failed: " . ($res->code // 'unknown') . ' ' . ($res->body // q())
+    unless ($res->code // 0) == 200;
+  return $res->body // q();
+}
+
+sub _summarize_samples {
+  my ($samples) = @_;
+  my @sorted = sort { $a <=> $b } @$samples;
+  my $count = @sorted;
+  my $sum = 0;
+  $sum += $_ for @sorted;
+  my $avg = $sum / $count;
+  return {
+    count             => $count,
+    min               => $sorted[0],
+    max               => $sorted[-1],
+    avg               => $avg,
+    p50               => _quantile(\@sorted, 0.50),
+    p95               => _quantile(\@sorted, 0.95),
+    requests_per_second => $avg > 0 ? (1 / $avg) : 0,
+  };
+}
+
+sub _quantile {
+  my ($samples, $quantile) = @_;
+  return 0 unless @$samples;
+  my $index = int((@$samples - 1) * $quantile);
+  return $samples->[$index];
+}
+
+sub _start_server {
+  my ($app, $port) = @_;
+  my $pid = fork();
+  die 'fork failed' unless defined $pid;
+
+  if ($pid == 0) {
+    my $daemon = Mojo::Server::Daemon->new(
+      app    => $app,
+      listen => ["http://127.0.0.1:$port"],
+      silent => 1,
+    );
+    $daemon->run;
+    exit 0;
+  }
+
+  push @server_pids, $pid;
+  _wait_for_ready("http://127.0.0.1:$port/_health");
+}
+
+sub _wait_for_ready {
+  my ($health_url) = @_;
+  my $ua = Mojo::UserAgent->new(max_redirects => 0);
+  for (1 .. 100) {
+    my $ok = eval {
+      my $tx = $ua->get($health_url);
+      my $res = $tx->result;
+      return ($res->code // 0) == 200;
+    };
+    return 1 if $ok;
+    sleep 0.05;
+  }
+  die "timed out waiting for $health_url\n";
+}
+
+sub _find_free_port {
+  my $sock = IO::Socket::INET->new(
+    LocalAddr => '127.0.0.1',
+    LocalPort => 0,
+    Proto     => 'tcp',
+    Listen    => 1,
+    ReuseAddr => 1,
+  ) or die "unable to allocate port: $!";
+  my $port = $sock->sockport;
+  close $sock;
+  return $port;
+}
+
+sub _uri_escape {
+  my ($value) = @_;
+  $value =~ s/([^A-Za-z0-9._~-])/sprintf('%%%02X', ord($1))/ge;
+  return $value;
+}

@@ -318,7 +318,58 @@ curl -H 'Authorization: Bearer YOUR_METRICS_TOKEN' \
   https://pds.example.com/metrics
 ```
 
-See `docs/METRICS.md` for the metric surface.
+Checked-in Prometheus and Grafana examples live under:
+
+- [ops/prometheus/perlsky.yml](../ops/prometheus/perlsky.yml)
+- [ops/grafana/prometheus-datasource.yml](../ops/grafana/prometheus-datasource.yml)
+- [ops/grafana/perlsky-dashboard-provider.yml](../ops/grafana/perlsky-dashboard-provider.yml)
+- [ops/grafana/perlsky-dashboard.json](../ops/grafana/perlsky-dashboard.json)
+
+See [METRICS.md](./METRICS.md) for the metric surface and dashboard notes.
+
+## Prometheus
+
+Merge [ops/prometheus/perlsky.yml](../ops/prometheus/perlsky.yml) into your Prometheus config and replace the placeholder bearer token with `metrics_token` from `/etc/perlsky/perlsky.json`.
+
+One minimal local scrape job looks like:
+
+```yaml
+- job_name: perlsky
+  scrape_interval: 15s
+  scrape_timeout: 5s
+  metrics_path: /metrics
+  scheme: http
+  authorization:
+    credentials: REPLACE_WITH_PERLSKY_METRICS_TOKEN
+  static_configs:
+    - targets: ['127.0.0.1:7755']
+      labels:
+        service: perlsky
+```
+
+Validate and reload:
+
+```sh
+promtool check config /etc/prometheus/prometheus.yml
+systemctl reload prometheus || systemctl restart prometheus
+curl -fsS 'http://127.0.0.1:9090/api/v1/query?query=up%7Bjob%3D%22perlsky%22%7D'
+```
+
+## Grafana
+
+Provision the Prometheus data source and dashboard provider with the checked-in examples, then copy the dashboard JSON into the watched directory:
+
+```sh
+install -d /etc/grafana/provisioning/datasources
+install -d /etc/grafana/provisioning/dashboards
+install -d /var/lib/grafana/dashboards
+cp /opt/perlsky/app/ops/grafana/prometheus-datasource.yml /etc/grafana/provisioning/datasources/perlsky-prometheus.yml
+cp /opt/perlsky/app/ops/grafana/perlsky-dashboard-provider.yml /etc/grafana/provisioning/dashboards/perlsky.yml
+cp /opt/perlsky/app/ops/grafana/perlsky-dashboard.json /var/lib/grafana/dashboards/perlsky-overview.json
+systemctl restart grafana-server || systemctl restart grafana
+```
+
+The example data source uses the stable UID `prometheus`. Keep that UID or update the dashboard file to match your local Prometheus data source UID.
 
 ## Upgrades
 

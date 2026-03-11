@@ -38,6 +38,22 @@
   Counts instrumented SQLite-backed store operations by operation and status.
 - `perlsky_store_operation_duration_seconds`
   Histogram of instrumented store operation duration.
+- `perlsky_service_proxy_requests_total`
+  Counts local and upstream `app.bsky.*` proxy requests by NSID, source, and status.
+- `perlsky_service_proxy_request_duration_seconds`
+  Histogram for service-proxy request latency with the same labels.
+- `perlsky_service_proxy_local_post_index_cache_access_total`
+  Counts request-local hits, process-cache hits, and rebuilds for the local post index.
+- `perlsky_service_proxy_local_post_index_rebuild_duration_seconds`
+  Histogram of local post-index rebuild time.
+- `perlsky_service_proxy_local_post_index_entries`
+  Gauge of local post-index entry counts by kind.
+- `perlsky_service_proxy_local_post_resolution_total`
+  Counts how local post lookups were resolved: request cache, shared index, store, or non-local bypass.
+- `perlsky_service_proxy_profile_record_cache_total`
+  Counts local profile record cache hits and misses.
+- `perlsky_repo_resolution_total`
+  Counts repo/DID resolution paths, including request-cache reuse versus fallback scans.
 - `perlsky_build_info`
   Static build/service info gauge.
 
@@ -63,6 +79,25 @@ This is enough to understand the hot PDS paths under load without trying to wrap
 - crawler errors from `perlsky_crawler_requests_total{result="error"}`
 - large ingress with low egress or vice versa on blob byte counters
 - persistent growth in store latency histograms
+- sustained `result="rebuild"` growth in `perlsky_service_proxy_local_post_index_cache_access_total`
+- high `p95` in `perlsky_service_proxy_local_post_index_rebuild_duration_seconds`
+- unexpected growth in `source="list_scan"` for `perlsky_repo_resolution_total`
+
+## Prometheus
+
+The repo includes a checked-in example scrape job at [ops/prometheus/perlsky.yml](../ops/prometheus/perlsky.yml).
+
+On the live VPS we scrape every `15s` instead of more aggressively to avoid adding pressure while Prometheus is already remote-writing to Grafana Cloud.
+
+## Grafana
+
+The repo includes:
+
+- [ops/grafana/perlsky-dashboard.json](../ops/grafana/perlsky-dashboard.json): overview dashboard for XRPC, service-proxy, store, subscription, and blob metrics
+- [ops/grafana/prometheus-datasource.yml](../ops/grafana/prometheus-datasource.yml): example provisioned Prometheus data source
+- [ops/grafana/perlsky-dashboard-provider.yml](../ops/grafana/perlsky-dashboard-provider.yml): example dashboard provider that watches a dashboard directory
+
+The dashboard expects a Prometheus data source. When provisioning, either keep the checked-in `uid` from the example data source or update the dashboard's `${DS_PROMETHEUS}` mapping during import.
 
 ## Example Scrape
 

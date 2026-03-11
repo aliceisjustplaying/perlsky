@@ -1,0 +1,16 @@
+# Example Prometheus scrape job for perlsky.
+#
+# Replace the bearer token with the value from `metrics_token` in
+# `/etc/perlsky/perlsky.json`.
+
+- job_name: perlsky
+  scrape_interval: 15s
+  scrape_timeout: 5s
+  metrics_path: /metrics
+  scheme: http
+  authorization:
+    credentials: REPLACE_WITH_PERLSKY_METRICS_TOKEN
+  static_configs:
+    - targets: ['127.0.0.1:7755']
+      labels:
+        service: perlsky
