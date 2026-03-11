@@ -43,6 +43,7 @@ my $app = ATProto::PDS->new(
 
 my $t  = Test::Mojo->new($app);
 my $ws = Test::Mojo->new($app);
+my $admin_auth = 'Basic YWRtaW46YWRtaW4tc2VjcmV0';
 
 sub ws_quiet_ok {
   my ($ws, $desc, $timeout) = @_;
@@ -277,6 +278,146 @@ ok(
   'delete firehose CAR does not resend unchanged record blocks',
 );
 $delete_watch->finish_ok;
+
+# Cover the non-commit lifecycle frames that firehose consumers rely on.
+my $identity_watch = Test::Mojo->new($app);
+$identity_watch->websocket_ok('/xrpc/com.atproto.sync.subscribeRepos');
+$t->post_ok('/xrpc/com.atproto.identity.updateHandle' => {
+  Authorization => "Bearer $access",
+} => json => {
+  handle => 'alice-renamed.example.test',
+})->status_is(200);
+
+$identity_watch->message_ok('handle updates emit an identity frame')
+  ->message_like({binary => qr/.+/}, 'identity update frame is binary');
+
+my $identity_update = decode_frame($identity_watch->message->[1]);
+is($identity_update->{header}{t}, '#identity', 'handle update frame is identity');
+is($identity_update->{body}{did}, $did, 'identity update identifies the repo');
+is($identity_update->{body}{handle}, 'alice-renamed.example.test', 'identity update carries the new handle');
+$identity_watch->finish_ok;
+
+my $identity_repeat = Test::Mojo->new($app);
+$identity_repeat->websocket_ok('/xrpc/com.atproto.sync.subscribeRepos');
+$t->post_ok('/xrpc/com.atproto.identity.updateHandle' => {
+  Authorization => "Bearer $access",
+} => json => {
+  handle => 'alice-renamed.example.test',
+})->status_is(200);
+
+$identity_repeat->message_ok('idempotent handle updates still emit an identity frame')
+  ->message_like({binary => qr/.+/}, 'idempotent identity frame is binary');
+
+my $identity_repeat_event = decode_frame($identity_repeat->message->[1]);
+is($identity_repeat_event->{header}{t}, '#identity', 'idempotent update still emits identity');
+is($identity_repeat_event->{body}{handle}, 'alice-renamed.example.test', 'idempotent identity event preserves the handle');
+$identity_repeat->finish_ok;
+
+my $deactivate_watch = Test::Mojo->new($app);
+$deactivate_watch->websocket_ok('/xrpc/com.atproto.sync.subscribeRepos');
+$t->post_ok('/xrpc/com.atproto.server.deactivateAccount' => {
+  Authorization => "Bearer $access",
+} => json => {})->status_is(200);
+
+$deactivate_watch->message_ok('deactivation emits an account frame')
+  ->message_like({binary => qr/.+/}, 'deactivation frame is binary');
+
+my $deactivated = decode_frame($deactivate_watch->message->[1]);
+is($deactivated->{header}{t}, '#account', 'deactivation frame is account');
+is($deactivated->{body}{did}, $did, 'deactivation identifies the repo');
+ok(!$deactivated->{body}{active}, 'deactivation marks the account inactive');
+is($deactivated->{body}{status}, 'deactivated', 'deactivation reports deactivated status');
+$deactivate_watch->finish_ok;
+
+my $activate_watch = Test::Mojo->new($app);
+$activate_watch->websocket_ok('/xrpc/com.atproto.sync.subscribeRepos');
+$t->post_ok('/xrpc/com.atproto.server.activateAccount' => {
+  Authorization => "Bearer $access",
+} => json => {})->status_is(200);
+
+$activate_watch->message_ok('activation emits an account frame')
+  ->message_like({binary => qr/.+/}, 'activation account frame is binary');
+my $reactivated = decode_frame($activate_watch->message->[1]);
+is($reactivated->{header}{t}, '#account', 'activation starts with an account frame');
+is($reactivated->{body}{did}, $did, 'activation account frame identifies the repo');
+ok($reactivated->{body}{active}, 'activation marks the account active again');
+ok(!defined $reactivated->{body}{status}, 'reactivation clears the account status');
+
+$activate_watch->message_ok('activation emits a fresh identity frame')
+  ->message_like({binary => qr/.+/}, 'activation identity frame is binary');
+my $reactivation_identity = decode_frame($activate_watch->message->[1]);
+is($reactivation_identity->{header}{t}, '#identity', 'activation emits an identity frame');
+is($reactivation_identity->{body}{handle}, 'alice-renamed.example.test', 'reactivation identity frame uses the latest handle');
+
+$activate_watch->message_ok('activation emits a sync frame')
+  ->message_like({binary => qr/.+/}, 'activation sync frame is binary');
+my $reactivation_sync = decode_frame($activate_watch->message->[1]);
+is($reactivation_sync->{header}{t}, '#sync', 'activation emits a sync frame');
+is($reactivation_sync->{body}{did}, $did, 'activation sync identifies the repo');
+$activate_watch->finish_ok;
+
+my $takedown_watch = Test::Mojo->new($app);
+$takedown_watch->websocket_ok('/xrpc/com.atproto.sync.subscribeRepos');
+$t->post_ok('/xrpc/com.atproto.admin.updateSubjectStatus' => {
+  Authorization => $admin_auth,
+} => json => {
+  subject  => { did => $did },
+  takedown => { applied => 1 },
+})->status_is(200);
+
+$takedown_watch->message_ok('repo takedown emits an account frame')
+  ->message_like({binary => qr/.+/}, 'repo takedown frame is binary');
+
+my $takedown = decode_frame($takedown_watch->message->[1]);
+is($takedown->{header}{t}, '#account', 'repo takedown frame is account');
+is($takedown->{body}{did}, $did, 'repo takedown identifies the repo');
+ok(!$takedown->{body}{active}, 'repo takedown marks the account inactive');
+is($takedown->{body}{status}, 'takendown', 'repo takedown reports takendown status');
+$takedown_watch->finish_ok;
+
+my $restore_watch = Test::Mojo->new($app);
+$restore_watch->websocket_ok('/xrpc/com.atproto.sync.subscribeRepos');
+$t->post_ok('/xrpc/com.atproto.admin.updateSubjectStatus' => {
+  Authorization => $admin_auth,
+} => json => {
+  subject  => { did => $did },
+  takedown => { applied => 0 },
+})->status_is(200);
+
+$restore_watch->message_ok('repo restore emits an account frame')
+  ->message_like({binary => qr/.+/}, 'repo restore frame is binary');
+
+my $restored = decode_frame($restore_watch->message->[1]);
+is($restored->{header}{t}, '#account', 'repo restore frame is account');
+is($restored->{body}{did}, $did, 'repo restore identifies the repo');
+ok($restored->{body}{active}, 'repo restore marks the account active again');
+ok(!defined $restored->{body}{status}, 'repo restore clears the account status');
+$restore_watch->finish_ok;
+
+$t->post_ok('/xrpc/com.atproto.server.createAccount' => json => {
+  handle   => 'charlie.example.test',
+  email    => 'charlie@example.test',
+  password => 'hunter22',
+})->status_is(200);
+my $charlie_did = $t->tx->res->json->{did};
+
+my $delete_account_watch = Test::Mojo->new($app);
+$delete_account_watch->websocket_ok('/xrpc/com.atproto.sync.subscribeRepos');
+$t->post_ok('/xrpc/com.atproto.admin.deleteAccount' => {
+  Authorization => $admin_auth,
+} => json => {
+  did => $charlie_did,
+})->status_is(200);
+
+$delete_account_watch->message_ok('admin deletion emits an account frame')
+  ->message_like({binary => qr/.+/}, 'admin deletion frame is binary');
+
+my $deleted_account = decode_frame($delete_account_watch->message->[1]);
+is($deleted_account->{header}{t}, '#account', 'admin deletion frame is account');
+is($deleted_account->{body}{did}, $charlie_did, 'admin deletion identifies the deleted repo');
+ok(!$deleted_account->{body}{active}, 'admin deletion marks the account inactive');
+is($deleted_account->{body}{status}, 'deleted', 'admin deletion reports deleted status');
+$delete_account_watch->finish_ok;
 
 my $firehose_latest = $app->store->latest_event_seq;
 my $exclusive = Test::Mojo->new($app);

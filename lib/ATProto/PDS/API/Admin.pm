@@ -69,6 +69,9 @@ sub register_admin_handlers ($registry, $app) {
     my $subject = _validated_subject($c, $body->{subject} || {});
     my $subject_key = subject_key($subject);
     my $existing = $c->store->get_subject_status($subject_key);
+    my $account_before = (exists($subject->{did}) && !exists($subject->{uri}) && !exists($subject->{cid}))
+      ? $c->store->get_account_by_did($subject->{did})
+      : undef;
     my $status = $c->store->put_subject_status(
       subject_key  => $subject_key,
       subject      => $subject,
@@ -76,20 +79,18 @@ sub register_admin_handlers ($registry, $app) {
       deactivated  => exists($body->{deactivated}) ? $body->{deactivated} : ($existing ? $existing->{deactivated} : undef),
     );
     _sync_hide_label($c, $subject, $existing, $status);
+    my $account_after = $account_before;
     if (exists($subject->{did}) && !exists($subject->{uri}) && !exists($subject->{cid}) && exists($body->{deactivated})) {
-      my $account = $c->store->update_account(
+      $account_after = $c->store->update_account(
         $subject->{did},
         deactivated_at => $body->{deactivated}{applied} ? time : undef,
       );
-      $c->append_event(
-        did     => $subject->{did},
-        type    => 'account',
-        rev     => ($account->{repo_rev} // undef),
-        payload => {
-          active => $body->{deactivated}{applied} ? JSON::PP::false : JSON::PP::true,
-          ($body->{deactivated}{applied} ? (status => 'deactivated') : ()),
-        },
-      );
+    }
+    if (exists($subject->{did}) && !exists($subject->{uri}) && !exists($subject->{cid}) && (exists($body->{takedown}) || exists($body->{deactivated}))) {
+      my $before = _repo_account_event_payload($account_before, $existing);
+      my $after  = _repo_account_event_payload($account_after, $status);
+      _append_account_event($c, $subject->{did}, $account_after, $after)
+        unless _same_account_event_payload($before, $after);
     }
     if (exists($subject->{did}) && exists($subject->{cid})) {
       $c->store->update_blob(
@@ -173,13 +174,14 @@ sub register_admin_handlers ($registry, $app) {
     my $account = $c->store->get_account_by_did($body->{did} // q());
     xrpc_error(404, 'AccountNotFound', 'Account was not found') unless $account;
     $c->store->txn(sub ($dbh) {
-      $c->store->update_account(
+      my $deleted = $c->store->update_account(
         $account->{did},
         deactivated_at => time,
         deleted_at     => time,
       );
       $c->store->revoke_sessions_by_did($account->{did});
       $c->store->revoke_app_passwords_by_did($account->{did});
+      _append_account_event($c, $account->{did}, $deleted, _repo_account_event_payload($deleted, undef));
     });
     return {};
   });
@@ -343,6 +345,43 @@ sub _set_account_invites ($c, $identifier, $disabled, $note) {
     invite_note      => $note,
   );
   return {};
+}
+
+sub _append_account_event ($c, $did, $account, $payload) {
+  $c->append_event(
+    did     => $did,
+    type    => 'account',
+    rev     => ($account->{repo_rev} // undef),
+    payload => $payload,
+  );
+  return;
+}
+
+sub _repo_account_event_payload ($account, $status) {
+  my $takedown = ($status && $status->{takedown} && $status->{takedown}{applied}) ? 1 : 0;
+  # Match the effective hosting state that firehose consumers should observe.
+  return {
+    active => JSON::PP::false,
+    status => 'deleted',
+  } if $account && defined $account->{deleted_at};
+  return {
+    active => JSON::PP::false,
+    status => 'takendown',
+  } if $takedown;
+  return {
+    active => JSON::PP::false,
+    status => 'deactivated',
+  } if $account && defined $account->{deactivated_at};
+  return {
+    active => JSON::PP::true,
+  };
+}
+
+sub _same_account_event_payload ($left, $right) {
+  my $left_active  = ($left && $left->{active}) ? 1 : 0;
+  my $right_active = ($right && $right->{active}) ? 1 : 0;
+  return 0 if $left_active != $right_active;
+  return (($left->{status} // q()) eq ($right->{status} // q())) ? 1 : 0;
 }
 
 1;
