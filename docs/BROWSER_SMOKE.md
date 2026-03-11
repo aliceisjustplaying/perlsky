@@ -86,7 +86,7 @@ It also fails the test run if the browser harness finishes with `summary.ok = fa
 
 ## Extraction
 
-The generic runtime now lives under [pds-smoke-suite](../pds-smoke-suite/README.md).
+The generic runtime now lives under [atproto-smoke](../atproto-smoke/README.md).
 `perlsky` still keeps [script/perlsky-browser-smoke](/Users/sarah/src/tries/2026-03-10-perlds/script/perlsky-browser-smoke)
 as the ergonomic adapter for this repo, but the standalone package now owns:
 

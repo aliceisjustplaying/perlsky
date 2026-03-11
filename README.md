@@ -58,7 +58,7 @@ Browser smoke:
 - DMs are intentionally deferred from the current browser-smoke tranche; see `docs/BROWSER_SMOKE.md` for current scope and rationale.
 - Fresh-account creation is still available through the explicit `bootstrap-*` commands, but it is no longer the normal path for repeated browser smoke runs.
 - Detailed browser-smoke workflow, current interaction coverage, and the env-gated `prove` wrapper live in `docs/BROWSER_SMOKE.md`.
-- Extraction work toward a cross-PDS standalone package now lives in `pds-smoke-suite/`, which owns the browser runtime, package CLI, example configs, and bring-your-own-account plus `perlsky` adapter helpers.
+- Extraction work toward a cross-PDS standalone package now lives in `atproto-smoke/`, which owns the browser runtime, package CLI, example configs, and bring-your-own-account plus `perlsky` adapter helpers.
 - For now, `script/perlsky-browser-smoke` remains the active `perlsky` adapter entrypoint in this repo, forwarding into the generic package while the external package boundary stabilizes.
 
 Moderation and labels:
