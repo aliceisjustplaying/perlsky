@@ -77,7 +77,7 @@ sub proxy_xrpc_request ($self, $c, $nsid) {
 
   my $auth = $c->req->headers->authorization;
   if (defined $auth && length $auth) {
-    my (undef, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
+    my (undef, $account) = require_auth($c, audience => 'access');
     xrpc_error(500, 'SigningKeyUnavailable', 'Account signing key is unavailable')
       unless defined($account->{private_key}) && length($account->{private_key});
     $headers{Authorization} = 'Bearer ' . encode_service_jwt(
@@ -215,7 +215,7 @@ sub _get_preferences ($self, $c) {
   xrpc_error(405, 'MethodNotAllowed', 'app.bsky.actor.getPreferences expects GET')
     unless $c->req->method eq 'GET';
 
-  my (undef, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
+  my (undef, $account) = require_auth($c, audience => 'access');
   my $preferences = $c->store->list_preferences($account->{did}, 'app.bsky');
   $c->render(json => { preferences => $preferences });
   return 200;
@@ -225,7 +225,7 @@ sub _put_preferences ($self, $c) {
   xrpc_error(405, 'MethodNotAllowed', 'app.bsky.actor.putPreferences expects POST')
     unless $c->req->method eq 'POST';
 
-  my (undef, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
+  my (undef, $account) = require_auth($c, audience => 'access');
   my $body = $c->req->json || {};
   my $preferences = $body->{preferences};
   xrpc_error(400, 'InvalidRequest', 'preferences must be an array')
@@ -349,7 +349,7 @@ sub _get_post_thread ($self, $c) {
 sub _optional_auth_account ($self, $c) {
   my $auth = $c->req->headers->authorization;
   return undef unless defined $auth && length $auth;
-  my (undef, $account) = require_auth($c, audience => 'access', allow_refresh => 1);
+  my (undef, $account) = require_auth($c, audience => 'access');
   return $account;
 }
 
@@ -425,9 +425,11 @@ sub _blob_url ($self, $c, $did, $cid) {
 sub _resolve_local_post_uri ($self, $c, $uri) {
   my ($repo, $collection, $rkey) = parse_at_uri($uri);
   return undef unless defined $repo && defined $collection && defined $rkey;
-  return undef unless $collection eq 'app.bsky.feed.post';
   my $account = resolve_repo($c, $repo) or return undef;
-  my $row = $c->store->get_record($account->{did}, $collection, $rkey) or return undef;
+  xrpc_error(404, 'RecordNotFound', 'Record was not found')
+    unless $collection eq 'app.bsky.feed.post';
+  my $row = $c->store->get_record($account->{did}, $collection, $rkey);
+  xrpc_error(404, 'RecordNotFound', 'Record was not found') unless $row;
   return [ $account, $row ];
 }
 

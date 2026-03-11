@@ -10,10 +10,10 @@ use JSON::PP ();
 
 our @EXPORT_OK = qw(
   blob_ref
+  flatten_params
   iso8601
   resolve_did_account
   resolve_repo
-  subject_key
   xrpc_error
 );
 
@@ -23,6 +23,14 @@ sub xrpc_error ($status, $error, $message) {
     error   => $error,
     message => $message,
   };
+}
+
+sub flatten_params (@values) {
+  my @flat;
+  for my $value (@values) {
+    push @flat, ref($value) eq 'ARRAY' ? @$value : $value;
+  }
+  return @flat;
 }
 
 sub iso8601 ($epoch = undef) {
@@ -55,16 +63,6 @@ sub resolve_repo ($c, $repo) {
   return undef unless defined $repo && length $repo;
   return $c->store->get_account_by_handle($repo) unless $repo =~ /\Adid:/;
   return resolve_did_account($c, $repo);
-}
-
-sub subject_key ($subject) {
-  return 'blob:' . ($subject->{did} // q()) . ':' . ($subject->{cid} // q())
-    if ref($subject) eq 'HASH' && exists $subject->{cid} && exists $subject->{did} && !exists $subject->{uri};
-  return 'uri:' . ($subject->{uri} // q())
-    if ref($subject) eq 'HASH' && exists $subject->{uri};
-  return 'repo:' . ($subject->{did} // q())
-    if ref($subject) eq 'HASH' && exists $subject->{did};
-  return 'unknown';
 }
 
 sub blob_ref ($cid, $mime_type, $size) {

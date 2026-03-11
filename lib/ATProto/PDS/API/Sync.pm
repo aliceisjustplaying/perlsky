@@ -10,7 +10,7 @@ use JSON::PP ();
 use Mojo::IOLoop;
 
 use ATProto::PDS::EventStream qw(encode_error_frame encode_info_frame encode_message_frame);
-use ATProto::PDS::API::Util qw(iso8601 resolve_did_account xrpc_error);
+use ATProto::PDS::API::Util qw(flatten_params iso8601 resolve_did_account xrpc_error);
 use ATProto::PDS::Identity qw(service_host);
 use ATProto::PDS::Moderation qw(assert_blob_readable assert_record_readable assert_repo_readable);
 use ATProto::PDS::Repo::CAR qw(write_car);
@@ -96,7 +96,7 @@ sub register_sync_handlers ($registry, $app) {
     my $account = resolve_did_account($c, $c->param('did') // q());
     xrpc_error(404, 'RepoNotFound', 'Repository was not found') unless $account;
     assert_repo_readable($c, $account, message => 'Could not find repo for DID: ' . ($c->param('did') // q()));
-    my @cids = _flatten_params($c->every_param('cids'));
+    my @cids = flatten_params($c->every_param('cids'));
     xrpc_error(400, 'InvalidRequest', 'At least one CID is required') unless @cids;
     my $rows = $c->store->get_blocks(\@cids);
     my %found = map { $_->{cid} => $_ } @$rows;
@@ -279,14 +279,6 @@ sub register_sync_handlers ($registry, $app) {
     });
     return;
   });
-}
-
-sub _flatten_params (@values) {
-  my @flat;
-  for my $value (@values) {
-    push @flat, ref($value) eq 'ARRAY' ? @$value : $value;
-  }
-  return @flat;
 }
 
 sub _host_view ($c, $row) {
