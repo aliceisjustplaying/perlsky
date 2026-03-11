@@ -11,10 +11,12 @@ use Digest::SHA qw(sha256 sha256_hex);
 our @EXPORT_OK = qw(hash_password random_bytes random_hex timing_safe_eq verify_password);
 
 sub random_bytes ($length = 16) {
-  open(my $fh, '<:raw', '/dev/urandom') or die "open(/dev/urandom): $!";
+  state $fh = do {
+    open(my $random_fh, '<:raw', '/dev/urandom') or die "open(/dev/urandom): $!";
+    $random_fh;
+  };
   my $bytes = q();
   my $read = read($fh, $bytes, $length);
-  close($fh);
   die 'failed to read random bytes' unless defined $read && $read == $length;
   return $bytes;
 }
