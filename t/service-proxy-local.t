@@ -42,10 +42,31 @@ use ATProto::PDS::ServiceProxy;
     return $self->{list_accounts} // [];
   }
 
+  sub get_accounts_by_dids {
+    my ($self, $dids) = @_;
+    $self->{get_accounts_by_dids_calls}++;
+    $self->{get_accounts_by_dids_args} = [ @$dids ];
+    return [
+      map { $self->{accounts_by_did}{$_} }
+      grep { defined $self->{accounts_by_did}{$_} } @$dids
+    ];
+  }
+
   sub all_records_for_did {
     my ($self, $did) = @_;
     $self->{all_records_for_did_calls}{$did}++;
     return $self->{all_records_for_did}{$did} // [];
+  }
+
+  sub list_records_by_collections {
+    my ($self, $collections) = @_;
+    $self->{list_records_by_collections_calls}++;
+    $self->{list_records_by_collections_args} = [ @$collections ];
+    my %wanted = map { $_ => 1 } @$collections;
+    return [
+      grep { $wanted{ $_->{collection} // q() } }
+      @{ $self->{list_records_by_collections} // [] }
+    ];
   }
 
   sub latest_event_seq {
@@ -146,22 +167,28 @@ is(
 
 my $cache_store = LocalTestStore->new(
   latest_event_seq => 1,
-  list_accounts => [
-    {
+  accounts_by_did => {
+    $did => {
       did    => $did,
       handle => 'alice.test',
     },
-  ],
-  all_records_for_did => {
-    $did => [
-      {
-        collection => 'app.bsky.feed.post',
-        rkey       => 'cached-post',
-        cid        => 'bafyreicached',
-        value      => { text => 'cached' },
-      },
-    ],
   },
+  list_records_by_collections => [
+    {
+      did        => $did,
+      collection => 'app.bsky.feed.post',
+      rkey       => 'cached-post',
+      cid        => 'bafyreicached',
+      value      => { text => 'cached' },
+    },
+    {
+      did        => $did,
+      collection => 'app.bsky.actor.profile',
+      rkey       => 'self',
+      cid        => 'bafyreiprofile',
+      value      => { displayName => 'Ignored by local post index' },
+    },
+  ],
 );
 
 my $cached_proxy = ATProto::PDS::ServiceProxy->new;
@@ -170,19 +197,25 @@ my $second_cache_context = LocalTestContext->new($cache_store);
 my $third_cache_context = LocalTestContext->new($cache_store);
 
 my $first_index = $cached_proxy->_local_post_index($first_cache_context);
-is($cache_store->{list_accounts_calls}, 1, 'first local post index build scans accounts once');
-is($cache_store->{all_records_for_did_calls}{$did}, 1, 'first local post index build scans records once');
+is($cache_store->{list_records_by_collections_calls}, 1, 'first local post index build scans relevant records once');
+is($cache_store->{get_accounts_by_dids_calls}, 1, 'first local post index build fetches account metadata once');
+is_deeply(
+  $cache_store->{list_records_by_collections_args},
+  [qw(app.bsky.feed.post app.bsky.feed.like app.bsky.feed.repost)],
+  'local post index only requests feed-relevant collections',
+);
+is_deeply($cache_store->{get_accounts_by_dids_args}, [$did], 'local post index batches account lookup by DID');
 
 my $second_index = $cached_proxy->_local_post_index($second_cache_context);
 is($cache_store->{latest_event_seq_calls}, 2, 'subsequent requests still check the latest event seq');
-is($cache_store->{list_accounts_calls}, 1, 'unchanged event seq reuses the cached global post index');
-is($cache_store->{all_records_for_did_calls}{$did}, 1, 'unchanged event seq avoids rescanning records');
+is($cache_store->{list_records_by_collections_calls}, 1, 'unchanged event seq reuses the cached global post index');
+is($cache_store->{get_accounts_by_dids_calls}, 1, 'unchanged event seq avoids refetching account metadata');
 is($second_index, $first_index, 'unchanged event seq returns the cached index reference');
 
 $cache_store->{latest_event_seq} = 2;
 my $third_index = $cached_proxy->_local_post_index($third_cache_context);
-is($cache_store->{list_accounts_calls}, 2, 'new events invalidate the cached global post index');
-is($cache_store->{all_records_for_did_calls}{$did}, 2, 'new events trigger a rebuild scan');
+is($cache_store->{list_records_by_collections_calls}, 2, 'new events invalidate the cached global post index');
+is($cache_store->{get_accounts_by_dids_calls}, 2, 'new events trigger a fresh account batch lookup');
 isnt($third_index, $first_index, 'new events rebuild the cached index');
 
 done_testing;

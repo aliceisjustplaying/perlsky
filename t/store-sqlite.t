@@ -119,6 +119,54 @@ is(
   'repo head falls back to account metadata when repo_heads row is missing',
 );
 
+$store->put_record(
+  did        => $account->{did},
+  collection => 'app.bsky.feed.post',
+  rkey       => 'post-1',
+  cid        => 'bafypost1',
+  record_bytes => q(),
+  value      => {
+    '$type'   => 'app.bsky.feed.post',
+    text      => 'hello',
+    createdAt => '2026-03-11T19:00:00Z',
+  },
+);
+$store->put_record(
+  did        => $account->{did},
+  collection => 'app.bsky.actor.profile',
+  rkey       => 'self',
+  cid        => 'bafyprofile1',
+  record_bytes => q(),
+  value      => { displayName => 'Alice' },
+);
+$store->put_record(
+  did        => $second_account->{did},
+  collection => 'app.bsky.feed.like',
+  rkey       => 'like-1',
+  cid        => 'bafylike1',
+  record_bytes => q(),
+  value      => {
+    '$type'   => 'app.bsky.feed.like',
+    subject   => { uri => 'at://did:web:pds.example.com:users:alice/app.bsky.feed.post/post-1' },
+    createdAt => '2026-03-11T19:01:00Z',
+  },
+);
+
+my $feed_records = $store->list_records_by_collections([
+  'app.bsky.feed.post',
+  'app.bsky.feed.like',
+]);
+is(
+  [ map { $_->{collection} } @$feed_records ],
+  ['app.bsky.feed.post', 'app.bsky.feed.like'],
+  'collection-scoped record listings only return the requested feed collections',
+);
+is(
+  [ map { $_->{did} } @$feed_records ],
+  [$account->{did}, $second_account->{did}],
+  'collection-scoped record listings preserve did ordering for batched account lookup',
+);
+
 $store->revoke_session('sess-1', revoked_at => 123);
 is($store->get_session('sess-1')->{revoked_at}, 123, 'sessions can be revoked');
 

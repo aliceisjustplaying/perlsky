@@ -226,47 +226,55 @@ sub _local_post_index ($self, $c) {
 # Local appview reads can hit this repeatedly across requests, so keep the
 # expensive scan isolated behind an event-seq keyed cache.
 sub _build_local_post_index ($self, $c) {
+  my @collections = qw(
+    app.bsky.feed.post
+    app.bsky.feed.like
+    app.bsky.feed.repost
+  );
+  my $rows = $c->store->list_records_by_collections(\@collections);
+  my %did_seen = map { $_->{did} => 1 } grep { defined $_->{did} && length $_->{did} } @$rows;
+  my %accounts_by_did = map { $_->{did} => $_ }
+    @{ $c->store->get_accounts_by_dids([ sort keys %did_seen ]) };
   my $index = {
     replies => {},
     stats   => {},
     viewer  => {},
   };
 
-  for my $account (@{ $c->store->list_accounts }) {
-    for my $row (@{ $c->store->all_records_for_did($account->{did}) }) {
-      my $value = $row->{value};
-      next unless ref($value) eq 'HASH';
+  for my $row (@$rows) {
+    my $account = $accounts_by_did{ $row->{did} } or next;
+    my $value = $row->{value};
+    next unless ref($value) eq 'HASH';
 
-      if (($row->{collection} // q()) eq 'app.bsky.feed.post') {
-        my $reply = $value->{reply};
-        if (ref($reply) eq 'HASH') {
-          my $parent_uri = $reply->{parent}{uri} // q();
-          if (length $parent_uri) {
-            push @{ $index->{replies}{$parent_uri} }, [ $account, $row ];
-            _local_post_stats($index, $parent_uri)->{replyCount}++;
-          }
+    if (($row->{collection} // q()) eq 'app.bsky.feed.post') {
+      my $reply = $value->{reply};
+      if (ref($reply) eq 'HASH') {
+        my $parent_uri = $reply->{parent}{uri} // q();
+        if (length $parent_uri) {
+          push @{ $index->{replies}{$parent_uri} }, [ $account, $row ];
+          _local_post_stats($index, $parent_uri)->{replyCount}++;
         }
-
-        my $quoted_uri = $self->_quoted_uri($value) // q();
-        _local_post_stats($index, $quoted_uri)->{quoteCount}++
-          if length $quoted_uri;
-        next;
       }
 
-      if (($row->{collection} // q()) eq 'app.bsky.feed.like') {
-        my $subject_uri = $value->{subject}{uri} // q();
-        next unless length $subject_uri;
-        _local_post_stats($index, $subject_uri)->{likeCount}++;
-        $index->{viewer}{$subject_uri}{like}{$account->{did}} = $self->_post_uri($account, $row);
-        next;
-      }
+      my $quoted_uri = $self->_quoted_uri($value) // q();
+      _local_post_stats($index, $quoted_uri)->{quoteCount}++
+        if length $quoted_uri;
+      next;
+    }
 
-      if (($row->{collection} // q()) eq 'app.bsky.feed.repost') {
-        my $subject_uri = $value->{subject}{uri} // q();
-        next unless length $subject_uri;
-        _local_post_stats($index, $subject_uri)->{repostCount}++;
-        $index->{viewer}{$subject_uri}{repost}{$account->{did}} = $self->_post_uri($account, $row);
-      }
+    if (($row->{collection} // q()) eq 'app.bsky.feed.like') {
+      my $subject_uri = $value->{subject}{uri} // q();
+      next unless length $subject_uri;
+      _local_post_stats($index, $subject_uri)->{likeCount}++;
+      $index->{viewer}{$subject_uri}{like}{$account->{did}} = $self->_post_uri($account, $row);
+      next;
+    }
+
+    if (($row->{collection} // q()) eq 'app.bsky.feed.repost') {
+      my $subject_uri = $value->{subject}{uri} // q();
+      next unless length $subject_uri;
+      _local_post_stats($index, $subject_uri)->{repostCount}++;
+      $index->{viewer}{$subject_uri}{repost}{$account->{did}} = $self->_post_uri($account, $row);
     }
   }
 

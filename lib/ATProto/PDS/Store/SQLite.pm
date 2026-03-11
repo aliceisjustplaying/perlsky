@@ -783,6 +783,21 @@ sub all_records_for_did ($self, $did) {
   return [ map { _row_to_record($_) } @$rows ];
 }
 
+sub list_records_by_collections ($self, $collections) {
+  return observe_store_operation($self->{metrics}, 'list_records_by_collections', sub {
+    my @collections = grep { defined($_) && length($_) } @{ $collections // [] };
+    return [] unless @collections;
+
+    my $placeholders = join(', ', ('?') x @collections);
+    my $rows = $self->dbh->selectall_arrayref(
+      "SELECT * FROM records WHERE collection IN ($placeholders) ORDER BY did, collection, rkey",
+      { Slice => {} },
+      @collections,
+    );
+    return [ map { _row_to_record($_) } @$rows ];
+  });
+}
+
 sub list_collections_for_did ($self, $did) {
   my $rows = $self->dbh->selectall_arrayref(
     q{SELECT DISTINCT collection FROM records WHERE did = ? ORDER BY collection},
@@ -1217,6 +1232,7 @@ sub default_migrations {
           )
         },
         q{CREATE INDEX IF NOT EXISTS records_by_collection ON records(did, collection, rkey)},
+        q{CREATE INDEX IF NOT EXISTS records_by_collection_did_rkey ON records(collection, did, rkey)},
         q{
           CREATE TABLE IF NOT EXISTS blocks (
             cid TEXT PRIMARY KEY,
