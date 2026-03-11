@@ -53,6 +53,11 @@ The current reusable dual-account smoke exercises these `bsky.app` flows:
 - report-post draft flow without submitting the external report
 - cleanup of created posts plus undo of follow/like/bookmark/repost state
 
+Two notification checks are intentionally different:
+
+- like/repost/quote/reply notifications between the two smoke accounts are required and part of the clean passing run
+- the later "follow notification appears for the other smoke account" probe is still optional because it is the least stable live `bsky.app` timing edge
+
 Artifacts include screenshots plus `summary.json`, which captures:
 
 - step-by-step status
@@ -71,9 +76,11 @@ PERLSKY_RUN_BROWSER_SMOKE=1 prove -lv t/browser-smoke.t
 ```
 
 That wrapper still uses `script/perlsky-browser-smoke`, so the script remains the canonical entrypoint.
+It also fails the test run if the browser harness finishes with `summary.ok = false`, so late browser/runtime regressions are no longer silently accepted.
 
 ## Notes
 
 - The reusable dual-account path is intentionally conservative about account creation. Fresh actors are only created through explicit `bootstrap-*` commands.
 - The report flow stops at the draft/submit screen on purpose so smoke runs do not send moderation reports to external services.
 - The current broad smoke automates only dedicated smoke accounts. It does not log into `@alice.mosphere.at`.
+- The smoke accounts can still visit and interact with `@alice.mosphere.at` as a public target, but the harness does not authenticate as that account.
