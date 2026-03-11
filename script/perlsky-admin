@@ -52,10 +52,7 @@ if ($command eq 'create-invite') {
     'created-by=s'  => \$created_by,
   ) or die usage();
 
-  my $store = ATProto::PDS::Store::SQLite->new(
-    path => $config->{db_path} || File::Spec->catfile($root, 'data', 'runtime', 'perlsky.sqlite'),
-  )->bootstrap;
-
+  my $store = _store($config, $root);
   my $code = _new_invite_code();
   $store->create_invite_code(
     code        => $code,
@@ -68,10 +65,7 @@ if ($command eq 'create-invite') {
 }
 
 if ($command eq 'repair-binary-columns') {
-  my $store = ATProto::PDS::Store::SQLite->new(
-    path => $config->{db_path} || File::Spec->catfile($root, 'data', 'runtime', 'perlsky.sqlite'),
-  )->bootstrap;
-
+  my $store = _store($config, $root);
   my $result = $store->repair_binary_columns;
   for my $key (sort keys %$result) {
     print "$key=$result->{$key}\n";
@@ -88,9 +82,7 @@ if ($command eq 'repair-invalid-tids') {
     'force!' => \$force,
   ) or die usage();
 
-  my $store = ATProto::PDS::Store::SQLite->new(
-    path => $config->{db_path} || File::Spec->catfile($root, 'data', 'runtime', 'perlsky.sqlite'),
-  )->bootstrap;
+  my $store = _store($config, $root);
   my $manager = ATProto::PDS::Repo::Manager->new(store => $store);
 
   my @accounts = $did
@@ -118,6 +110,13 @@ if ($command eq 'repair-invalid-tids') {
 }
 
 die usage();
+
+sub _store {
+  my ($config, $root) = @_;
+  return ATProto::PDS::Store::SQLite->new(
+    path => $config->{db_path} || File::Spec->catfile($root, 'data', 'runtime', 'perlsky.sqlite'),
+  )->bootstrap;
+}
 
 sub _new_invite_code {
   return 'perlsky-' . substr(random_hex(8), 0, 12);
