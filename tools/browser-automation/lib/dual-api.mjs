@@ -246,7 +246,10 @@ export const createDualApiHelpers = ({ config }) => {
   };
 
   const stalePostPrefixesFor = (account) => {
-    if (/secondary/i.test(account.postText)) {
+    if (Array.isArray(account.cleanupPostPrefixes) && account.cleanupPostPrefixes.length) {
+      return account.cleanupPostPrefixes;
+    }
+    if (/secondary/i.test(account.postText || '')) {
       return ['perlsky browser secondary '];
     }
     return ['perlsky browser smoke '];

@@ -304,6 +304,7 @@ if ($cmd eq 'run-dual') {
     quoteText   => $opt{quote_text},
     replyText   => $opt{reply_text},
     profileNote => $opt{profile_note},
+    cleanupPostPrefixes => ['perlsky browser smoke '],
   };
   $config->{secondary} = {
     handle      => $opt{secondary_handle},
@@ -313,8 +314,10 @@ if ($cmd eq 'run-dual') {
     quoteText   => $opt{secondary_quote_text},
     replyText   => $opt{secondary_reply_text},
     profileNote => $opt{secondary_profile_note},
+    cleanupPostPrefixes => ['perlsky browser secondary '],
   };
   $config->{accountSource} = $opt{_pair_loaded} ? 'pair-file' : 'cli';
+  $config->{adapter} = 'perlsky';
   _save_pair_file($opt{pair_file}, {
     primary => {
       handle   => $opt{handle},
@@ -335,6 +338,7 @@ if ($cmd eq 'run-dual') {
   $config->{replyText}   = $opt{reply_text};
   $config->{profileNote} = $opt{profile_note};
   $config->{editProfile} = $opt{edit_profile} ? JSON::PP::true : JSON::PP::false;
+  $config->{adapter}     = 'perlsky';
 }
 
 my $config_path = File::Spec->catfile($artifacts_dir, 'config.json');
