@@ -704,8 +704,8 @@ sub _session_response ($c, $account, $session) {
 }
 
 sub _canonical_access_scope ($scope = undef) {
-  return 'access' unless defined $scope && length $scope;
-  return 'access' if $scope eq 'atproto';
+  return TOKEN_AUD_ACCESS unless defined $scope && length $scope;
+  return TOKEN_AUD_ACCESS if $scope eq 'atproto';
   return $scope;
 }
 
@@ -716,11 +716,11 @@ sub _normalize_lxm ($lxm = q()) {
 sub _scope_allows ($scope, $required_scope) {
   $scope = _canonical_access_scope($scope);
   return 1 if !defined($required_scope) || !length($required_scope);
-  return $scope eq 'access'
+  return $scope eq TOKEN_AUD_ACCESS
     if $required_scope eq 'full';
-  return $scope eq 'access' || $scope eq 'app_password_privileged'
+  return $scope eq TOKEN_AUD_ACCESS || $scope eq 'app_password_privileged'
     if $required_scope eq 'privileged';
-  return $scope eq 'access' || $scope eq 'app_password' || $scope eq 'app_password_privileged'
+  return $scope eq TOKEN_AUD_ACCESS || $scope eq 'app_password' || $scope eq 'app_password_privileged'
     if $required_scope eq 'standard';
   return 0;
 }
