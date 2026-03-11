@@ -209,6 +209,7 @@ sub register_server_handlers ($registry, $app) {
     my (undef, $account) = require_auth($c, audience => 'access');
     my $car = $c->store->repo_car($account->{did});
     my $block_count = 0;
+    my $blob_count = 0 + $c->store->count_blobs_by_did($account->{did});
     $block_count = scalar @{ read_car($car)->{blocks} } if defined $car && length $car;
     return {
       activated          => (!defined($account->{deactivated_at}) && !defined($account->{deleted_at}))
@@ -220,8 +221,8 @@ sub register_server_handlers ($registry, $app) {
       repoBlocks         => 0 + $block_count,
       indexedRecords     => 0 + $c->store->count_records_by_did($account->{did}),
       privateStateValues => 0,
-      expectedBlobs      => 0 + $c->store->count_blobs_by_did($account->{did}),
-      importedBlobs      => 0 + $c->store->count_blobs_by_did($account->{did}),
+      expectedBlobs      => $blob_count,
+      importedBlobs      => $blob_count,
     };
   });
 
