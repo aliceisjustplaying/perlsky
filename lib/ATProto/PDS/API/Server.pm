@@ -345,17 +345,12 @@ sub register_server_handlers ($registry, $app) {
     my $body = $c->req->json || {};
     my $account = $c->store->get_account_by_email($body->{email} // q());
     if ($account) {
-      my $token = $c->store->create_action_token(
-        did        => $account->{did},
-        email      => $account->{email},
-        purpose    => 'password_reset',
-        expires_at => time + 3600,
-      );
-      $c->store->log_outbound_email(
-        recipient_did   => $account->{did},
-        recipient_email => $account->{email},
-        subject         => 'perlsky password reset',
-        content         => "Use token $token->{token} to reset your password.",
+      _issue_account_action_token(
+        $c,
+        $account,
+        purpose => 'password_reset',
+        subject => 'perlsky password reset',
+        content => sub ($token) { "Use token $token->{token} to reset your password." },
       );
     }
     return {};
@@ -388,17 +383,12 @@ sub register_server_handlers ($registry, $app) {
   $registry->register('com.atproto.server.requestEmailConfirmation', sub ($c, $endpoint) {
     my (undef, $account) = require_auth($c, audience => 'access');
     return {} unless $account->{email};
-    my $token = $c->store->create_action_token(
-      did        => $account->{did},
-      email      => $account->{email},
-      purpose    => 'email_confirm',
-      expires_at => time + 3600,
-    );
-    $c->store->log_outbound_email(
-      recipient_did   => $account->{did},
-      recipient_email => $account->{email},
-      subject         => 'perlsky email confirmation',
-      content         => "Use token $token->{token} to confirm your email address.",
+    _issue_account_action_token(
+      $c,
+      $account,
+      purpose => 'email_confirm',
+      subject => 'perlsky email confirmation',
+      content => sub ($token) { "Use token $token->{token} to confirm your email address." },
     );
     return {};
   });
@@ -427,17 +417,12 @@ sub register_server_handlers ($registry, $app) {
     my (undef, $account) = require_auth($c, audience => 'access');
     my $token_required = defined $account->{email_confirmed_at} ? 1 : 0;
     if ($token_required) {
-      my $token = $c->store->create_action_token(
-        did        => $account->{did},
-        email      => $account->{email},
-        purpose    => 'email_update',
-        expires_at => time + 3600,
-      );
-      $c->store->log_outbound_email(
-        recipient_did   => $account->{did},
-        recipient_email => $account->{email},
-        subject         => 'perlsky email change authorization',
-        content         => "Use token $token->{token} to update your email address.",
+      _issue_account_action_token(
+        $c,
+        $account,
+        purpose => 'email_update',
+        subject => 'perlsky email change authorization',
+        content => sub ($token) { "Use token $token->{token} to update your email address." },
       );
     }
     return {
@@ -469,18 +454,13 @@ sub register_server_handlers ($registry, $app) {
 
   $registry->register('com.atproto.server.requestAccountDelete', sub ($c, $endpoint) {
     my (undef, $account) = require_auth($c, audience => 'access', required_scope => 'full');
-    my $token = $c->store->create_action_token(
-      did        => $account->{did},
-      email      => $account->{email},
-      purpose    => 'account_delete',
-      expires_at => time + 3600,
+    _issue_account_action_token(
+      $c,
+      $account,
+      purpose => 'account_delete',
+      subject => 'perlsky account deletion',
+      content => sub ($token) { "Use token $token->{token} to delete your account." },
     );
-    $c->store->log_outbound_email(
-      recipient_did   => $account->{did},
-      recipient_email => $account->{email},
-      subject         => 'perlsky account deletion',
-      content         => "Use token $token->{token} to delete your account.",
-    ) if $account->{email};
     return {};
   });
 
@@ -789,6 +769,27 @@ sub _initial_email_confirmed_at ($c, $email) {
   return undef unless defined $email && length $email;
   return undef unless $c->config_value('testing_auto_confirm_email', 1);
   return time;
+}
+
+sub _issue_account_action_token ($c, $account, %args) {
+  return undef unless $account;
+  my $token = $c->store->create_action_token(
+    did        => $account->{did},
+    email      => $account->{email},
+    purpose    => $args{purpose},
+    expires_at => $args{expires_at} // (time + 3600),
+  );
+  if (defined($account->{email}) && length($account->{email})) {
+    $c->store->log_outbound_email(
+      recipient_did   => $account->{did},
+      recipient_email => $account->{email},
+      subject         => $args{subject},
+      content         => ref($args{content}) eq 'CODE'
+        ? $args{content}->($token)
+        : $args{content},
+    );
+  }
+  return $token;
 }
 
 sub _require_action_token ($c, %args) {
