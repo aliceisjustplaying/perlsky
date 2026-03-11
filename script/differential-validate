@@ -464,6 +464,21 @@ sub normalize_commit_frame ($frame, $did) {
   };
 }
 
+sub normalize_repo_export ($car_bytes, $expected_root = undef) {
+  my $car = read_car($car_bytes // q());
+  my @roots = @{ $car->{roots} || [] };
+  my @blocks = @{ $car->{blocks} || [] };
+  my %block_cids = map { $_->{cid}->to_string => 1 } @blocks;
+  my $root = @roots ? $roots[0]->to_string : undef;
+  return {
+    roots_count          => 0 + @roots,
+    blocks_count         => 0 + @blocks,
+    root_present         => defined($root) ? 1 : 0,
+    root_in_blocks       => (defined($root) && $block_cids{$root}) ? 1 : 0,
+    root_matches_latest  => (defined($root) && defined($expected_root) && $root eq $expected_root) ? 1 : 0,
+  };
+}
+
 sub normalize_bootstrap_frames ($frames, $did, $handle) {
   return [
     map {
@@ -1206,9 +1221,19 @@ for my $name (sort keys %server) {
   check($res->is_success, "$name getLatestCommit succeeds");
   next unless $res->is_success;
   my $json = $res->json;
+  $server{$name}{latest_commit_raw} = $json;
+  $server{$name}{latest_commit} = {
+    has_cid => defined($json->{cid}) && length($json->{cid}) ? 1 : 0,
+    has_rev => defined($json->{rev}) && length($json->{rev}) ? 1 : 0,
+  };
   check(defined $json->{cid} && length $json->{cid}, "$name getLatestCommit returns a CID");
   check(defined $json->{rev} && length $json->{rev}, "$name getLatestCommit returns a rev");
 }
+
+check(
+  same_hash($server{reference}{latest_commit}, $server{perlsky}{latest_commit}),
+  'getLatestCommit matches the official reference PDS semantics',
+);
 
 note('Comparing getHead');
 for my $name (sort keys %server) {
@@ -1217,7 +1242,8 @@ for my $name (sort keys %server) {
   next unless $res->is_success;
   my $json = $res->json || {};
   $server{$name}{head} = {
-    has_root => defined($json->{root}) && length($json->{root}) ? 1 : 0,
+    has_root               => defined($json->{root}) && length($json->{root}) ? 1 : 0,
+    matches_latest_commit  => (($json->{root} // q()) eq (($server{$name}{latest_commit_raw}{cid} // q()))) ? 1 : 0,
   };
 }
 
@@ -1235,7 +1261,16 @@ for my $name (sort keys %server) {
   check($ctype =~ m{application/vnd\.ipld\.car}, "$name getRepo returns CAR bytes");
   check(length($res->body // q()) > 0, "$name getRepo CAR payload is non-empty");
   $server{$name}{repo_snapshot_car} = $res->body;
+  $server{$name}{repo_export} = normalize_repo_export(
+    $res->body,
+    $server{$name}{latest_commit_raw}{cid},
+  );
 }
+
+check(
+  same_hash($server{reference}{repo_export}, $server{perlsky}{repo_export}),
+  'getRepo matches the official reference PDS semantics',
+);
 
 note('Comparing getCheckout CAR exports');
 for my $name (sort keys %server) {
@@ -1243,9 +1278,14 @@ for my $name (sort keys %server) {
   check($res->is_success, "$name getCheckout succeeds");
   next unless $res->is_success;
   my $ctype = $res->headers->content_type // q();
+  my $normalized = normalize_repo_export(
+    $res->body,
+    $server{$name}{latest_commit_raw}{cid},
+  );
   $server{$name}{checkout} = {
     car_type => $ctype =~ m{application/vnd\.ipld\.car} ? 1 : 0,
     nonempty => length($res->body // q()) > 0 ? 1 : 0,
+    %{$normalized},
   };
 }
 
@@ -1435,14 +1475,19 @@ for my $name (sort keys %server) {
     'com.atproto.server.deleteSession',
     auth_header($json->{refreshJwt}),
   );
-  my $get_session = get_json(
+  my $refresh_after_delete = post_empty(
     $server{$name}{origin},
-    'com.atproto.server.getSession',
-    undef,
-    auth_header($json->{accessJwt}),
+    'com.atproto.server.refreshSession',
+    auth_header($json->{refreshJwt}),
   );
+  my $fresh_session = post_json($server{$name}{origin}, 'com.atproto.server.createSession', {
+    identifier => $server{$name}{renamed_handle} || $server{$name}{handle},
+    password   => 'hunter22',
+  });
   $server{$name}{delete_session} = {
-    delete_ok => $delete->is_success ? 1 : 0,
+    delete_ok           => $delete->is_success ? 1 : 0,
+    refresh_revoked     => $refresh_after_delete->is_success ? 0 : 1,
+    fresh_login_works   => $fresh_session->is_success ? 1 : 0,
   };
 }
 
