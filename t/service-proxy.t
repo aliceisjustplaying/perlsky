@@ -121,6 +121,7 @@ my $created = $t->tx->res->json;
 my $access  = $created->{accessJwt};
 my $did     = $created->{did};
 my $account = $app->store->get_account_by_did($did);
+my $handle  = $created->{handle};
 
 $t->get_ok('/xrpc/app.bsky.ageassurance.getState?countryCode=GB&regionCode=ENG')
   ->status_is(200)
@@ -176,9 +177,11 @@ $t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
     createdAt => '2026-03-10T18:00:00Z',
   },
 })->status_is(200)
-  ->json_is('/uri' => "at://$did/app.bsky.feed.post/browser-smoke");
+  ->json_is('/uri' => "at://$did/app.bsky.feed.post/browser-smoke")
+  ->json_has('/cid');
 
-my $post_uri = "at://$did/app.bsky.feed.post/browser-smoke";
+my $root_post = $t->tx->res->json;
+my $post_uri = $root_post->{uri};
 
 $t->get_ok("/xrpc/app.bsky.actor.getProfile?actor=$did" => {
   Authorization => "Bearer $access",
@@ -201,6 +204,65 @@ $t->get_ok('/xrpc/app.bsky.feed.getPostThread?uri=' . _uri_escape($post_uri) => 
 })->status_is(200)
   ->json_is('/thread/post/uri' => $post_uri)
   ->json_is('/thread/post/record/text' => 'browser smoke post');
+
+$t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
+  Authorization => "Bearer $access",
+} => json => {
+  repo       => $did,
+  collection => 'app.bsky.feed.post',
+  rkey       => 'thread-reply-1',
+  record     => {
+    '$type'   => 'app.bsky.feed.post',
+    text      => 'thread reply 1',
+    reply     => {
+      root   => { uri => $root_post->{uri}, cid => $root_post->{cid} },
+      parent => { uri => $root_post->{uri}, cid => $root_post->{cid} },
+    },
+    createdAt => '2026-03-10T18:01:00Z',
+  },
+})->status_is(200)
+  ->json_has('/cid');
+
+my $reply_one = $t->tx->res->json;
+
+$t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
+  Authorization => "Bearer $access",
+} => json => {
+  repo       => $did,
+  collection => 'app.bsky.feed.post',
+  rkey       => 'thread-reply-2',
+  record     => {
+    '$type'   => 'app.bsky.feed.post',
+    text      => 'thread reply 2',
+    reply     => {
+      root   => { uri => $root_post->{uri}, cid => $root_post->{cid} },
+      parent => { uri => $reply_one->{uri}, cid => $reply_one->{cid} },
+    },
+    createdAt => '2026-03-10T18:02:00Z',
+  },
+})->status_is(200)
+  ->json_has('/cid');
+
+my $reply_two = $t->tx->res->json;
+
+$t->get_ok('/xrpc/app.bsky.feed.getPostThread?uri=' . _uri_escape($reply_one->{uri}) => {
+  Authorization => "Bearer $access",
+})->status_is(200)
+  ->json_is('/thread/post/uri' => $reply_one->{uri})
+  ->json_is('/thread/parent/post/uri' => $root_post->{uri})
+  ->json_is('/thread/replies/0/post/uri' => $reply_two->{uri});
+
+my $reply_thread = $t->tx->res->json;
+
+$t->get_ok('/xrpc/app.bsky.feed.getPostThread?uri=' . _uri_escape($reply_one->{uri}) . '&parentHeight=0' => {
+  Authorization => "Bearer $access",
+})->status_is(200);
+ok(!exists($t->tx->res->json->{thread}{parent}), 'parentHeight=0 omits local parent stitching');
+
+$t->get_ok('/xrpc/app.bsky.feed.getPostThread?uri=' . _uri_escape("at://$handle/app.bsky.feed.post/thread-reply-1") => {
+  Authorization => "Bearer $access",
+})->status_is(200);
+is_deeply($t->tx->res->json, $reply_thread, 'handle-form local post URIs return the same thread payload');
 
 $t->get_ok('/xrpc/app.bsky.notification.listNotifications?limit=40' => {
   Authorization => "Bearer $access",

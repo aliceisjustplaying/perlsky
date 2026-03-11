@@ -354,9 +354,9 @@ sub _get_post_thread ($self, $c) {
   my ($account, $row) = @$resolved;
   my $viewer = $self->_optional_auth_account($c);
   my $profile_value = $self->_profile_record_value($c, $account);
-  my $depth = $c->param('depth') // 6;
-  $depth = 0 if $depth < 0;
-  my $thread = $self->_thread_view($c, $account, $row, $profile_value, $viewer, $depth);
+  my $depth = $self->_non_negative_int_param($c, 'depth', 6);
+  my $parent_height = $self->_non_negative_int_param($c, 'parentHeight', 80);
+  my $thread = $self->_thread_view($c, $account, $row, $profile_value, $viewer, $depth, $parent_height);
 
   $c->render(json => { thread => $thread });
   return 200;
@@ -483,11 +483,48 @@ sub _post_view ($self, $c, $account, $row, $profile_value = undef, $viewer = und
   return $post;
 }
 
-sub _thread_view ($self, $c, $account, $row, $profile_value = undef, $viewer = undef, $depth = 6) {
+sub _non_negative_int_param ($self, $c, $name, $default) {
+  my $value = $c->param($name);
+  return $default unless defined $value && length $value;
+  $value = int($value);
+  return $value < 0 ? 0 : $value;
+}
+
+sub _reply_parent_uri ($self, $row) {
+  return undef unless ref($row->{value}) eq 'HASH';
+  my $reply = $row->{value}{reply};
+  return undef unless ref($reply) eq 'HASH';
+  my $parent = $reply->{parent};
+  return undef unless ref($parent) eq 'HASH';
+  my $uri = $parent->{uri} // q();
+  return length($uri) ? $uri : undef;
+}
+
+sub _thread_view ($self, $c, $account, $row, $profile_value = undef, $viewer = undef, $depth = 6, $parent_height = 80) {
   my $thread = {
     '$type' => 'app.bsky.feed.defs#threadViewPost',
     post    => $self->_post_view($c, $account, $row, $profile_value, $viewer),
   };
+
+  if ($parent_height > 0) {
+    my $parent_uri = $self->_reply_parent_uri($row);
+    if (defined $parent_uri) {
+      my $parent = eval { $self->_resolve_local_post_uri($c, $parent_uri) };
+      if ($parent) {
+        my ($parent_account, $parent_row) = @$parent;
+        $thread->{parent} = $self->_thread_view(
+          $c,
+          $parent_account,
+          $parent_row,
+          undef,
+          $viewer,
+          0,
+          $parent_height - 1,
+        );
+      }
+    }
+  }
+
   return $thread if $depth <= 0;
 
   my $uri = $self->_post_uri($account, $row);
@@ -501,6 +538,7 @@ sub _thread_view ($self, $c, $account, $row, $profile_value = undef, $viewer = u
       undef,
       $viewer,
       $depth - 1,
+      0,
     );
   }
   $thread->{replies} = \@replies if @replies;

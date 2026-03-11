@@ -59,6 +59,11 @@ use ATProto::PDS::ServiceProxy;
     my ($self) = @_;
     return $self->{store};
   }
+
+  sub config_value {
+    my ($self, $name, $default) = @_;
+    return $default;
+  }
 }
 
 my $proxy = ATProto::PDS::ServiceProxy->new;
@@ -92,6 +97,10 @@ my $c = LocalTestContext->new($store);
 my $resolved = $proxy->_resolve_local_post_uri($c, "at://$did/app.bsky.feed.post/present-post");
 is($resolved->[0]{did}, $did, 'local post lookup returns the local account');
 is($resolved->[1]{rkey}, 'present-post', 'local post lookup returns the local record');
+
+my $resolved_by_handle = $proxy->_resolve_local_post_uri($c, 'at://alice.test/app.bsky.feed.post/present-post');
+is($resolved_by_handle->[0]{did}, $did, 'handle-form local post lookup returns the local account');
+is($resolved_by_handle->[1]{rkey}, 'present-post', 'handle-form local post lookup returns the local record');
 
 eval { $proxy->_resolve_local_post_uri($c, "at://$did/app.bsky.feed.post/missing-post") };
 my $missing = $@;
