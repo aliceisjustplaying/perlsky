@@ -35,6 +35,10 @@ $t->get_ok('/_health')
   ->status_is(200)
   ->json_has('/ok');
 
+$t->get_ok('/xrpc/_health')
+  ->status_is(200)
+  ->json_has('/ok');
+
 $t->get_ok('/xrpc/com.atproto.server.describeServer')
   ->status_is(200)
   ->json_is('/did' => 'did:web:127.0.0.1%3A7755')

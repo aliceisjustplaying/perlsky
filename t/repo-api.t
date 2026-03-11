@@ -94,6 +94,10 @@ $t->get_ok("/xrpc/com.atproto.repo.listRecords?repo=$did&collection=app.bsky.fee
   ->status_is(200)
   ->json_is('/records/0/value/text' => 'hello from updated perl');
 
+$t->get_ok('/xrpc/com.atproto.repo.listRecords?repo=Repo-Owner.Localhost&collection=app.bsky.feed.post')
+  ->status_is(200)
+  ->json_is('/records/0/value/text' => 'hello from updated perl');
+
 $t->get_ok("/xrpc/com.atproto.sync.getLatestCommit?did=$did")
   ->status_is(200)
   ->json_like('/cid' => qr/\Ab/)

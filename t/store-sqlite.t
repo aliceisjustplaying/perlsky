@@ -59,13 +59,20 @@ $store->create_session(
 is($store->get_session('sess-1')->{did}, $account->{did}, 'session is stored');
 ok(@{ $store->list_sessions_by_did($account->{did}) } == 1, 'sessions list by did');
 
+my $rotated = $store->rotate_session('sess-1', now => 1_700_000_000);
+is($rotated->{did}, $account->{did}, 'session rotation keeps the owner did');
+is($store->get_session('sess-1')->{next_id}, $rotated->{id}, 'session rotation stores the successor id');
+is($store->rotate_session('sess-1', now => 1_700_000_001)->{id}, $rotated->{id}, 'session rotation reuses the successor during grace');
+
 $store->create_app_password(
   id            => 'app-1',
   did           => $account->{did},
   name          => 'phone',
   password_hash => 'sha256:def',
+  privileged    => 1,
 );
 is($store->list_app_passwords_by_did($account->{did})->[0]{name}, 'phone', 'app password is stored');
+is($store->list_app_passwords_by_did($account->{did})->[0]{privileged}, 1, 'app password privilege flag is stored');
 
 $store->put_blob(
   cid          => 'bafkreigh2akiscaildc',

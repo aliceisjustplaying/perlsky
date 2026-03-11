@@ -10,6 +10,7 @@ use JSON::PP ();
 use Mojo::IOLoop;
 
 use ATProto::PDS::EventStream qw(encode_error_frame encode_info_frame);
+use ATProto::PDS::Identity qw(normalize_handle);
 
 our @EXPORT_OK = qw(
   blob_ref
@@ -66,7 +67,11 @@ sub resolve_did_account ($c, $did) {
 
 sub resolve_repo ($c, $repo) {
   return undef unless defined $repo && length $repo;
-  return $c->store->get_account_by_handle($repo) unless $repo =~ /\Adid:/;
+  if ($repo !~ /\Adid:/i) {
+    my $normalized = normalize_handle($repo, $c->config_value('service_handle_domain', 'localhost'));
+    return $c->store->get_account_by_handle($repo)
+      || (defined($normalized) ? $c->store->get_account_by_handle($normalized) : undef);
+  }
   return resolve_did_account($c, $repo);
 }
 

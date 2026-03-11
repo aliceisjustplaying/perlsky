@@ -46,13 +46,18 @@ use ATProto::PDS::API::Util qw(flatten_params resolve_did_account resolve_repo);
   package ApiUtilTestContext;
 
   sub new {
-    my ($class, $store) = @_;
-    return bless { store => $store }, $class;
+    my ($class, $store, %args) = @_;
+    return bless { store => $store, %args }, $class;
   }
 
   sub store {
     my ($self) = @_;
     return $self->{store};
+  }
+
+  sub config_value {
+    my ($self, $key, $default) = @_;
+    return exists $self->{config}{$key} ? $self->{config}{$key} : $default;
   }
 }
 
@@ -74,9 +79,12 @@ my $store = ApiUtilTestStore->new(
   ],
 );
 
-my $c = ApiUtilTestContext->new($store);
+my $c = ApiUtilTestContext->new($store, config => {
+  service_handle_domain => 'test',
+});
 
 is(resolve_repo($c, 'alice.test')->{did}, 'did:plc:alice', 'resolve_repo finds handles directly');
+is(resolve_repo($c, 'Alice.Test')->{did}, 'did:plc:alice', 'resolve_repo normalizes mixed-case handles');
 is(resolve_repo($c, 'did:plc:alice')->{handle}, 'alice.test', 'resolve_repo finds plain DIDs directly');
 is(resolve_did_account($c, 'did%3Aplc%3Aalice')->{handle}, 'alice.test', 'resolve_did_account accepts percent-encoded DIDs');
 is(resolve_repo($c, undef), undef, 'resolve_repo returns undef for empty input');

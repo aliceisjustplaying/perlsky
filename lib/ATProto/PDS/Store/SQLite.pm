@@ -236,20 +236,21 @@ sub create_session ($self, %args) {
     q{
       INSERT INTO sessions (
         id, did, token, kind, scope, created_at, expires_at,
-        revoked_at, ip, user_agent
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        revoked_at, ip, user_agent, next_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     },
     undef,
     $id,
     $did,
     $args{token},
-    $args{kind} // 'refresh',
+    $args{kind} // 'account',
     $args{scope} // 'atproto',
     $now,
     $args{expires_at},
     $args{revoked_at},
     $args{ip},
     $args{user_agent},
+    $args{next_id},
   );
 
   return $self->get_session($id);
@@ -291,6 +292,78 @@ sub list_sessions_by_did ($self, $did) {
   );
 }
 
+sub rotate_session ($self, $id, %args) {
+  return observe_store_operation($self->{metrics}, 'rotate_session', sub {
+    my $now = $args{now} // time;
+    my $session_ttl = $args{session_ttl} // (30 * 24 * 60 * 60);
+    my $grace_ttl   = $args{grace_ttl}   // (2 * 60 * 60);
+
+    return $self->txn(sub ($dbh) {
+      my $session = $dbh->selectrow_hashref(
+        q{SELECT * FROM sessions WHERE id = ?},
+        undef,
+        $id,
+      );
+      return undef unless $session;
+      return undef if defined $session->{revoked_at};
+      return undef if defined($session->{expires_at}) && $session->{expires_at} < $now;
+
+      if (defined($session->{next_id}) && length($session->{next_id})) {
+        my $next = $dbh->selectrow_hashref(
+          q{SELECT * FROM sessions WHERE id = ?},
+          undef,
+          $session->{next_id},
+        );
+        return undef unless $next;
+        return undef if defined $next->{revoked_at};
+        return undef if defined($next->{expires_at}) && $next->{expires_at} < $now;
+        return $next;
+      }
+
+      my $next_id = $args{next_id} // _random_id();
+      my $grace_expires_at = $now + $grace_ttl;
+      if (defined($session->{expires_at}) && $session->{expires_at} < $grace_expires_at) {
+        $grace_expires_at = $session->{expires_at};
+      }
+
+      $dbh->do(
+        q{UPDATE sessions SET expires_at = ?, next_id = ? WHERE id = ?},
+        undef,
+        $grace_expires_at,
+        $next_id,
+        $session->{id},
+      );
+
+      $dbh->do(
+        q{
+          INSERT INTO sessions (
+            id, did, token, kind, scope, created_at, expires_at,
+            revoked_at, ip, user_agent, next_id
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        },
+        undef,
+        $next_id,
+        $session->{did},
+        $session->{token},
+        $session->{kind},
+        $session->{scope},
+        $now,
+        $now + $session_ttl,
+        undef,
+        $session->{ip},
+        $session->{user_agent},
+        undef,
+      );
+
+      return $dbh->selectrow_hashref(
+        q{SELECT * FROM sessions WHERE id = ?},
+        undef,
+        $next_id,
+      );
+    });
+  });
+}
+
 sub create_app_password ($self, %args) {
   my $did = $args{did} // die 'did is required';
   my $id  = $args{id}  // _random_id();
@@ -299,14 +372,15 @@ sub create_app_password ($self, %args) {
   $self->dbh->do(
     q{
       INSERT INTO app_passwords (
-        id, did, name, password_hash, created_at, revoked_at
-      ) VALUES (?, ?, ?, ?, ?, ?)
+        id, did, name, password_hash, privileged, created_at, revoked_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
     },
     undef,
     $id,
     $did,
     $args{name} // 'app-password',
     $args{password_hash},
+    $args{privileged} ? 1 : 0,
     $now,
     $args{revoked_at},
   );
@@ -1931,6 +2005,13 @@ sub default_migrations {
           FROM blobs
           WHERE did IS NOT NULL
         },
+      ],
+    },
+    {
+      version => 8,
+      statements => [
+        q{ALTER TABLE sessions ADD COLUMN next_id TEXT},
+        q{ALTER TABLE app_passwords ADD COLUMN privileged INTEGER NOT NULL DEFAULT 0},
       ],
     },
   );

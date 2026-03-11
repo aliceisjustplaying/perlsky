@@ -20,6 +20,7 @@ our @EXPORT_OK = qw(
   require_admin
   subject_key
   verify_account_password
+  verify_login_password
 );
 
 sub require_admin ($c) {
@@ -53,17 +54,31 @@ sub find_account ($c, $identifier) {
 
 sub verify_account_password ($c, $account, $password) {
   return 0 unless $account && defined $password;
-  return 1 if verify_password($password, $account->{password_salt}, $account->{password_hash});
+  return verify_password($password, $account->{password_salt}, $account->{password_hash}) ? 1 : 0;
+}
+
+sub verify_login_password ($c, $account, $password) {
+  return undef unless $account && defined $password;
+  return {
+    kind  => 'account',
+    scope => 'access',
+  } if verify_account_password($c, $account, $password);
 
   for my $app_password (@{ $c->store->list_app_passwords_by_did($account->{did}) }) {
     next if defined $app_password->{revoked_at};
     my ($salt_hex, $hash) = split /:/, ($app_password->{password_hash} // q()), 2;
     next unless defined $salt_hex && defined $hash;
     my $salt = pack('H*', $salt_hex);
-    return 1 if verify_password($password, $salt, $hash);
+    if (verify_password($password, $salt, $hash)) {
+      return {
+        kind              => 'app_password',
+        scope             => $app_password->{privileged} ? 'app_password_privileged' : 'app_password',
+        app_password_name => $app_password->{name},
+      };
+    }
   }
 
-  return 0;
+  return undef;
 }
 
 sub account_view ($account) {

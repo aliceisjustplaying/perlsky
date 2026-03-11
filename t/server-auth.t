@@ -79,17 +79,84 @@ $t->post_ok('/xrpc/com.atproto.server.createAppPassword' => { Authorization => "
 
 my $app_password = $t->tx->res->json->{password};
 
+$t->post_ok('/xrpc/com.atproto.server.createAppPassword' => { Authorization => "Bearer $access" } => json => {
+  name       => 'desktop',
+  privileged => JSON::PP::true,
+})->status_is(200)
+  ->json_is('/name' => 'desktop')
+  ->json_is('/privileged' => JSON::PP::true)
+  ->json_has('/password');
+
+my $privileged_app_password = $t->tx->res->json->{password};
+
 $t->get_ok('/xrpc/com.atproto.server.listAppPasswords' => { Authorization => "Bearer $access" })
+  ->status_is(200);
+
+my %listed_password = map { $_->{name} => $_ } @{ $t->tx->res->json->{passwords} || [] };
+is($listed_password{phone}{privileged}, 0, 'standard app password is listed as non-privileged');
+is($listed_password{desktop}{privileged}, 1, 'privileged app password is listed as privileged');
+
+$t->post_ok('/xrpc/com.atproto.server.createSession' => json => {
+  identifier => 'alice.localhost',
+  password   => $app_password,
+})->status_is(200)
+  ->json_is('/did' => $did);
+
+my $app_session = $t->tx->res->json;
+my (undef, $app_claims_b64, undef) = split /\./, $app_session->{accessJwt}, 3;
+my $app_claims = decode_json(_b64url_decode($app_claims_b64));
+is($app_claims->{scope}, 'app_password', 'app password login issues an app password-scoped access token');
+
+$t->post_ok('/xrpc/com.atproto.server.createSession' => json => {
+  identifier => 'alice.localhost',
+  password   => $privileged_app_password,
+})->status_is(200)
+  ->json_is('/did' => $did);
+
+my $privileged_app_session = $t->tx->res->json;
+is(
+  _jwt_claims($privileged_app_session->{accessJwt})->{scope},
+  'app_password_privileged',
+  'privileged app password login preserves privileged scope',
+);
+
+$t->get_ok('/xrpc/com.atproto.server.getSession' => { Authorization => "Bearer $app_session->{accessJwt}" })
   ->status_is(200)
-  ->json_is('/passwords/0/name' => 'phone');
+  ->json_is('/did' => $did);
+
+$t->get_ok('/xrpc/com.atproto.server.getServiceAuth?aud=did:web:api.bsky.app&lxm=com.atproto.server.createaccount' => {
+  Authorization => "Bearer $app_session->{accessJwt}",
+})->status_is(400)
+  ->json_is('/error' => 'InvalidToken');
+
+$t->get_ok('/xrpc/com.atproto.server.getServiceAuth?aud=did:web:api.bsky.app&lxm=com.atproto.server.createaccount' => {
+  Authorization => "Bearer $privileged_app_session->{accessJwt}",
+})->status_is(200)
+  ->json_has('/token');
+
+$t->post_ok('/xrpc/com.atproto.server.createAppPassword' => { Authorization => "Bearer $app_session->{accessJwt}" } => json => {
+  name => 'nested',
+})->status_is(400)
+  ->json_is('/error' => 'InvalidToken');
+
+$t->get_ok('/xrpc/com.atproto.server.getAccountInviteCodes' => { Authorization => "Bearer $app_session->{accessJwt}" })
+  ->status_is(400)
+  ->json_is('/error' => 'InvalidToken');
 
 $t->post_ok('/xrpc/com.atproto.server.revokeAppPassword' => { Authorization => "Bearer $access" } => json => {
   name => 'phone',
 })->status_is(200);
 
+$t->post_ok('/xrpc/com.atproto.server.refreshSession' => { Authorization => "Bearer $app_session->{refreshJwt}" } => json => {})
+  ->status_is(401)
+  ->json_is('/error' => 'ExpiredToken');
+
 $t->get_ok('/xrpc/com.atproto.server.listAppPasswords' => { Authorization => "Bearer $access" })
-  ->status_is(200)
-  ->json_is('/passwords' => []);
+  ->status_is(200);
+
+my %remaining_password = map { $_->{name} => $_ } @{ $t->tx->res->json->{passwords} || [] };
+ok(!exists $remaining_password{phone}, 'revoked app password is removed from listing');
+is($remaining_password{desktop}{privileged}, 1, 'remaining privileged app password stays privileged');
 
 $t->post_ok('/xrpc/com.atproto.server.refreshSession' => { Authorization => "Bearer $refresh" } => json => {})
   ->status_is(200)
@@ -99,8 +166,19 @@ $t->post_ok('/xrpc/com.atproto.server.refreshSession' => { Authorization => "Bea
 my $refreshed = $t->tx->res->json;
 
 $t->get_ok('/xrpc/com.atproto.server.getSession' => { Authorization => "Bearer $access" })
-  ->status_is(401)
-  ->json_is('/error' => 'ExpiredToken');
+  ->status_is(200)
+  ->json_is('/did' => $did);
+
+$t->post_ok('/xrpc/com.atproto.server.refreshSession' => { Authorization => "Bearer $refresh" } => json => {})
+  ->status_is(200)
+  ->json_has('/refreshJwt');
+
+my $reused_refresh = $t->tx->res->json;
+is(
+  _jwt_claims($reused_refresh->{refreshJwt})->{jti},
+  _jwt_claims($refreshed->{refreshJwt})->{jti},
+  'refresh reuse during grace period returns the same successor refresh session',
+);
 
 $t->get_ok('/xrpc/com.atproto.server.getSession' => { Authorization => "Bearer $refresh" })
   ->status_is(401)
@@ -128,6 +206,11 @@ $t->post_ok('/xrpc/com.atproto.server.createSession' => json => {
   ->json_is('/did' => $did);
 
 my $replacement_access = $t->tx->res->json->{accessJwt};
+
+$t->get_ok('/xrpc/com.atproto.server.getServiceAuth?aud=did:web:api.bsky.app&lxm=com.atproto.server.createAppPassword' => {
+  Authorization => "Bearer $replacement_access",
+})->status_is(400)
+  ->json_is('/error' => 'InvalidRequest');
 
 $t->get_ok('/xrpc/com.atproto.server.getServiceAuth?aud=did:web:api.bsky.app&lxm=app.bsky.actor.getPreferences' => {
   Authorization => "Bearer $replacement_access",
@@ -159,4 +242,11 @@ sub _b64url_decode {
   my $pad = length($copy) % 4;
   $copy .= '=' x (4 - $pad) if $pad;
   return decode_base64($copy);
+}
+
+sub _jwt_claims {
+  my ($jwt) = @_;
+  my (undef, $claims_b64, undef) = split /\./, ($jwt // q()), 3;
+  return {} unless defined $claims_b64 && length $claims_b64;
+  return decode_json(_b64url_decode($claims_b64));
 }

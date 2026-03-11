@@ -11,7 +11,7 @@ use File::Spec;
 use File::Temp qw(tempdir);
 use IO::Socket::INET;
 use JSON::PP ();
-use MIME::Base64 qw(encode_base64);
+use MIME::Base64 qw(decode_base64 encode_base64);
 use POSIX qw(WNOHANG);
 use Time::HiRes qw(sleep time);
 
@@ -117,6 +117,20 @@ sub slurp_file ($path) {
   open my $fh, '<', $path or return q();
   local $/;
   return <$fh> // q();
+}
+
+sub b64url_decode ($text) {
+  my $copy = $text // q();
+  $copy =~ tr/-_/+\//;
+  my $pad = length($copy) % 4;
+  $copy .= '=' x (4 - $pad) if $pad;
+  return decode_base64($copy);
+}
+
+sub jwt_claims ($jwt) {
+  my (undef, $claims_b64, undef) = split /\./, ($jwt // q()), 3;
+  return {} unless defined $claims_b64 && length $claims_b64;
+  return decode_json(b64url_decode($claims_b64));
 }
 
 sub wait_for_ready_file ($name, $path, $timeout = 30) {
@@ -685,7 +699,7 @@ my $perlsky = spawn_logged(
   $perl_log,
 );
 
-wait_for_http_ok('perlsky', "http://127.0.0.1:$perl_port/_health");
+wait_for_http_ok('perlsky', "http://127.0.0.1:$perl_port/xrpc/_health");
 pass("started perlsky at http://127.0.0.1:$perl_port");
 
 my %server = (
@@ -814,8 +828,10 @@ for my $name (sort keys %server) {
   my $json = $res->json || {};
   my $old_access = $server{$name}{access};
   my $old_refresh = $server{$name}{refresh};
+  my $old_refresh_claims = jwt_claims($old_refresh);
   $server{$name}{access} = $json->{accessJwt};
   $server{$name}{refresh} = $json->{refreshJwt};
+  my $new_refresh_claims = jwt_claims($server{$name}{refresh});
 
   my $old_access_res = get_json(
     $server{$name}{origin},
@@ -834,19 +850,26 @@ for my $name (sort keys %server) {
     undef,
     auth_header($server{$name}{access}),
   );
+  my $old_refresh_json = $old_refresh_res->json || {};
+  my $reused_refresh_claims = jwt_claims($old_refresh_json->{refreshJwt});
 
   $server{$name}{refresh_rotation} = {
-    has_access_jwt   => length($json->{accessJwt} // q()) ? 1 : 0,
-    has_refresh_jwt  => length($json->{refreshJwt} // q()) ? 1 : 0,
-    access_rotated   => (($json->{accessJwt} // q()) ne $old_access) ? 1 : 0,
-    refresh_rotated  => (($json->{refreshJwt} // q()) ne $old_refresh) ? 1 : 0,
-    new_access_works => $new_access_res->is_success ? 1 : 0,
+    has_access_jwt          => length($json->{accessJwt} // q()) ? 1 : 0,
+    has_refresh_jwt         => length($json->{refreshJwt} // q()) ? 1 : 0,
+    refresh_rotated         => (($new_refresh_claims->{jti} // q()) ne ($old_refresh_claims->{jti} // q())) ? 1 : 0,
+    old_access_works        => $old_access_res->is_success ? 1 : 0,
+    old_refresh_works       => $old_refresh_res->is_success ? 1 : 0,
+    reused_refresh_matches  => $old_refresh_res->is_success
+      && (($reused_refresh_claims->{jti} // q()) eq ($new_refresh_claims->{jti} // q()))
+      ? 1
+      : 0,
+    new_access_works        => $new_access_res->is_success ? 1 : 0,
   };
 }
 
 check(
   same_hash($server{reference}{refresh_rotation}, $server{perlsky}{refresh_rotation}),
-  'refreshSession token rotation matches the official reference PDS semantics',
+  'refreshSession grace and successor semantics match the official reference PDS',
 );
 
 if ($diff_account_did_method eq 'did:plc') {

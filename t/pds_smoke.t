@@ -63,8 +63,9 @@ $t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
   repo       => $did,
   collection => 'app.bsky.feed.post',
   record     => {
-    '$type' => 'app.bsky.feed.post',
-    text    => 'hello from perl',
+    '$type'   => 'app.bsky.feed.post',
+    text      => 'hello from perl',
+    createdAt => '2026-03-10T00:00:00Z',
   },
 })->status_is(200)
   ->json_has('/uri')

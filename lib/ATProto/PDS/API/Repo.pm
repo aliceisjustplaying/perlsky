@@ -153,7 +153,7 @@ sub register_repo_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.repo.importRepo', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => 'access');
+    my (undef, $account) = require_auth($c, audience => 'access', required_scope => 'full');
     assert_repo_writable($c, $account);
     xrpc_error(400, 'InvalidRequest', 'Service is not accepting repo imports')
       unless $c->config_value('accepting_imports', 1);
@@ -166,9 +166,9 @@ sub register_repo_handlers ($registry, $app) {
 }
 
 sub _require_repo_owner ($c, $repo) {
+  my ($claims) = require_auth($c, audience => 'access');
   my $account = resolve_repo($c, $repo);
   xrpc_error(404, 'RepoNotFound', 'Repository was not found') unless $account;
-  my ($claims) = require_auth($c, audience => 'access');
   xrpc_error(401, 'AuthRequired', 'Token is not authorized for that repo') unless ($claims->{sub} // '') eq $account->{did};
   assert_repo_writable($c, $account);
   return $account;

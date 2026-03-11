@@ -128,13 +128,15 @@ sub startup ($self) {
     });
   });
 
-  $routes->get('/_health')->to(cb => sub ($c) {
+  my $health = sub ($c) {
     $c->render(json => {
       ok        => Mojo::JSON->true,
       service   => 'perlsky',
       endpoints => scalar @{ endpoint_catalog($root) },
     });
-  });
+  };
+  $routes->get('/_health')->to(cb => $health);
+  $routes->get('/xrpc/_health')->to(cb => $health);
 
   $routes->get('/metrics')->to(cb => sub ($c) {
     my $token = $c->config_value('metrics_token');

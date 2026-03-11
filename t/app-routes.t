@@ -34,6 +34,11 @@ $t->get_ok('/_health')
   ->json_is('/service' => 'perlsky')
   ->json_has('/ok');
 
+$t->get_ok('/xrpc/_health')
+  ->status_is(200)
+  ->json_is('/service' => 'perlsky')
+  ->json_has('/ok');
+
 $t->get_ok('/xrpc/com.atproto.server.describeServer')
   ->status_is(200)
   ->json_is('/availableUserDomains/0' => 'localhost')
@@ -69,9 +74,16 @@ $t->get_ok('/_allow-cert?domain=localhost')
 $t->get_ok('/_allow-cert?domain=example.com')
   ->status_is(403);
 
-$t->post_ok('/xrpc/com.atproto.repo.createRecord' => json => {})
-  ->status_is(404)
-  ->json_is('/error' => 'RepoNotFound');
+$t->post_ok('/xrpc/com.atproto.repo.createRecord' => json => {
+  repo       => $routeprobe_did,
+  collection => 'app.bsky.feed.post',
+  record     => {
+    '$type'   => 'app.bsky.feed.post',
+    text      => 'auth required',
+    createdAt => '2026-03-10T00:00:00Z',
+  },
+})->status_is(401)
+  ->json_is('/error' => 'AuthRequired');
 
 $t->websocket_ok('/xrpc/com.atproto.sync.subscribeRepos')
   ->finish_ok;
