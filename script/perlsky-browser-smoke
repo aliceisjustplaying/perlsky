@@ -12,7 +12,13 @@ use Mojo::UserAgent;
 use POSIX qw(strftime);
 
 my $root = abs_path(File::Spec->catdir($Bin, '..'));
-my $tools_dir = File::Spec->catdir($root, 'tools', 'browser-automation');
+my $embedded_suite_dir = File::Spec->catdir($root, 'atproto-smoke');
+my $adjacent_suite_dir = File::Spec->catdir($root, '..', 'atproto-smoke');
+my $suite_dir = _resolve_suite_dir(
+  $ENV{PERLSKY_BROWSER_SUITE_ROOT},
+  $adjacent_suite_dir,
+  $embedded_suite_dir,
+);
 my $cache_dir = File::Spec->catdir($root, '.cache', 'ms-playwright');
 my $default_pair_file = File::Spec->catfile($root, '.cache', 'browser-smoke', 'reusable-pair.json');
 my $default_artifacts = File::Spec->catdir($root, 'data', 'browser-smoke', 'latest');
@@ -110,6 +116,7 @@ Options:
   --strict-errors
 
 Environment:
+  PERLSKY_BROWSER_SUITE_ROOT
   PERLSKY_BROWSER_HANDLE
   PERLSKY_BROWSER_PASSWORD
   PERLSKY_BROWSER_SECONDARY_HANDLE
@@ -347,15 +354,20 @@ print {$cfg} encode_json($config);
 close $cfg;
 
 local $ENV{PLAYWRIGHT_BROWSERS_PATH} = $cache_dir;
-my $script = File::Spec->catfile($tools_dir, $cmd eq 'run-dual' ? 'dual-smoke.mjs' : 'smoke.mjs');
+my $script = File::Spec->catfile(
+  $suite_dir,
+  'src',
+  'browser',
+  $cmd eq 'run-dual' ? 'run-dual.mjs' : 'run-single.mjs',
+);
 my @cmdline = ('node', $script, $config_path);
 system(@cmdline) == 0 or die "browser smoke failed\n";
 
 sub install_runtime {
   make_path($cache_dir);
-  run_or_die('npm', 'install', '--prefix', $tools_dir);
+  run_or_die('npm', 'install', '--prefix', $suite_dir);
   local $ENV{PLAYWRIGHT_BROWSERS_PATH} = $cache_dir;
-  run_or_die('npm', 'exec', '--prefix', $tools_dir, 'playwright', '--', 'install', 'chromium');
+  run_or_die('npm', 'exec', '--prefix', $suite_dir, 'playwright', '--', 'install', 'chromium');
 }
 
 sub run_or_die {
@@ -454,6 +466,19 @@ sub _env_bool {
   return 0 unless defined $value;
   return 0 if $value =~ /\A(?:0|false|no|off)\z/i;
   return 1;
+}
+
+sub _resolve_suite_dir {
+  my (@candidates) = @_;
+  for my $candidate (@candidates) {
+    next unless defined $candidate && length $candidate;
+    next unless -d $candidate;
+    my $package_json = File::Spec->catfile($candidate, 'package.json');
+    my $browser_dir = File::Spec->catdir($candidate, 'src', 'browser');
+    next unless -f $package_json && -d $browser_dir;
+    return abs_path($candidate);
+  }
+  die "unable to locate atproto-smoke suite checkout; set PERLSKY_BROWSER_SUITE_ROOT\n";
 }
 
 sub _bootstrap_account {

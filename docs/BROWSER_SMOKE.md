@@ -98,6 +98,10 @@ as the ergonomic adapter for this repo, but the standalone package now owns:
 This keeps the current `perlsky` workflow stable while making extraction to a
 repo-independent package much more straightforward.
 
+The wrapper now prefers an external sibling checkout at `../atproto-smoke`
+when present, and otherwise falls back to the in-repo `atproto-smoke/` copy.
+Set `PERLSKY_BROWSER_SUITE_ROOT` to force a specific checkout.
+
 ## Notes
 
 - The reusable dual-account path is intentionally conservative about account creation. Fresh actors are only created through explicit `bootstrap-*` commands.
