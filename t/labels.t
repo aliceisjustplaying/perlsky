@@ -359,7 +359,8 @@ my ($repo_neg_label) = grep {
 ok($repo_neg_label, 'repo query includes the negated repo label itself');
 is($repo_neg_label->{src}, $service_did, 'negated repo label keeps the local source');
 
-$app->store->dbh->do(q{DELETE FROM events WHERE seq <= ?}, undef, $app->store->latest_event_seq);
+my $stale_label_time = time - 3660;
+$app->store->dbh->do(q{UPDATE events SET created_at = ? WHERE seq <= ?}, undef, $stale_label_time, $app->store->latest_event_seq);
 
 $t->post_ok('/xrpc/com.atproto.admin.updateSubjectStatus' => {
   Authorization => $admin_auth,
@@ -376,11 +377,11 @@ my $outdated_info = decode_frame($outdated->message->[1]);
 is($outdated_info->{header}{t}, '#info', 'stale label cursor yields an info frame');
 is($outdated_info->{body}{name}, 'OutdatedCursor', 'stale label cursor is reported as OutdatedCursor');
 
-$outdated->message_ok('stale label cursor then resumes from the oldest retained label event');
+$outdated->message_ok('stale label cursor then resumes from the earliest in-window label event');
 my $outdated_label = decode_frame($outdated->message->[1]);
 is($outdated_label->{header}{t}, '#labels', 'label stream resumes with a labels frame');
-is($outdated_label->{body}{labels}[0]{uri}, "at://$did", 'stale label replay resumes at the retained label event');
-is($outdated_label->{body}{labels}[0]{val}, '!hide', 'retained label replay carries the expected moderation label');
+is($outdated_label->{body}{labels}[0]{uri}, "at://$did", 'stale label replay resumes at the first in-window label event');
+is($outdated_label->{body}{labels}[0]{val}, '!hide', 'first in-window label replay carries the expected moderation label');
 $outdated->finish_ok;
 
 $ws->finish_ok;

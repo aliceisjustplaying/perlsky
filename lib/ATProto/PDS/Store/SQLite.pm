@@ -974,6 +974,19 @@ sub list_events_from ($self, $cursor, %args) {
   });
 }
 
+sub next_event_after_seq ($self, $cursor) {
+  return observe_store_operation($self->{metrics}, 'next_event_after_seq', sub {
+    return _row_from_blob_columns(_row_from_json_columns(
+      $self->dbh->selectrow_hashref(
+        q{SELECT * FROM events WHERE seq > ? ORDER BY seq LIMIT 1},
+        undef,
+        $cursor // 0,
+      ),
+      qw(payload_json),
+    ), qw(car_bytes));
+  });
+}
+
 sub latest_event_seq ($self) {
   return observe_store_operation($self->{metrics}, 'latest_event_seq', sub {
     return $self->dbh->selectrow_array(
@@ -982,12 +995,14 @@ sub latest_event_seq ($self) {
   });
 }
 
-sub oldest_event_seq ($self) {
-  return observe_store_operation($self->{metrics}, 'oldest_event_seq', sub {
+sub earliest_event_seq_after_time ($self, $created_at) {
+  return observe_store_operation($self->{metrics}, 'earliest_event_seq_after_time', sub {
     my $value = $self->dbh->selectrow_array(
-      q{SELECT MIN(seq) FROM events},
+      q{SELECT MIN(seq) FROM events WHERE created_at >= ?},
+      undef,
+      $created_at,
     );
-    return defined $value ? $value : 0;
+    return $value;
   });
 }
 

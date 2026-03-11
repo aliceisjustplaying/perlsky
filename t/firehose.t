@@ -533,7 +533,8 @@ is($skipped->{body}{ops}[0]{path}, 'app.bsky.feed.post/firehose-third', 'repo re
 $skip_unknown->finish_ok;
 
 my $outdated_floor = $app->store->latest_event_seq;
-$app->store->dbh->do(q{DELETE FROM events WHERE seq <= ?}, undef, $outdated_floor);
+my $stale_event_time = time - 3660;
+$app->store->dbh->do(q{UPDATE events SET created_at = ? WHERE seq <= ?}, undef, $stale_event_time, $outdated_floor);
 
 $t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
   Authorization => "Bearer $access",
@@ -557,10 +558,10 @@ is($outdated_info->{header}{op}, 1, 'outdated cursor info is a message frame');
 is($outdated_info->{header}{t}, '#info', 'stale repo cursor yields an info frame');
 is($outdated_info->{body}{name}, 'OutdatedCursor', 'stale repo cursor is reported as OutdatedCursor');
 
-$outdated->message_ok('stale repo cursor then resumes from the oldest retained event');
+$outdated->message_ok('stale repo cursor then resumes from the earliest event still inside the backfill window');
 my $outdated_commit = decode_frame($outdated->message->[1]);
-is($outdated_commit->{header}{t}, '#commit', 'repo stream resumes with the retained commit event');
-is($outdated_commit->{body}{ops}[0]{path}, 'app.bsky.feed.post/firehose-fourth', 'repo replay resumes at the retained commit');
+is($outdated_commit->{header}{t}, '#commit', 'repo stream resumes with the first event still inside the backfill window');
+is($outdated_commit->{body}{ops}[0]{path}, 'app.bsky.feed.post/firehose-fourth', 'repo replay resumes at the first in-window commit');
 $outdated->finish_ok;
 
 done_testing;

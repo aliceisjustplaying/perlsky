@@ -78,10 +78,12 @@ sub resolve_repo ($c, $repo) {
 sub subscription_start_seq ($c, %args) {
   my $cursor_param      = $args{cursor_param};
   my $latest            = $args{latest} // $c->store->latest_event_seq;
-  my $oldest            = $args{oldest} // $c->store->oldest_event_seq;
   my $future_limit      = $args{future_limit} // $latest;
   my $future_message    = $args{future_message} // 'Cursor is ahead of the local event stream';
   my $outdated_message  = $args{outdated_message} // 'Cursor predates the oldest locally retained event';
+  my $backfill_window   = $args{backfill_window_seconds}
+    // $c->config_value('subscription_backfill_window_seconds', 3600);
+  my $backfill_cutoff = $args{backfill_cutoff} // (time - $backfill_window);
 
   if (!defined $cursor_param || $cursor_param eq q()) {
     return $latest + 1;
@@ -97,12 +99,14 @@ sub subscription_start_seq ($c, %args) {
     return undef;
   }
 
-  if ($oldest && $cursor && $cursor < $oldest) {
+  my $next_event = $args{next_event} // $c->store->next_event_after_seq($cursor);
+  if ($next_event && ($next_event->{created_at} // 0) < $backfill_cutoff) {
     $c->subscription_send(
       binary     => encode_info_frame('OutdatedCursor', $outdated_message),
       frame_type => 'info',
     );
-    return $oldest;
+    my $resume_seq = $args{backfill_start} // $c->store->earliest_event_seq_after_time($backfill_cutoff);
+    return defined($resume_seq) ? $resume_seq : ($latest + 1);
   }
 
   return $cursor + 1;
