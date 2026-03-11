@@ -8,7 +8,7 @@ no warnings 'experimental::signatures';
 use Exporter 'import';
 use JSON::PP ();
 
-use ATProto::PDS::API::Helpers qw(find_account invite_code_view verify_account_password verify_login_password);
+use ATProto::PDS::API::Helpers qw(find_account invite_code_view require_admin verify_account_password verify_login_password);
 use ATProto::PDS::API::Util qw(iso8601 xrpc_error);
 use ATProto::PDS::Auth::JWT qw(decode_jwt encode_jwt encode_service_jwt);
 use ATProto::PDS::Auth::Password qw(hash_password random_hex);
@@ -566,32 +566,31 @@ sub register_server_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.server.createInviteCode', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => 'access');
     my $body = $c->req->json || {};
+    my ($created_by, $target) = _invite_code_targets($c, $body);
     my $code = _new_invite_code();
     $c->store->create_invite_code(
       code        => $code,
-      for_account => $body->{forAccount} || $account->{did},
-      created_by  => $account->{did},
+      for_account => $target,
+      created_by  => $created_by,
       use_count   => $body->{useCount} // 1,
     );
     return { code => $code };
   });
 
   $registry->register('com.atproto.server.createInviteCodes', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => 'access');
     my $body = $c->req->json || {};
-    my @accounts = @{ $body->{forAccounts} || [ $account->{did} ] };
+    my ($created_by, $accounts) = _invite_code_targets($c, $body, multiple => 1);
     my $count = $body->{codeCount} // 1;
     my @result;
-    for my $target (@accounts) {
+    for my $target (@$accounts) {
       my @codes;
       for (1 .. $count) {
         my $code = _new_invite_code();
         $c->store->create_invite_code(
           code        => $code,
           for_account => $target,
-          created_by  => $account->{did},
+          created_by  => $created_by,
           use_count   => $body->{useCount} // 1,
         );
         push @codes, $code;
@@ -746,6 +745,43 @@ sub _service_auth_method_requires_privileged_access ($lxm) {
   return 1 if $lxm =~ /\Achat\.bsky\./;
   return 1 if $lxm eq 'com.atproto.server.createaccount';
   return 0;
+}
+
+sub _invite_code_targets ($c, $body, %opts) {
+  if (_uses_admin_authorization($c) || !$c->config_value('self_service_invite_codes', 0)) {
+    require_admin($c);
+    if ($opts{multiple}) {
+      my @targets = @{ $body->{forAccounts} || ['admin'] };
+      @targets = ('admin') unless @targets;
+      return ('admin', \@targets);
+    }
+    my $target = $body->{forAccount};
+    $target = 'admin' unless defined($target) && length($target);
+    return ('admin', $target);
+  }
+
+  my (undef, $account) = require_auth($c, audience => 'access', required_scope => 'full');
+  if ($opts{multiple}) {
+    my @targets = @{ $body->{forAccounts} || [ $account->{did} ] };
+    @targets = ($account->{did}) unless @targets;
+    xrpc_error(400, 'InvalidRequest', 'Self-service invite creation can only target the authenticated account')
+      if grep { !defined($_) || !length($_) || $_ ne $account->{did} } @targets;
+    return ($account->{did}, \@targets);
+  }
+
+  my $target = $body->{forAccount};
+  $target = $account->{did} unless defined($target) && length($target);
+  xrpc_error(400, 'InvalidRequest', 'Self-service invite creation can only target the authenticated account')
+    unless $target eq $account->{did};
+  return ($account->{did}, $target);
+}
+
+sub _uses_admin_authorization ($c) {
+  my $auth = $c->req->headers->authorization // q();
+  return 1 if $auth =~ /\ABasic\s+/i;
+  return 0 unless $auth =~ /\ABearer\s+(\S+)\z/i;
+  my $token = $1;
+  return $token !~ /\A[^.]+\.[^.]+\.[^.]+\z/;
 }
 
 sub _require_action_token ($c, %args) {

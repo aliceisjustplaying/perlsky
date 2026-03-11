@@ -5,6 +5,7 @@ use Config ();
 use File::Spec;
 use File::Temp qw(tempdir);
 use FindBin qw($Bin);
+use MIME::Base64 qw(encode_base64);
 use Test::More;
 
 BEGIN {
@@ -70,5 +71,23 @@ $t->post_ok('/xrpc/com.atproto.server.createAccount' => json => {
   inviteCode => $code,
 })->status_is(200)
   ->json_is('/handle', 'alice.pds.example.test');
+
+my $access = $t->tx->res->json->{accessJwt};
+
+$t->post_ok('/xrpc/com.atproto.server.createInviteCode' => {
+  Authorization => "Bearer $access",
+} => json => {
+  useCount => 1,
+})->status_is(403)
+  ->json_is('/error', 'InvalidAdminToken');
+
+my $admin_auth = 'Basic ' . encode_base64('admin:admin-secret', q());
+
+$t->post_ok('/xrpc/com.atproto.server.createInviteCode' => {
+  Authorization => $admin_auth,
+} => json => {
+  useCount => 1,
+})->status_is(200)
+  ->json_has('/code');
 
 done_testing;

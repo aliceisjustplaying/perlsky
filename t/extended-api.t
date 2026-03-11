@@ -33,6 +33,7 @@ my $app = ATProto::PDS->new(
     service_did_method    => 'did:web',
     jwt_secret            => 'extended-secret',
     admin_password        => 'admin-secret',
+    self_service_invite_codes => 1,
     data_dir              => $tmp,
     db_path               => File::Spec->catfile($tmp, 'perlsky.sqlite'),
   },
@@ -58,6 +59,13 @@ $t->post_ok('/xrpc/com.atproto.server.createInviteCode' => {
   ->json_has('/code');
 
 my $invite_code = $t->tx->res->json->{code};
+
+$t->post_ok('/xrpc/com.atproto.server.createInviteCode' => {
+  Authorization => "Bearer $access",
+} => json => {
+  forAccount => 'did:web:example.test:users:someone-else',
+})->status_is(400)
+  ->json_is('/error' => 'InvalidRequest');
 
 $t->post_ok('/xrpc/com.atproto.repo.applyWrites' => {
   Authorization => "Bearer $access",

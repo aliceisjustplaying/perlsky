@@ -33,6 +33,7 @@ Deployment and first-account setup:
 - The deployment guide includes a reverse-proxy layout, a sample `systemd` unit, validation commands, and a `createAccount` example for bootstrapping the first user.
 - If `service_handle_domain` is `example.com`, submitting `handle: "alice"` to `com.atproto.server.createAccount` creates `alice.example.com`.
 - If `invite_code_required` is enabled, public signup is disabled until a valid invite code is supplied.
+- `com.atproto.server.createInviteCode` and `com.atproto.server.createInviteCodes` are admin-only by default. Set `self_service_invite_codes` to enable self-service invite minting for authenticated full-access sessions, limited to the caller's own account.
 - `script/perlsky-admin create-invite` can mint invite codes locally on the server without needing an existing user session.
 - The invite-only bootstrap flow is documented with copy-pasteable commands in `docs/DEPLOYMENT.md`.
 - Browser clients such as `bsky.app` can talk to `perlsky` directly because XRPC and DID-document responses include CORS headers and answer OPTIONS preflight requests.
