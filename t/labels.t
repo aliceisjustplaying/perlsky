@@ -138,7 +138,10 @@ $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.label.queryLabels')->query(
   uriPatterns => $record_uri,
   sources     => $service_did,
 ))->status_is(200)
-  ->json_is('/labels', []);
+  ->json_is('/labels/0/uri', $record_uri)
+  ->json_is('/labels/0/cid', $record_cid)
+  ->json_is('/labels/0/val', '!hide')
+  ->json_is('/labels/0/neg', JSON::PP::true);
 
 my $blob_tx = $t->ua->build_tx(
   POST => '/xrpc/com.atproto.repo.uploadBlob' => {
@@ -193,7 +196,10 @@ $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.label.queryLabels')->query(
   uriPatterns => "at://$did",
   sources     => $service_did,
 ))->status_is(200)
-  ->json_is('/labels', []);
+  ->json_is('/labels/0/uri', "at://$did")
+  ->json_is('/labels/0/cid', $blob_cid)
+  ->json_is('/labels/0/val', '!hide')
+  ->json_is('/labels/0/neg', JSON::PP::true);
 
 $t->post_ok('/xrpc/com.atproto.admin.updateSubjectStatus' => {
   Authorization => $admin_auth,
@@ -215,12 +221,19 @@ like($frame->{body}{labels}[0]{cts}, qr/\A\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z\z
 ok(!$frame->{body}{labels}[0]{neg}, 'takedown frame is a positive label');
 
 $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.label.queryLabels')->query(
-  uriPatterns => "at://$did*",
+  uriPatterns => "at://$did",
   sources     => $service_did,
 ))->status_is(200)
-  ->json_is('/labels/0/src', $service_did)
-  ->json_is('/labels/0/uri', "at://$did")
-  ->json_is('/labels/0/val', '!hide');
+  ->json_has('/labels/0');
+
+my ($repo_label) = grep {
+  ($_->{uri} // q()) eq "at://$did"
+    && !defined $_->{cid}
+    && ($_->{val} // q()) eq '!hide'
+    && !$_->{neg}
+} @{ $t->tx->res->json->{labels} };
+ok($repo_label, 'repo query includes the positive repo label itself');
+is($repo_label->{src}, $service_did, 'repo label query preserves the local label source');
 
 $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.label.queryLabels')->query(
   uriPatterns => "at://$did*",
@@ -249,28 +262,34 @@ $ws->message_ok('received bob label frame')
 my $bob_frame = decode_frame($ws->message->[1]);
 is($bob_frame->{body}{labels}[0]{uri}, "at://$bob_did", 'second repo takedown streams immediately');
 
-$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.label.queryLabels')->query(
-  uriPatterns => 'at://*',
+$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.label.queryLabels')->query([
+  uriPatterns => $record_uri,
+  uriPatterns => "at://$bob_did",
   limit       => 1,
-))->status_is(200)
+]))->status_is(200)
   ->json_has('/cursor')
   ->json_is('/labels/0/src', $service_did);
 
 my $first_page = $t->tx->res->json;
 my $cursor = $t->tx->res->json->{cursor};
 
-$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.label.queryLabels')->query(
-  uriPatterns => 'at://*',
+$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.label.queryLabels')->query([
+  uriPatterns => $record_uri,
+  uriPatterns => "at://$bob_did",
   cursor      => $cursor,
   limit       => 1,
-))->status_is(200)
+]))->status_is(200)
   ->json_has('/labels/0');
 
 my $second_page = $t->tx->res->json;
-isnt($second_page->{labels}[0]{uri}, $first_page->{labels}[0]{uri}, 'cursor pagination does not repeat the same label');
+isnt(
+  join("\0", map { defined $_ ? $_ : q() } @{$second_page->{labels}[0]}{qw(uri cid neg)}),
+  join("\0", map { defined $_ ? $_ : q() } @{$first_page->{labels}[0]}{qw(uri cid neg)}),
+  'cursor pagination does not repeat the same label',
+);
 is_deeply(
   [ sort map { $_->{uri} } @{ $first_page->{labels} }, @{ $second_page->{labels} } ],
-  [ sort "at://$did", "at://$bob_did" ],
+  [ sort $record_uri, "at://$bob_did" ],
   'cursor pagination covers the expected label subjects without overlap',
 );
 
@@ -326,10 +345,19 @@ ok($replayed_label->{body}{labels}[0]{neg}, 'replayed label carries the restore 
 $skip_non_label->finish_ok;
 
 $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.label.queryLabels')->query(
-  uriPatterns => "at://$did*",
+  uriPatterns => "at://$did",
   sources     => $service_did,
 ))->status_is(200)
-  ->json_is('/labels', []);
+  ->json_has('/labels/0');
+
+my ($repo_neg_label) = grep {
+  ($_->{uri} // q()) eq "at://$did"
+    && !defined $_->{cid}
+    && ($_->{val} // q()) eq '!hide'
+    && $_->{neg}
+} @{ $t->tx->res->json->{labels} };
+ok($repo_neg_label, 'repo query includes the negated repo label itself');
+is($repo_neg_label->{src}, $service_did, 'negated repo label keeps the local source');
 
 $app->store->dbh->do(q{DELETE FROM events WHERE seq <= ?}, undef, $app->store->latest_event_seq);
 

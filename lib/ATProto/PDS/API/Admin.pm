@@ -291,13 +291,14 @@ sub _sync_hide_label ($c, $subject, $before, $after) {
 
   my $src = service_did($c->app->settings);
   my ($uri, $cid) = _label_uri_and_cid($subject);
+  my $label_time = time;
   my $label = {
     ver => 1,
     src => $src,
     uri => $uri,
     (defined $cid ? (cid => $cid) : ()),
     val => '!hide',
-    cts => ATProto::PDS::API::Util::iso8601(time),
+    cts => ATProto::PDS::API::Util::iso8601($label_time),
     ($now ? () : (neg => JSON::PP::true)),
   };
 
@@ -308,12 +309,18 @@ sub _sync_hide_label ($c, $subject, $before, $after) {
       uri         => $uri,
       cid         => $cid,
       val         => '!hide',
+      created_at  => $label_time,
+      neg         => 0,
     );
   } else {
-    $c->store->delete_label(
+    $c->store->put_label(
       subject_key => subject_key($subject),
       src         => $src,
+      uri         => $uri,
+      cid         => $cid,
       val         => '!hide',
+      created_at  => $label_time,
+      neg         => 1,
     );
   }
 

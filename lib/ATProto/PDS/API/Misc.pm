@@ -285,6 +285,7 @@ sub _label_view ($row) {
     uri => $row->{uri},
     (defined($row->{cid}) ? (cid => $row->{cid}) : ()),
     val => $row->{val},
+    ($row->{neg} ? (neg => JSON::PP::true) : ()),
     cts => iso8601($row->{created_at}),
     (defined($row->{exp}) ? (exp => iso8601($row->{exp})) : ()),
     (defined($row->{sig}) ? (sig => $row->{sig}) : ()),

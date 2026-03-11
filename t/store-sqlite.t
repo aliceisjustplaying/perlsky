@@ -125,6 +125,32 @@ is($store->get_session('sess-1')->{revoked_at}, 123, 'sessions can be revoked');
 $store->revoke_app_password('app-1', revoked_at => 456);
 is($store->get_app_password('app-1')->{revoked_at}, 456, 'app passwords can be revoked');
 
+my $positive_label = $store->put_label(
+  subject_key => 'repo:did:web:pds.example.com:users:alice',
+  src         => 'did:web:pds.example.com',
+  uri         => 'at://did:web:pds.example.com:users:alice',
+  val         => '!hide',
+  created_at  => 100,
+);
+ok(!$positive_label->{neg}, 'new labels default to positive state');
+
+my $negated_label = $store->put_label(
+  subject_key => 'repo:did:web:pds.example.com:users:alice',
+  src         => 'did:web:pds.example.com',
+  uri         => 'at://did:web:pds.example.com:users:alice',
+  val         => '!hide',
+  neg         => 1,
+  created_at  => 200,
+);
+is($negated_label->{neg}, 1, 'label negation state is stored');
+cmp_ok($negated_label->{id}, '>', $positive_label->{id}, 'negating a label refreshes its pagination id');
+is($negated_label->{created_at}, 200, 'negating a label refreshes its label timestamp');
+is(
+  $store->list_labels(uri_patterns => ['at://did:web:pds.example.com:users:alice'])->{items}[0]{neg},
+  1,
+  'label listings preserve negation rows',
+);
+
 $store->close;
 
 done_testing;

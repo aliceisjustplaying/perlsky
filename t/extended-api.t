@@ -214,6 +214,24 @@ $t->get_ok('/xrpc/com.atproto.temp.fetchLabels?limit=10')
   ->status_is(200)
   ->json_is('/labels/0/val', '!hide');
 
+$t->post_ok('/xrpc/com.atproto.admin.updateSubjectStatus' => {
+  Authorization => $admin_auth,
+} => json => {
+  subject  => { did => $did },
+  takedown => { applied => JSON::PP::false, ref => 'unit-test' },
+})->status_is(200);
+
+$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.label.queryLabels')->query(
+  uriPatterns => "at://$did*",
+))->status_is(200)
+  ->json_is('/labels/0/val', '!hide')
+  ->json_is('/labels/0/neg', JSON::PP::true);
+
+$t->get_ok('/xrpc/com.atproto.temp.fetchLabels?limit=10')
+  ->status_is(200)
+  ->json_is('/labels/0/val', '!hide')
+  ->json_is('/labels/0/neg', JSON::PP::true);
+
 $t->post_ok('/xrpc/com.atproto.sync.requestCrawl' => json => {
   hostname => 'relay.example.test',
 })->status_is(200);

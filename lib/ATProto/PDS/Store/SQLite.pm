@@ -1333,13 +1333,16 @@ sub put_label ($self, %args) {
       $self->dbh,
       q{
         INSERT INTO labels (
-          subject_key, src, uri, cid, val, exp, sig, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          subject_key, src, uri, cid, val, neg, exp, sig, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(subject_key, src, val) DO UPDATE SET
+          id = excluded.id,
           uri = excluded.uri,
           cid = excluded.cid,
+          neg = excluded.neg,
           exp = excluded.exp,
           sig = excluded.sig,
+          created_at = excluded.created_at,
           updated_at = excluded.updated_at
       },
       [
@@ -1348,13 +1351,14 @@ sub put_label ($self, %args) {
         $uri,
         $args{cid},
         $val,
+        ($args{neg} ? 1 : 0),
         $args{exp},
         $args{sig},
         $now,
         $args{updated_at} // $now,
       ],
       _blob_bind_positions_for_names(
-        [qw(subject_key src uri cid val exp sig created_at updated_at)],
+        [qw(subject_key src uri cid val neg exp sig created_at updated_at)],
         qw(sig),
       ),
     );
@@ -1377,20 +1381,6 @@ sub get_label ($self, %args) {
     $args{src},
     $args{val},
   ), qw(sig));
-}
-
-sub delete_label ($self, %args) {
-  $self->dbh->do(
-    q{
-      DELETE FROM labels
-      WHERE subject_key = ? AND src = ? AND val = ?
-    },
-    undef,
-    $args{subject_key},
-    $args{src},
-    $args{val},
-  );
-  return 1;
 }
 
 sub list_labels ($self, %args) {
@@ -2093,6 +2083,12 @@ sub default_migrations {
       statements => [
         q{ALTER TABLE sessions ADD COLUMN next_id TEXT},
         q{ALTER TABLE app_passwords ADD COLUMN privileged INTEGER NOT NULL DEFAULT 0},
+      ],
+    },
+    {
+      version => 9,
+      statements => [
+        q{ALTER TABLE labels ADD COLUMN neg INTEGER NOT NULL DEFAULT 0},
       ],
     },
   );
