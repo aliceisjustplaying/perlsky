@@ -375,16 +375,21 @@ sub register_server_handlers ($registry, $app) {
 
   $registry->register('com.atproto.server.confirmEmail', sub ($c, $endpoint) {
     my $body = $c->req->json || {};
-    my $account = $c->store->get_account_by_email($body->{email} // q());
-    xrpc_error(404, 'AccountNotFound', 'Account was not found') unless $account;
     my $token = _require_action_token($c,
       token   => $body->{token},
       purpose => 'email_confirm',
     );
+    my $account = $c->store->get_account_by_did($token->{did});
+    xrpc_error(404, 'AccountNotFound', 'Account was not found') unless $account;
+    my $email = $body->{email} // q();
     xrpc_error(400, 'InvalidEmail', 'Token was not issued for that email')
-      unless ($token->{email} // q()) eq ($body->{email} // q());
-    $c->store->update_account($account->{did}, email_confirmed_at => time);
-    $c->store->consume_action_token($token->{token});
+      unless length($email)
+      && ($token->{email} // q()) eq $email
+      && ($account->{email} // q()) eq $email;
+    $c->store->txn(sub ($dbh) {
+      $c->store->update_account($account->{did}, email_confirmed_at => time);
+      $c->store->consume_action_token($token->{token});
+    });
     return {};
   });
 

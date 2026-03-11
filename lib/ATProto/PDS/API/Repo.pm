@@ -162,8 +162,12 @@ sub register_repo_handlers ($registry, $app) {
     make_path($blob_dir);
     my $path = File::Spec->catfile($blob_dir, $cid);
     open(my $fh, '>:raw', $path) or xrpc_error(500, 'StorageFailure', "Unable to write blob $cid");
-    print {$fh} $bytes;
-    close($fh);
+    my $write_ok = print {$fh} $bytes;
+    my $close_ok = close($fh);
+    unless ($write_ok && $close_ok) {
+      unlink $path if -e $path;
+      xrpc_error(500, 'StorageFailure', "Unable to write blob $cid");
+    }
 
     my $mime_type = $c->req->headers->content_type || 'application/octet-stream';
     $c->observe_blob_ingress($mime_type, length($bytes));
