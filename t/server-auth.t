@@ -22,6 +22,8 @@ BEGIN {
 use Test::Mojo;
 use Crypt::PK::ECC;
 use ATProto::PDS;
+use ATProto::PDS::Auth::JWT qw(encode_jwt);
+use ATProto::PDS::Identity qw(service_did);
 
 my $root = File::Spec->rel2abs(File::Spec->catdir($Bin, '..'));
 my $tmp  = File::Spec->catdir($root, 'data', 'tmp-tests', 'server-auth');
@@ -161,7 +163,8 @@ $t->post_ok('/xrpc/com.atproto.server.revokeAppPassword' => { Authorization => "
 
 $t->post_ok('/xrpc/com.atproto.server.refreshSession' => { Authorization => "Bearer $app_session->{refreshJwt}" } => json => {})
   ->status_is(401)
-  ->json_is('/error' => 'ExpiredToken');
+  ->json_is('/error' => 'ExpiredToken')
+  ->json_is('/message' => 'Token session has already been revoked');
 
 $t->get_ok('/xrpc/com.atproto.server.listAppPasswords' => { Authorization => "Bearer $access" })
   ->status_is(200);
@@ -209,7 +212,28 @@ $t->post_ok('/xrpc/com.atproto.server.deleteSession' => { Authorization => "Bear
 
 $t->get_ok('/xrpc/com.atproto.server.getSession' => { Authorization => "Bearer $refreshed->{accessJwt}" })
   ->status_is(401)
-  ->json_is('/error' => 'ExpiredToken');
+  ->json_is('/error' => 'ExpiredToken')
+  ->json_is('/message' => 'Token session has already been revoked');
+
+my $expired_access = _issue_jwt(
+  $t->app,
+  {
+    iss => service_did($t->app->settings),
+    sub => $did,
+    aud => 'access',
+    scope => 'access',
+    typ => 'access',
+    jti => 'expired-access-test',
+    exp => time - 60,
+  },
+);
+
+$t->get_ok('/xrpc/com.atproto.server.getSession' => { Authorization => "Bearer $expired_access" })
+  ->status_is(401)
+  ->json_is('/error' => 'ExpiredToken')
+  ->json_is('/message' => 'Token has expired')
+  ->content_unlike(qr{/ATProto/PDS/})
+  ->content_unlike(qr{line \d+});
 
 $t->post_ok('/xrpc/com.atproto.server.createSession' => json => {
   identifier => 'alice.localhost',
@@ -303,4 +327,9 @@ sub _jwt_claims {
   my (undef, $claims_b64, undef) = split /\./, ($jwt // q()), 3;
   return {} unless defined $claims_b64 && length $claims_b64;
   return decode_json(_b64url_decode($claims_b64));
+}
+
+sub _issue_jwt {
+  my ($app, $claims) = @_;
+  return encode_jwt($claims, $app->settings->{jwt_secret});
 }

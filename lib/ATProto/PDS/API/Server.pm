@@ -624,8 +624,8 @@ sub require_auth ($c, %opts) {
   my $decoded = eval { decode_jwt($token, _jwt_secret($c)) };
   if (my $err = $@) {
     my $message = "$err";
-    my $code = $message =~ /expired/i ? 'ExpiredToken' : 'InvalidToken';
-    xrpc_error(401, $code, $message);
+    my ($code, $safe_message) = _jwt_decode_error($message);
+    xrpc_error(401, $code, $safe_message);
   }
 
   my $claims = $decoded->{claims};
@@ -658,6 +658,20 @@ sub require_auth ($c, %opts) {
   xrpc_error(401, 'InvalidToken', 'Token subject no longer exists') unless $account;
   xrpc_error(401, 'InvalidToken', 'Token subject has been deleted') if defined $account->{deleted_at};
   return ($claims, $account, $session);
+}
+
+sub _jwt_decode_error ($message) {
+  return ('ExpiredToken', 'Token has expired')
+    if $message =~ /expired/i;
+  return ('InvalidToken', 'Token is not yet valid')
+    if $message =~ /not yet valid/i;
+  return ('InvalidToken', 'Token has an unexpected audience')
+    if $message =~ /unexpected audience/i;
+  return ('InvalidToken', 'Token has an invalid signature')
+    if $message =~ /invalid signature/i;
+  return ('InvalidToken', 'Token is malformed')
+    if $message =~ /three sections/i;
+  return ('InvalidToken', 'Token is invalid');
 }
 
 sub _issue_session ($c, $account, %opts) {
