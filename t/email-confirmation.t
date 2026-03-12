@@ -68,7 +68,7 @@ $app->store->update_account(
 );
 
 $t->post_ok('/xrpc/com.atproto.server.confirmEmail' => json => {
-  email => 'alice@example.test',
+  email => 'ALICE@example.test',
   token => $token->{token},
 })->status_is(400)
   ->json_is('/error' => 'InvalidEmail');
@@ -76,6 +76,34 @@ $t->post_ok('/xrpc/com.atproto.server.confirmEmail' => json => {
 ok(
   !defined $app->store->get_account_by_did($alice->{did})->{email_confirmed_at},
   'stale confirmation tokens cannot confirm a changed email address',
+);
+
+$t->post_ok('/xrpc/com.atproto.server.createAccount' => json => {
+  handle   => 'bob.example.test',
+  email    => 'bob@example.test',
+  password => 'hunter22',
+})->status_is(200);
+my $bob = $t->tx->res->json;
+
+$t->post_ok('/xrpc/com.atproto.server.requestEmailConfirmation' => {
+  Authorization => "Bearer $bob->{accessJwt}",
+} => json => {})->status_is(200);
+
+my $bob_token = $app->store->latest_action_token(
+  did     => $bob->{did},
+  purpose => 'email_confirm',
+);
+ok($bob_token, 'case-insensitive confirmation flow also issues a token');
+
+$t->post_ok('/xrpc/com.atproto.server.confirmEmail' => json => {
+  email => 'BOB@example.test',
+  token => $bob_token->{token},
+})->status_is(200)
+  ->json_is({});
+
+ok(
+  defined $app->store->get_account_by_did($bob->{did})->{email_confirmed_at},
+  'email confirmation accepts case-insensitive email matches',
 );
 
 done_testing;

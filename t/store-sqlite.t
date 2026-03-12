@@ -32,7 +32,7 @@ my $account = $store->create_account(
   id            => 'acct-1',
   did           => 'did:web:pds.example.com:users:alice',
   handle        => 'alice.example.com',
-  email         => 'alice@example.com',
+  email         => 'Alice@Example.com',
   password_hash => 'sha256:abc',
   did_doc       => { id => 'did:web:pds.example.com:users:alice' },
 );
@@ -47,7 +47,8 @@ my $second_account = $store->create_account(
 );
 
 is($account->{handle}, 'alice.example.com', 'account round-trips');
-is($store->get_account_by_email('alice@example.com')->{did}, $account->{did}, 'lookup by email works');
+is($account->{email}, 'alice@example.com', 'account email is normalized to lowercase');
+is($store->get_account_by_email('ALICE@example.com')->{did}, $account->{did}, 'lookup by email is case-insensitive');
 
 $store->create_session(
   id         => 'sess-1',

@@ -164,6 +164,7 @@ sub create_account ($self, %args) {
   my $account_id = $args{account_id} // $args{id} // _random_id();
   my $handle     = $args{handle}     // die 'handle is required';
   my $now        = $args{created_at} // time;
+  my $email      = _normalize_email($args{email});
 
   _execute_sql(
     $self->dbh,
@@ -180,7 +181,7 @@ sub create_account ($self, %args) {
       $account_id,
       $did,
       $handle,
-      $args{email},
+      $email,
       $args{password_hash},
       $args{password_salt},
       $now,
@@ -225,7 +226,11 @@ sub update_account ($self, $did, %changes) {
     next unless $allowed{$key};
     my $column = $key eq 'did_doc' ? 'did_doc_json' : $key;
     push @sets, "$column = ?";
-    push @bind, $key eq 'did_doc' ? _maybe_json($changes{$key}) : $changes{$key};
+    push @bind, $key eq 'did_doc'
+      ? _maybe_json($changes{$key})
+      : $key eq 'email'
+        ? _normalize_email($changes{$key})
+        : $changes{$key};
   }
   return $self->get_account_by_did($did) unless @sets;
 
@@ -282,11 +287,17 @@ sub get_account_by_handle ($self, $handle) {
 }
 
 sub get_account_by_email ($self, $email) {
+  $email = _normalize_email($email);
   return $self->_row_to_account($self->dbh->selectrow_hashref(
     q{SELECT * FROM accounts WHERE email = ?},
     undef,
     $email,
   ));
+}
+
+sub _normalize_email ($email) {
+  return undef unless defined $email;
+  return lc $email;
 }
 
 sub get_account_by_identifier ($self, $identifier) {

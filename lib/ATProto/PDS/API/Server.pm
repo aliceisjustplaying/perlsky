@@ -459,7 +459,7 @@ sub register_server_handlers ($registry, $app) {
     );
     my $account = $c->store->get_account_by_did($token->{did});
     xrpc_error(404, 'AccountNotFound', 'Account was not found') unless $account;
-    my $email = $body->{email} // q();
+    my $email = _normalize_email($body->{email}) // q();
     xrpc_error(400, 'InvalidEmail', 'Token was not issued for that email')
       unless length($email)
       && ($token->{email} // q()) eq $email
@@ -899,6 +899,11 @@ sub _initial_email_confirmed_at ($c, $email) {
   return undef unless defined $email && length $email;
   return undef unless $c->config_value('testing_auto_confirm_email', 1);
   return time;
+}
+
+sub _normalize_email ($email) {
+  return undef unless defined $email;
+  return lc $email;
 }
 
 sub _require_action_token ($c, %args) {

@@ -66,6 +66,13 @@ $t->get_ok('/xrpc/com.atproto.server.getSession' => { Authorization => "Bearer $
   ->json_is('/handle' => 'alice.localhost')
   ->json_is('/email' => 'alice@example.com');
 
+$t->post_ok('/xrpc/com.atproto.server.createSession' => json => {
+  identifier => 'ALICE@example.com',
+  password   => 'password123',
+})->status_is(200)
+  ->json_is('/did' => $did)
+  ->json_is('/email' => 'alice@example.com');
+
 $t->get_ok('/xrpc/com.atproto.admin.getInviteCodes' => {
   Authorization => 'Bearer admin-secret',
 })->status_is(403)
