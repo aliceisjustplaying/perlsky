@@ -1604,7 +1604,7 @@ for my $name (sort keys %server) {
   my $upload = post_bytes(
     $server{$name}{origin},
     'com.atproto.repo.uploadBlob',
-    "blob bytes for $name",
+    'sync blob bytes',
     'text/plain',
     auth_header(($session->json || {})->{accessJwt}),
   );
@@ -1635,6 +1635,9 @@ for my $name (sort keys %server) {
   check($res->is_success, "$name listBlobs with since succeeds");
   my $json = $res->json || {};
   my $blob_cid = $blob->{ref}{'$link'};
+  $server{$name}{sync_blob} = {
+    cid => $blob_cid,
+  };
   $server{$name}{list_blobs_since} = {
     ok                 => $res->is_success ? 1 : 0,
     returns_blob       => (scalar grep { $_ eq $blob_cid } @{ $json->{cids} || [] }) ? 1 : 0,
@@ -1649,6 +1652,53 @@ if (!same_hash($server{reference}{list_blobs_since}, $server{perlsky}{list_blobs
 } else {
   pass('listBlobs since semantics match the official reference PDS');
 }
+
+note('Comparing getBlob');
+for my $name (sort keys %server) {
+  my $blob_cid = $server{$name}{sync_blob}{cid};
+  my $res = get_form($server{$name}{origin}, 'com.atproto.sync.getBlob', {
+    did => $server{$name}{did},
+    cid => $blob_cid,
+  });
+  check($res->is_success, "$name getBlob succeeds");
+  next unless $res->is_success;
+  my $content_type = $res->headers->content_type // q();
+  my $disposition = $res->headers->header('Content-Disposition') // q();
+  $server{$name}{get_blob} = {
+    body_matches       => (($res->body // q()) eq 'sync blob bytes') ? 1 : 0,
+    content_type_plain => ($content_type =~ /\Atext\/plain(?:\z|;)/) ? 1 : 0,
+    nosniff            => (($res->headers->header('X-Content-Type-Options') // q()) eq 'nosniff') ? 1 : 0,
+    csp_sandbox        => (($res->headers->header('Content-Security-Policy') // q()) eq q{default-src 'none'; sandbox}) ? 1 : 0,
+    attachment_name    => ($disposition =~ /\Aattachment; filename="/) ? 1 : 0,
+  };
+}
+
+check(
+  same_hash($server{reference}{get_blob}, $server{perlsky}{get_blob}),
+  'getBlob payload and hardening headers match the official reference PDS',
+);
+
+note('Comparing listRepos');
+for my $name (sort keys %server) {
+  my $list_repos = get_form($server{$name}{origin}, 'com.atproto.sync.listRepos', {
+    limit => 10,
+  });
+  check($list_repos->is_success, "$name listRepos succeeds");
+  my $repos = $list_repos->is_success ? (($list_repos->json || {})->{repos} || []) : [];
+  my ($repo_row) = grep { (($_->{did} // q()) eq $server{$name}{did}) } @$repos;
+
+  $server{$name}{list_repos_surface} = {
+    repo_present          => $repo_row ? 1 : 0,
+    repo_active           => (($repo_row || {})->{active} ? 1 : 0),
+    repo_has_rev          => defined(($repo_row || {})->{rev}) && length(($repo_row || {})->{rev}) ? 1 : 0,
+    repo_did_matches      => (($repo_row || {})->{did} // q()) eq $server{$name}{did} ? 1 : 0,
+  };
+}
+
+check(
+  same_hash($server{reference}{list_repos_surface}, $server{perlsky}{list_repos_surface}),
+  'listRepos matches the official reference PDS semantics',
+);
 
 note('Comparing listMissingBlobs empty-state semantics');
 for my $name (sort keys %server) {

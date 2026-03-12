@@ -125,7 +125,6 @@ sub register_sync_handlers ($registry, $app) {
     my $bytes = <$fh>;
     close($fh);
     $c->res->headers->content_type($blob->{mime_type} || 'application/octet-stream');
-    $c->res->headers->header('Cross-Origin-Resource-Policy' => 'cross-origin');
     $c->res->headers->header('X-Content-Type-Options' => 'nosniff');
     $c->res->headers->header('Content-Disposition' => 'attachment; filename="' . ($c->param('cid') // q()) . '"');
     $c->res->headers->header('Content-Security-Policy' => q{default-src 'none'; sandbox});
