@@ -219,7 +219,9 @@ my $email_confirm = $app->store->latest_action_token(
   purpose => 'email_confirm',
 );
 
-$t->post_ok('/xrpc/com.atproto.server.confirmEmail' => json => {
+$t->post_ok('/xrpc/com.atproto.server.confirmEmail' => {
+  Authorization => "Bearer $access",
+} => json => {
   email => 'alice+new@example.test',
   token => $email_confirm->{token},
 })->status_is(200);

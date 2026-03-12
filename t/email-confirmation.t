@@ -22,6 +22,7 @@ use ATProto::PDS;
 
 my $root = File::Spec->rel2abs(File::Spec->catdir($Bin, '..'));
 my $tmp  = tempdir(CLEANUP => 1);
+my $bypass_tmp = tempdir(CLEANUP => 1);
 
 my $app = ATProto::PDS->new(
   project_root => $root,
@@ -62,12 +63,20 @@ my $token = $app->store->latest_action_token(
 );
 ok($token, 'email confirmation token was created');
 
+$t->post_ok('/xrpc/com.atproto.server.confirmEmail' => json => {
+  email => 'ALICE@example.test',
+  token => $token->{token},
+})->status_is(401)
+  ->json_is('/error' => 'AuthRequired');
+
 $app->store->update_account(
   $alice->{did},
   email => 'alice+new@example.test',
 );
 
-$t->post_ok('/xrpc/com.atproto.server.confirmEmail' => json => {
+$t->post_ok('/xrpc/com.atproto.server.confirmEmail' => {
+  Authorization => "Bearer $alice->{accessJwt}",
+} => json => {
   email => 'ALICE@example.test',
   token => $token->{token},
 })->status_is(400)
@@ -95,7 +104,9 @@ my $bob_token = $app->store->latest_action_token(
 );
 ok($bob_token, 'case-insensitive confirmation flow also issues a token');
 
-$t->post_ok('/xrpc/com.atproto.server.confirmEmail' => json => {
+$t->post_ok('/xrpc/com.atproto.server.confirmEmail' => {
+  Authorization => "Bearer $bob->{accessJwt}",
+} => json => {
   email => 'BOB@example.test',
   token => $bob_token->{token},
 })->status_is(200)
@@ -105,5 +116,42 @@ ok(
   defined $app->store->get_account_by_did($bob->{did})->{email_confirmed_at},
   'email confirmation accepts case-insensitive email matches',
 );
+
+my $bypass_app = ATProto::PDS->new(
+  project_root => $root,
+  settings => {
+    base_url              => 'http://127.0.0.1:7755',
+    service_handle_domain => 'example.test',
+    service_did_method    => 'did:web',
+    jwt_secret            => 'email-confirm-bypass-secret',
+    testing_auto_confirm_email => 0,
+    testing_allow_unauthenticated_email_confirm => 1,
+    data_dir              => $bypass_tmp,
+    db_path               => File::Spec->catfile($bypass_tmp, 'perlsky.sqlite'),
+  },
+);
+my $bypass_t = Test::Mojo->new($bypass_app);
+
+$bypass_t->post_ok('/xrpc/com.atproto.server.createAccount' => json => {
+  handle   => 'carol.example.test',
+  email    => 'carol@example.test',
+  password => 'hunter22',
+})->status_is(200);
+my $carol = $bypass_t->tx->res->json;
+
+$bypass_t->post_ok('/xrpc/com.atproto.server.requestEmailConfirmation' => {
+  Authorization => "Bearer $carol->{accessJwt}",
+} => json => {})->status_is(200);
+my $carol_token = $bypass_app->store->latest_action_token(
+  did     => $carol->{did},
+  purpose => 'email_confirm',
+);
+ok($carol_token, 'testing bypass app also issues a confirmation token');
+
+$bypass_t->post_ok('/xrpc/com.atproto.server.confirmEmail' => json => {
+  email => 'carol@example.test',
+  token => $carol_token->{token},
+})->status_is(200)
+  ->json_is({});
 
 done_testing;

@@ -441,7 +441,7 @@ sub register_server_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.server.confirmEmail', sub ($c, $endpoint) {
-    if (($c->req->headers->authorization // q()) =~ /\A(?:Bearer|DPoP)\s+/i) {
+    if (!$c->config_value('testing_allow_unauthenticated_email_confirm', 0)) {
       require_auth(
         $c,
         audience            => TOKEN_AUD_ACCESS,

@@ -45,7 +45,7 @@ When the official runtime and upstream comments disagree, the runtime behavior w
 - Firehose tests must not assume the smallest possible CAR diff. The reference runtime guarantees normalized behavior, not a minimal encoding.
 - Label replay and cursor handling need exclusive replay semantics, proper future-cursor rejection, and forward progress across unhandled backlog events.
 - `com.atproto.repo.listMissingBlobs` needed a real implementation rather than an always-empty placeholder.
-- ATProto OAuth `include:<nsid>` permission-set scopes need to be compiled into concrete repo/RPC permissions instead of being echoed back as inert strings.
+- ATProto OAuth `include:<nsid>` permission-set scopes are now compiled into concrete repo/RPC permissions before token issuance; local regression coverage pins that least-privilege behavior for supported and unsupported permissions.
 - Deactivated accounts should still be able to establish and refresh sessions, but those responses must stay marked `active=false` with `status=deactivated`.
 - Local `app.bsky.*` emulation must be conservative: only synthesize owner-local feed/thread data when the PDS can answer authoritatively, and proxy upstream instead of inventing partial global state.
 - Account email handling needs consistent normalization on write, lookup, session creation, and confirmation checks; treating email case inconsistently leaves both tests and user-facing auth behavior brittle.
@@ -57,7 +57,7 @@ When the official runtime and upstream comments disagree, the runtime behavior w
 
 These are not currently treated as audit failures:
 
-- Email confirmation remains testing-friendly by explicit user request because email sending is not configured in the current environment.
+- Email confirmation remains testing-friendly only behind the explicit `testing_allow_unauthenticated_email_confirm` / `testing_auto_confirm_email` toggles because email sending is not configured in the current environment.
 - Admin auth still accepts a local bearer-token shortcut, while the official reference PDS expects Basic auth with `admin` credentials.
 - Self-service invite creation exists only behind `self_service_invite_codes`; default behavior is admin-only invite minting.
 - Label RPC parity is covered locally, but there is no like-for-like official local-labeler surface to diff against in the same way as core PDS endpoints.

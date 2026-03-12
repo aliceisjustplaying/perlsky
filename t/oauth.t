@@ -102,6 +102,42 @@ my $client_metadata = {
 
   my $request_uri = $t->tx->res->json->{request_uri};
 
+  $t->post_ok('/oauth/par' => {
+    DPoP => _dpop_jwt($client_jwk, $client_private, 'POST', $par_url),
+  } => form => {
+    client_id             => $client_metadata->{client_id},
+    response_type         => 'code',
+    response_mode         => 'form_post',
+    redirect_uri          => $client_metadata->{redirect_uris}[0],
+    scope                 => $client_metadata->{scope},
+    state                 => 'oauth-state-form-post',
+    login_hint            => 'alice.localhost',
+    code_challenge        => $code_challenge,
+    code_challenge_method => 'S256',
+    client_assertion_type => 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+    client_assertion      => _client_assertion($client_metadata->{client_id}, $par_url, $client_jwk, $client_private),
+  })->status_is(400)
+    ->json_is('/error' => 'invalid_request')
+    ->json_is('/error_description' => 'response_mode must be query');
+
+  $t->post_ok('/oauth/par' => {
+    DPoP => _dpop_jwt($client_jwk, $client_private, 'POST', $par_url),
+  } => form => {
+    client_id             => $client_metadata->{client_id},
+    response_type         => 'code',
+    redirect_uri          => $client_metadata->{redirect_uris}[0],
+    scope                 => $client_metadata->{scope},
+    prompt                => 'none',
+    state                 => 'oauth-state-prompt-none',
+    login_hint            => 'alice.localhost',
+    code_challenge        => $code_challenge,
+    code_challenge_method => 'S256',
+    client_assertion_type => 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+    client_assertion      => _client_assertion($client_metadata->{client_id}, $par_url, $client_jwk, $client_private),
+  })->status_is(400)
+    ->json_is('/error' => 'invalid_request')
+    ->json_is('/error_description' => 'prompt contains unsupported values');
+
   $t->get_ok(Mojo::URL->new('/oauth/authorize')->query(request_uri => $request_uri)->to_string)
     ->status_is(200)
     ->content_like(qr/Authorize Tangled Test Client/);

@@ -75,10 +75,10 @@ sub authorization_server_metadata ($self) {
     pushed_authorization_request_endpoint      => $issuer . '/oauth/par',
     jwks_uri                                   => $issuer . '/oauth/jwks',
     response_types_supported                   => ['code'],
-    response_modes_supported                   => ['query', 'fragment', 'form_post'],
+    response_modes_supported                   => ['query'],
     grant_types_supported                      => ['authorization_code', 'refresh_token'],
     code_challenge_methods_supported           => ['S256'],
-    prompt_values_supported                    => ['none', 'login', 'consent', 'select_account', 'create'],
+    prompt_values_supported                    => ['login', 'consent'],
     token_endpoint_auth_methods_supported      => ['private_key_jwt', 'none'],
     token_endpoint_auth_signing_alg_values_supported => ['ES256'],
     dpop_signing_alg_values_supported          => ['ES256'],
@@ -141,6 +141,17 @@ sub pushed_authorization_request ($self, $c) {
     unless length($body->{code_challenge} // q());
   return _oauth_json_error($c, 400, 'invalid_request', 'code_challenge_method must be S256')
     unless ($body->{code_challenge_method} // q()) eq 'S256';
+  if (defined($body->{response_mode}) && length($body->{response_mode})) {
+    return _oauth_json_error($c, 400, 'invalid_request', 'response_mode must be query')
+      unless ($body->{response_mode} // q()) eq 'query';
+  }
+  if (defined($body->{prompt}) && length($body->{prompt})) {
+    my %allowed_prompt = map { $_ => 1 } qw(login consent);
+    for my $prompt (split /\s+/, ($body->{prompt} // q())) {
+      return _oauth_json_error($c, 400, 'invalid_request', 'prompt contains unsupported values')
+        unless $allowed_prompt{$prompt};
+    }
+  }
 
   if (defined($body->{resource}) && length($body->{resource}) && ($body->{resource} ne $self->_issuer)) {
     return _oauth_json_error($c, 400, 'invalid_target', 'resource is not supported');

@@ -262,6 +262,8 @@ You should see:
 
 Modern third-party ATProto OAuth clients should now be able to discover and authenticate directly against your PDS. The built-in provider enforces both the transition scopes (`transition:generic`, `transition:email`, `transition:chat.bsky`), the granular ATProto permission families (`account:`, `identity:`, `repo:`, `blob:`, and `rpc:`), and `include:<nsid>` permission-set scopes. Permission-set scopes are resolved through lexicon records and compiled down to concrete repo/RPC permissions before tokens are issued, so apps requesting spec-compliant permission bundles still get least-privilege tokens. For example, a client like Tangled will start by fetching `/.well-known/oauth-protected-resource`, follow the advertised authorization-server metadata, submit a pushed authorization request, and then send the browser through `/oauth/authorize`.
 
+The local OAuth metadata only advertises the pieces perlsky actually implements today: authorization-code flow with PAR, PKCE `S256`, DPoP, `private_key_jwt` client auth, `response_mode=query`, and interactive `prompt=login` / `prompt=consent`.
+
 ## First Account
 
 You can create the first account directly with XRPC:
@@ -286,6 +288,13 @@ The response contains:
 - `refreshJwt`
 
 Passwords must be at least 8 characters long.
+
+If you are running without outbound email during smoke/dev work, the safer testing knobs are:
+
+- `testing_auto_confirm_email`: mark new-account emails as confirmed immediately.
+- `testing_allow_unauthenticated_email_confirm`: allow `com.atproto.server.confirmEmail` without a bearer token for local testing only.
+
+Both are intended for testing environments. Leave them off in normal deployments.
 
 If you want to disable open signup, enable `invite_code_required` and mint invite codes locally on the server:
 

@@ -69,7 +69,10 @@ $t->get_ok('/.well-known/oauth-authorization-server')
   ->json_is('/scopes_supported/0' => 'atproto')
   ->json_is('/authorization_endpoint' => 'http://127.0.0.1:7755/oauth/authorize')
   ->json_is('/token_endpoint' => 'http://127.0.0.1:7755/oauth/token')
-  ->json_is('/pushed_authorization_request_endpoint' => 'http://127.0.0.1:7755/oauth/par');
+  ->json_is('/pushed_authorization_request_endpoint' => 'http://127.0.0.1:7755/oauth/par')
+  ->json_is('/response_modes_supported/0' => 'query')
+  ->json_is('/prompt_values_supported/0' => 'login')
+  ->json_is('/prompt_values_supported/1' => 'consent');
 
 my $suffix = time . int(rand(1_000_000));
 my $routeprobe_handle = "routeprobe-$suffix.localhost";
