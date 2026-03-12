@@ -172,7 +172,7 @@ Current suite counts by bucket:
 | `t/reference-differential-plc.t` | direct reference differential | official runtime comparison in PLC mode |
 | `t/reference-differential.t` | direct reference differential | official runtime comparison in baseline mode |
 | `t/remote-handle-resolution.t` | audited local regression | remote `did:web` DID docs, conservative remote identity handling, external-handle adoption, invalid-handle rejection, and missing remote DID/identity error semantics |
-| `t/repo-api.t` | audited local regression | record mutation and read semantics, but still lighter than ideal on some negative/reference edge cases |
+| `t/repo-api.t` | audited local regression | record mutation, stale-CID, swap, and missing-delete semantics |
 | `t/repo-firehose-car.t` | audited local regression | repo commit CAR shape and firehose interactions |
 | `t/repo_formats.t` | audited local regression | direct repo wire-format and CAR expectations |
 | `t/self-service-invite-surfaces.t` | audited local regression | isolated self-service invite issuance coverage for invite minting, account scoping, and account invite-code listing |

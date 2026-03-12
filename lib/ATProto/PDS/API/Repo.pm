@@ -86,13 +86,24 @@ sub register_repo_handlers ($registry, $app) {
       return undef;
     }
     assert_repo_readable($c, $account);
+    my $cid = $c->param('cid');
     my $row = $c->store->get_record(
       $account->{did},
       $c->param('collection'),
       $c->param('rkey'),
-      $c->param('cid'),
+      $cid,
     );
-    xrpc_error(404, 'RecordNotFound', 'Record was not found') unless $row;
+    unless ($row) {
+      if (defined $cid && length $cid) {
+        my $current = $c->store->get_record(
+          $account->{did},
+          $c->param('collection'),
+          $c->param('rkey'),
+        );
+        xrpc_error(400, 'RecordNotFound', 'Record was not found') if $current;
+      }
+      xrpc_error(404, 'RecordNotFound', 'Record was not found');
+    }
     assert_record_readable($c, _record_uri($account->{did}, $row->{collection}, $row->{rkey}));
     return _record_view($account->{did}, $row);
   });

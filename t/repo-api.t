@@ -233,7 +233,7 @@ $t->get_ok("/xrpc/com.atproto.repo.getRecord?repo=$did&collection=app.bsky.feed.
   ->json_is('/value/text' => 'hello from updated perl');
 
 $t->get_ok("/xrpc/com.atproto.repo.getRecord?repo=$did&collection=app.bsky.feed.post&rkey=first-post&cid=bafyreifakecidmismatch")
-  ->status_is(404)
+  ->status_is(400)
   ->json_is('/error' => 'RecordNotFound');
 
 $t->post_ok('/xrpc/com.atproto.repo.putRecord' => { Authorization => "Bearer $access" } => json => {

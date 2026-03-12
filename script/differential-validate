@@ -1337,6 +1337,56 @@ check(
   'putRecord create-or-update semantics match the official reference PDS',
 );
 
+note('Comparing repo stale-cid and missing-delete semantics');
+for my $name (sort keys %server) {
+  my $stale_get = get_form($server{$name}{origin}, 'com.atproto.repo.getRecord', {
+    repo       => $server{$name}{did},
+    collection => 'app.bsky.feed.post',
+    rkey       => 'diffpost',
+    cid        => $server{$name}{record_cid},
+  });
+
+  my $latest_before_missing_delete = get_form(
+    $server{$name}{origin},
+    'com.atproto.sync.getLatestCommit',
+    { did => $server{$name}{did} },
+  );
+  check($latest_before_missing_delete->is_success, "$name getLatestCommit succeeds before missing delete");
+
+  my $missing_delete = post_json($server{$name}{origin}, 'com.atproto.repo.deleteRecord', {
+    repo       => $server{$name}{did},
+    collection => 'app.bsky.feed.post',
+    rkey       => 'missing-rkey-ok',
+  }, auth_header($server{$name}{access}));
+
+  my $latest_after_missing_delete = get_form(
+    $server{$name}{origin},
+    'com.atproto.sync.getLatestCommit',
+    { did => $server{$name}{did} },
+  );
+  check($latest_after_missing_delete->is_success, "$name getLatestCommit succeeds after missing delete");
+
+  $server{$name}{repo_read_edges} = {
+    stale_get => normalize_xrpc_error($stale_get),
+    missing_delete => {
+      status => $missing_delete->code // 0,
+      body   => $missing_delete->body,
+    },
+    latest_commit_unchanged => (
+      (($latest_before_missing_delete->json || {})->{cid} // q()) eq (($latest_after_missing_delete->json || {})->{cid} // q())
+        && (($latest_before_missing_delete->json || {})->{rev} // q()) eq (($latest_after_missing_delete->json || {})->{rev} // q())
+    ) ? 1 : 0,
+  };
+}
+
+if (!same_hash($server{reference}{repo_read_edges}, $server{perlsky}{repo_read_edges})) {
+  note('reference repo read edges: ' . encode_json($server{reference}{repo_read_edges}));
+  note('perlsky repo read edges: ' . encode_json($server{perlsky}{repo_read_edges}));
+  fail_check('repo stale-cid reads and missing-delete no-ops match the official reference PDS');
+} else {
+  pass('repo stale-cid reads and missing-delete no-ops match the official reference PDS');
+}
+
 note('Comparing applyWrites');
 for my $name (sort keys %server) {
   my $seed_update = post_json($server{$name}{origin}, 'com.atproto.repo.createRecord', {
