@@ -48,6 +48,7 @@ sub _get_author_feed ($self, $c) {
     cursor  => $c->param('cursor'),
     reverse => 1,
   );
+  return undef if grep { _post_requires_upstream($self, $c, $_) } @{ $page->{items} || [] };
   my $profile_value = $self->_profile_record_value($c, $account);
   my @feed = map {
     +{
@@ -80,6 +81,7 @@ sub _get_posts ($self, $c) {
     }
     return undef unless defined $resolved;
     my ($account, $row) = @$resolved;
+    return undef if _post_requires_upstream($self, $c, $row);
     my $canonical_uri = $self->_post_uri($account, $row);
     next if $seen_uri{$canonical_uri}++;
     push @resolved, $resolved;
@@ -159,6 +161,13 @@ sub _thread_requires_upstream ($self, $c, $row) {
     return 1 if !$resolved || $@;
   }
   return 0;
+}
+
+sub _post_requires_upstream ($self, $c, $row) {
+  my $quoted_uri = $self->_quoted_uri($row->{value});
+  return 0 unless defined $quoted_uri && length $quoted_uri;
+  my $resolved = eval { $self->_resolve_local_post_uri($c, $quoted_uri) };
+  return !$resolved || $@ ? 1 : 0;
 }
 
 sub _thread_view ($self, $c, $account, $row, $profile_value = undef, $viewer = undef, $depth = 6, $parent_height = 80) {

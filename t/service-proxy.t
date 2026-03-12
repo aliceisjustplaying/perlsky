@@ -468,6 +468,41 @@ ok(!exists($t->tx->res->json->{feed}[0]{post}{bookmarkCount}), 'local post view 
 ok(!exists($t->tx->res->json->{feed}[0]{post}{replyCount}), 'local post view omits non-authoritative replyCount');
 ok(!exists($t->tx->res->json->{feed}[0]{post}{likeCount}), 'local post view omits non-authoritative likeCount');
 
+$t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
+  Authorization => "Bearer $access",
+} => json => {
+  repo       => $did,
+  collection => 'app.bsky.feed.post',
+  rkey       => 'quoted-remote',
+  record     => {
+    '$type' => 'app.bsky.feed.post',
+    text    => 'quoted remote post',
+    embed   => {
+      '$type' => 'app.bsky.embed.record',
+      record  => {
+        uri => 'at://did:plc:remote/app.bsky.feed.post/quoted',
+        cid => 'bafyremote-quoted',
+      },
+    },
+    createdAt => '2026-03-10T18:01:00Z',
+  },
+})->status_is(200)
+  ->json_has('/uri');
+
+my $quoted_remote_uri = $t->tx->res->json->{uri};
+
+$t->get_ok("/xrpc/app.bsky.feed.getAuthorFeed?actor=$did&limit=10" => {
+  Authorization => "Bearer $access",
+})->status_is(200)
+  ->json_is('/nsid' => 'app.bsky.feed.getAuthorFeed');
+ok($t->tx->res->json->{auth}, 'author feed proxies upstream when quoted remote records need non-local context');
+
+$t->get_ok('/xrpc/app.bsky.feed.getPosts?uris=' . _uri_escape($quoted_remote_uri) => {
+  Authorization => "Bearer $access",
+})->status_is(200)
+  ->json_is('/nsid' => 'app.bsky.feed.getPosts');
+ok($t->tx->res->json->{auth}, 'getPosts proxies upstream when quoted remote records need non-local context');
+
 $t->get_ok('/xrpc/app.bsky.feed.getPostThread?uri=' . _uri_escape($post_uri) => {
   Authorization => "Bearer $access",
 })->status_is(200)
