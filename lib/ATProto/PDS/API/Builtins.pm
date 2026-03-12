@@ -10,7 +10,7 @@ use Mojo::JSON qw(false true);
 use Mojo::URL;
 use Mojo::UserAgent;
 
-use ATProto::PDS::Identity qw(account_did_doc normalize_handle service_did service_did_doc);
+use ATProto::PDS::Identity qw(account_did_doc normalize_handle resolve_handle_to_did service_did service_did_doc);
 use ATProto::PDS::PLC qw(is_plc_did refresh_plc_did_doc);
 
 our @EXPORT_OK = qw(register_builtin_handlers);
@@ -77,6 +77,10 @@ sub register_builtin_handlers ($registry, $app) {
       return {
         did => service_did($c->app->settings),
       };
+    }
+
+    if (my $did = resolve_handle_to_did($c->app->settings, $handle)) {
+      return { did => $did };
     }
 
     if (my $did = _resolve_remote_handle_via_appview($c, $handle)) {

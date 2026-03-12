@@ -7,6 +7,8 @@ no warnings 'experimental::signatures';
 
 use Exporter 'import';
 use Mojo::URL;
+use Mojo::UserAgent;
+use Net::DNS::Resolver;
 
 use ATProto::PDS::PLC qw(account_did_method format_plc_did_doc is_plc_did recommended_did_credentials);
 
@@ -16,6 +18,7 @@ our @EXPORT_OK = qw(
   did_to_path
   is_valid_handle
   normalize_handle
+  resolve_handle_to_did
   service_did
   service_did_doc
   service_host
@@ -148,12 +151,59 @@ sub normalize_handle ($handle, $allowed_domain = undef, $opts = {}) {
   return $handle;
 }
 
+sub resolve_handle_to_did ($config_or_url, $handle) {
+  my $config = _coerce_config($config_or_url);
+  my $normalized = normalize_handle($handle, undef, { no_append => 1 });
+  return undef unless defined $normalized;
+
+  return _resolve_handle_dns($normalized)
+    // _resolve_handle_well_known($normalized);
+}
+
 sub _coerce_config ($config_or_url) {
   return $config_or_url if ref($config_or_url) eq 'HASH';
   return {
     base_url           => $config_or_url,
     service_did_method => 'did:web',
   };
+}
+
+sub _resolve_handle_dns ($handle) {
+  state $resolver = Net::DNS::Resolver->new;
+  my $packet = eval { $resolver->search('_atproto.' . $handle, 'TXT') };
+  return undef if $@ || !$packet;
+
+  for my $rr ($packet->answer) {
+    next unless ($rr->type // q()) eq 'TXT';
+    for my $txt ($rr->txtdata) {
+      next unless defined $txt && $txt =~ /\Adid=(did:[^\s]+)\z/i;
+      return $1;
+    }
+  }
+
+  return undef;
+}
+
+sub _resolve_handle_well_known ($handle) {
+  state $ua = do {
+    my $client = Mojo::UserAgent->new(max_redirects => 0);
+    $client->request_timeout(15);
+    $client->inactivity_timeout(15);
+    $client;
+  };
+
+  my $url = Mojo::URL->new('https://' . $handle)->path('/.well-known/atproto-did');
+  my $tx = eval { $ua->get($url) };
+  return undef if $@ || !$tx;
+
+  my $res = eval { $tx->result };
+  return undef if $@ || !$res;
+  return undef unless ($res->code // 0) == 200;
+
+  my $did = $res->body // q();
+  $did =~ s/^\s+|\s+$//g;
+  return undef unless $did =~ /\Adid:[^\s]+\z/;
+  return $did;
 }
 
 1;

@@ -89,18 +89,24 @@ my $app = ATProto::PDS->new(
 );
 my $t = Test::Mojo->new($app);
 
-$t->get_ok("/xrpc/com.atproto.identity.resolveHandle?handle=$remote_handle")
-  ->status_is(200)
-  ->json_is('/did' => $remote_did);
+{
+  no warnings 'redefine';
+  local *ATProto::PDS::Identity::_resolve_handle_dns = sub { return undef; };
+  local *ATProto::PDS::Identity::_resolve_handle_well_known = sub { return undef; };
+
+  $t->get_ok("/xrpc/com.atproto.identity.resolveHandle?handle=$remote_handle")
+    ->status_is(200)
+    ->json_is('/did' => $remote_did);
+
+  $t->get_ok('/xrpc/com.atproto.identity.resolveHandle?handle=missing.example.test')
+    ->status_is(404)
+    ->json_is('/error' => 'HandleNotFound');
+}
 
 $t->get_ok("/xrpc/com.atproto.identity.resolveDid?did=$remote_did_web")
   ->status_is(200)
   ->json_is('/didDoc/id' => $remote_did_web)
   ->json_is('/didDoc/service/0/serviceEndpoint' => 'https://actor.example.test');
-
-$t->get_ok('/xrpc/com.atproto.identity.resolveHandle?handle=missing.example.test')
-  ->status_is(404)
-  ->json_is('/error' => 'HandleNotFound');
 
 done_testing;
 

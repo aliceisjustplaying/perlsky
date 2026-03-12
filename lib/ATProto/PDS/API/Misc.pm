@@ -19,7 +19,7 @@ use ATProto::PDS::Constants qw(
   TOKEN_AUD_ACCESS
 );
 use ATProto::PDS::EventStream qw(encode_message_frame);
-use ATProto::PDS::Identity qw(account_did_doc normalize_handle service_did service_did_doc);
+use ATProto::PDS::Identity qw(account_did_doc normalize_handle resolve_handle_to_did service_did service_did_doc);
 use ATProto::PDS::Moderation qw(assert_report_allowed);
 use ATProto::PDS::PLC qw(create_signed_plc_operation is_plc_did plc_rotation_did plc_update_handle recommended_did_credentials refresh_plc_did_doc submit_plc_operation);
 use ATProto::PDS::Repo::CID;
@@ -163,7 +163,15 @@ sub register_misc_handlers ($registry, $app) {
     my $body   = $c->req->json || {};
     my $domain = $c->config_value('service_handle_domain', 'localhost');
     my $handle = normalize_handle($body->{handle}, $domain);
+    $handle = normalize_handle($body->{handle}, undef, { no_append => 1 })
+      unless defined $handle;
     xrpc_error(400, 'InvalidHandle', 'Requested handle is invalid') unless defined $handle;
+    my $service_handle = normalize_handle($handle, $domain, { no_append => 1 });
+    if (!defined $service_handle) {
+      my $resolved_did = resolve_handle_to_did($c->app->settings, $handle);
+      xrpc_error(400, 'InvalidRequest', 'External handle did not resolve to DID')
+        unless defined $resolved_did && lc($resolved_did) eq lc($account->{did});
+    }
     my $existing = $c->store->get_account_by_handle($handle);
     xrpc_error(400, 'HandleNotAvailable', 'That handle is already registered')
       if $existing && ($existing->{did} // q()) ne $account->{did};
