@@ -1,6 +1,6 @@
 # Test Audit Status
 
-As of 2026-03-12, the focused test-correctness and reference-audit pass is complete on rewritten history through `9a3afbb`.
+As of 2026-03-12, the focused test-correctness and reference-audit pass is complete on rewritten history through `457a027`.
 
 That does not mean every test has been manually revalidated against every other PDS implementation line by line. It means:
 
@@ -13,7 +13,7 @@ That does not mean every test has been manually revalidated against every other 
 The current baseline for saying "the audited suite is green" is:
 
 - `prove -lr t`
-  - last full green result in the realigned Meridian worktree before the current migration-auth follow-up: `Files=48, Tests=2758`
+  - latest full green result in the realigned Meridian worktree: `Files=48, Tests=2798`
 - `prove -lv t/server-auth.t`
 - `perl -c script/differential-validate`
 - `PERLSKY_RUN_REFERENCE_DIFF=1 prove -lv t/reference-differential.t`
