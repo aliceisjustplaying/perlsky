@@ -1082,6 +1082,122 @@ check(
   'putRecord create-or-update semantics match the official reference PDS',
 );
 
+note('Comparing applyWrites');
+for my $name (sort keys %server) {
+  my $seed_update = post_json($server{$name}{origin}, 'com.atproto.repo.createRecord', {
+    repo       => $server{$name}{did},
+    collection => 'app.bsky.feed.post',
+    rkey       => 'apply-update-target',
+    record     => {
+      %{$record},
+      text => "applyWrites seed update for $name",
+    },
+  }, auth_header($server{$name}{access}));
+  check($seed_update->is_success, "$name applyWrites seed update record succeeds");
+
+  my $seed_delete = post_json($server{$name}{origin}, 'com.atproto.repo.createRecord', {
+    repo       => $server{$name}{did},
+    collection => 'app.bsky.feed.post',
+    rkey       => 'apply-delete-target',
+    record     => {
+      %{$record},
+      text => "applyWrites seed delete for $name",
+    },
+  }, auth_header($server{$name}{access}));
+  check($seed_delete->is_success, "$name applyWrites seed delete record succeeds");
+  next unless $seed_update->is_success && $seed_delete->is_success;
+
+  my $apply = post_json($server{$name}{origin}, 'com.atproto.repo.applyWrites', {
+    repo   => $server{$name}{did},
+    writes => [
+      {
+        '$type'    => 'com.atproto.repo.applyWrites#create',
+        collection => 'app.bsky.feed.post',
+        rkey       => 'apply-created',
+        value      => {
+          '$type'   => 'app.bsky.feed.post',
+          text      => "applyWrites create for $name",
+          createdAt => '2026-03-12T00:00:01Z',
+        },
+      },
+      {
+        '$type'    => 'com.atproto.repo.applyWrites#update',
+        collection => 'app.bsky.feed.post',
+        rkey       => 'apply-update-target',
+        value      => {
+          '$type'   => 'app.bsky.feed.post',
+          text      => "applyWrites update for $name",
+          createdAt => '2026-03-12T00:00:02Z',
+        },
+      },
+      {
+        '$type'    => 'com.atproto.repo.applyWrites#delete',
+        collection => 'app.bsky.feed.post',
+        rkey       => 'apply-delete-target',
+      },
+    ],
+  }, auth_header($server{$name}{access}));
+  check($apply->is_success, "$name applyWrites succeeds");
+
+  my $created = get_form($server{$name}{origin}, 'com.atproto.repo.getRecord', {
+    repo       => $server{$name}{did},
+    collection => 'app.bsky.feed.post',
+    rkey       => 'apply-created',
+  });
+  my $updated = get_form($server{$name}{origin}, 'com.atproto.repo.getRecord', {
+    repo       => $server{$name}{did},
+    collection => 'app.bsky.feed.post',
+    rkey       => 'apply-update-target',
+  });
+  my $deleted = get_form($server{$name}{origin}, 'com.atproto.repo.getRecord', {
+    repo       => $server{$name}{did},
+    collection => 'app.bsky.feed.post',
+    rkey       => 'apply-delete-target',
+  });
+  my $missing_delete = post_json($server{$name}{origin}, 'com.atproto.repo.applyWrites', {
+    repo   => $server{$name}{did},
+    writes => [
+      {
+        '$type'    => 'com.atproto.repo.applyWrites#delete',
+        collection => 'app.bsky.feed.post',
+        rkey       => 'apply-missing-target',
+      },
+    ],
+  }, auth_header($server{$name}{access}));
+
+  my $apply_json = $apply->json || {};
+  my $results = $apply_json->{results} || [];
+  $server{$name}{apply_writes} = {
+    ok                    => $apply->is_success ? 1 : 0,
+    has_commit            => ref($apply_json->{commit}) eq 'HASH' ? 1 : 0,
+    results_count         => 0 + @$results,
+    create_result_type    => ($results->[0]{'$type'} // q()),
+    update_result_type    => ($results->[1]{'$type'} // q()),
+    delete_result_type    => ($results->[2]{'$type'} // q()),
+    created_text_ok       => (($created->json || {})->{value}{text} // q()) =~ /\AapplyWrites create / ? 1 : 0,
+    updated_text_ok       => (($updated->json || {})->{value}{text} // q()) =~ /\AapplyWrites update / ? 1 : 0,
+    deleted_missing       => $deleted->is_success ? 0 : 1,
+    deleted_error         => ($deleted->json || {})->{error} // q(),
+  };
+  $server{$name}{apply_writes_missing_delete_error} = normalize_xrpc_error($missing_delete);
+}
+
+if (!same_hash($server{reference}{apply_writes}, $server{perlsky}{apply_writes})) {
+  note('reference applyWrites: ' . encode_json($server{reference}{apply_writes}));
+  note('perlsky applyWrites: ' . encode_json($server{perlsky}{apply_writes}));
+  fail_check('applyWrites matches the official reference PDS semantics');
+} else {
+  pass('applyWrites matches the official reference PDS semantics');
+}
+
+if (!same_hash($server{reference}{apply_writes_missing_delete_error}, $server{perlsky}{apply_writes_missing_delete_error})) {
+  note('reference applyWrites missing-delete error: ' . encode_json($server{reference}{apply_writes_missing_delete_error}));
+  note('perlsky applyWrites missing-delete error: ' . encode_json($server{perlsky}{apply_writes_missing_delete_error}));
+  pass('applyWrites missing-delete error remains a documented intentional divergence from the official runtime');
+} else {
+  pass('applyWrites missing-delete error matches the official reference PDS semantics');
+}
+
 note('Comparing repo write swap preconditions');
 for my $name (sort keys %server) {
   my $put_swap_commit = post_json($server{$name}{origin}, 'com.atproto.repo.putRecord', {

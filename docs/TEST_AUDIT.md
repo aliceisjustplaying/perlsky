@@ -63,6 +63,7 @@ When the official runtime and upstream comments disagree, the runtime behavior w
 - `com.atproto.sync.getBlob` should ship the same download-hardening headers as the reference PDS (`X-Content-Type-Options`, `Content-Disposition`, `Content-Security-Policy`).
 - `com.atproto.sync.getBlob` should not add an extra `Cross-Origin-Resource-Policy` header beyond the reference PDS surface; the executable differential now pins the exact hardening-header set instead of a stricter local variant.
 - `com.atproto.sync.listReposByCollection` is present in the published lexicon but not exposed by the current official runtime, so it remains locally regression-tested rather than executable-reference-differenced.
+- `com.atproto.repo.applyWrites` now has executable-reference happy-path coverage, but the official runtime still returns a `500 InternalServerError` when a delete write targets a missing record. Perlsky intentionally keeps the cleaner `400 InvalidRequest` there and documents the difference instead of copying the upstream quirk.
 
 ## Known Intentional Divergences
 
