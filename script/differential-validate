@@ -655,6 +655,8 @@ for my $name (sort keys %server) {
   $server{$name}{secondary_did}    = $json->{did};
   $server{$name}{secondary_handle} = $json->{handle};
   $server{$name}{secondary_email}  = $name eq 'reference' ? 'bob-ref@test.com' : 'bob-perl@test.com';
+  $server{$name}{secondary_access} = $json->{accessJwt};
+  $server{$name}{secondary_refresh} = $json->{refreshJwt};
 }
 
 note('Comparing account password boundary semantics');
@@ -2026,6 +2028,10 @@ for my $name (sort keys %server) {
     did  => 'did:web:missing.test',
     cids => $requested_cid,
   });
+  my $wrong_repo = get_form($server{$name}{origin}, 'com.atproto.sync.getBlocks', {
+    did  => $server{$name}{secondary_did},
+    cids => $requested_cid,
+  });
 
   $server{$name}{get_blocks} = {
     ok                 => $res->is_success ? 1 : 0,
@@ -2035,6 +2041,7 @@ for my $name (sort keys %server) {
     missing_status     => $missing->code,
     missing_error      => ($missing->json || {})->{error},
     missing_repo       => normalize_xrpc_error($missing_repo),
+    wrong_repo         => normalize_xrpc_error($wrong_repo),
   };
 }
 
@@ -2087,19 +2094,12 @@ check(
 
 note('Comparing listBlobs since semantics');
 for my $name (sort keys %server) {
-  my $session = post_json($server{$name}{origin}, 'com.atproto.server.createSession', {
-    identifier => $server{$name}{renamed_handle} || $server{$name}{handle},
-    password   => 'hunter22',
-  });
-  check($session->is_success, "$name createSession succeeds for listBlobs comparison");
-  next unless $session->is_success;
-
   my $upload = post_bytes(
     $server{$name}{origin},
     'com.atproto.repo.uploadBlob',
     'sync blob bytes',
     'text/plain',
-    auth_header(($session->json || {})->{accessJwt}),
+    auth_header($server{$name}{access}),
   );
   check($upload->is_success, "$name uploadBlob succeeds for listBlobs comparison");
   next unless $upload->is_success;
@@ -2117,19 +2117,35 @@ for my $name (sort keys %server) {
         blob    => $blob,
       },
     },
-    auth_header(($session->json || {})->{accessJwt}),
+    auth_header($server{$name}{access}),
   );
   check($create->is_success, "$name createRecord with blob succeeds for listBlobs comparison");
+  next unless $create->is_success;
+
+  my $secondary_upload = post_bytes(
+    $server{$name}{origin},
+    'com.atproto.repo.uploadBlob',
+    'sync blob bytes',
+    'text/plain',
+    auth_header($server{$name}{secondary_access}),
+  );
+  check($secondary_upload->is_success, "$name secondary uploadBlob succeeds for listBlobs comparison");
+  next unless $secondary_upload->is_success;
 
   my $res = get_form($server{$name}{origin}, 'com.atproto.sync.listBlobs', {
     did   => $server{$name}{did},
     since => $server{$name}{latest_commit_raw}{rev},
   });
+  my $secondary_res = get_form($server{$name}{origin}, 'com.atproto.sync.listBlobs', {
+    did => $server{$name}{secondary_did},
+  });
   my $missing_repo = get_form($server{$name}{origin}, 'com.atproto.sync.listBlobs', {
     did => 'did:web:missing.test',
   });
   check($res->is_success, "$name listBlobs with since succeeds");
+  check($secondary_res->is_success, "$name secondary listBlobs succeeds");
   my $json = $res->json || {};
+  my $secondary_json = $secondary_res->json || {};
   my $blob_cid = $blob->{ref}{'$link'};
   $server{$name}{sync_blob} = {
     cid => $blob_cid,
@@ -2138,6 +2154,7 @@ for my $name (sort keys %server) {
     ok                 => $res->is_success ? 1 : 0,
     returns_blob       => (scalar grep { $_ eq $blob_cid } @{ $json->{cids} || [] }) ? 1 : 0,
     cursor_matches_tail => (($json->{cursor} // q()) eq (($json->{cids} || [])->[-1] // q())) ? 1 : 0,
+    secondary_empty    => @{ $secondary_json->{cids} || [] } ? 0 : 1,
     missing_repo       => normalize_xrpc_error($missing_repo),
   };
 }
@@ -2157,6 +2174,10 @@ for my $name (sort keys %server) {
     did => $server{$name}{did},
     cid => $blob_cid,
   });
+  my $secondary = get_form($server{$name}{origin}, 'com.atproto.sync.getBlob', {
+    did => $server{$name}{secondary_did},
+    cid => $blob_cid,
+  });
   my $missing_repo = get_form($server{$name}{origin}, 'com.atproto.sync.getBlob', {
     did => 'did:web:missing.test',
     cid => $blob_cid,
@@ -2171,6 +2192,7 @@ for my $name (sort keys %server) {
     nosniff            => (($res->headers->header('X-Content-Type-Options') // q()) eq 'nosniff') ? 1 : 0,
     csp_sandbox        => (($res->headers->header('Content-Security-Policy') // q()) eq q{default-src 'none'; sandbox}) ? 1 : 0,
     attachment_name    => ($disposition =~ /\Aattachment; filename="/) ? 1 : 0,
+    secondary          => normalize_xrpc_error($secondary),
     missing_repo       => normalize_xrpc_error($missing_repo),
   };
 }

@@ -83,7 +83,8 @@ $store->put_blob(
   storage_path => 'blobs/bafk.png',
 );
 is($store->get_blob('bafkreigh2akiscaildc')->{byte_size}, 1234, 'blob metadata is stored');
-ok($store->blob_owned_by_did('bafkreigh2akiscaildc', $account->{did}), 'primary owner is tracked');
+ok($store->blob_owned_by_did('bafkreigh2akiscaildc', $account->{did}), 'upload tracks the blob owner');
+ok(!$store->blob_referenced_by_did('bafkreigh2akiscaildc', $account->{did}), 'upload alone does not mark the blob referenced');
 
 $store->put_blob(
   cid          => 'bafkreigh2akiscaildc',
@@ -124,7 +125,9 @@ $store->put_record(
     },
   },
 );
+ok($store->blob_referenced_by_did('bafkreigh2akiscaildc', $account->{did}), 'primary owner is marked referenced once the blob is attached');
 ok($store->blob_owned_by_did('bafkreigh2akiscaildc', $second_account->{did}), 'second owner is tracked for shared blob');
+ok($store->blob_referenced_by_did('bafkreigh2akiscaildc', $second_account->{did}), 'second owner is marked referenced for shared blob');
 is($store->count_blobs_by_did($account->{did}), 1, 'first account still counts shared blob');
 is($store->count_blobs_by_did($second_account->{did}), 1, 'second account counts shared blob');
 is($store->list_blobs_by_did($account->{did})->{items}[0]{cid}, 'bafkreigh2akiscaildc', 'shared blob lists for first owner');

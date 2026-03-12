@@ -197,6 +197,22 @@ $t->request_ok($blob_tx)->status_is(200);
 my $blob = $t->tx->res->json->{blob};
 my $blob_cid = $blob->{ref}{'$link'};
 
+$t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
+  Authorization => "Bearer $access",
+} => json => {
+  repo       => $did,
+  collection => 'app.bsky.feed.post',
+  rkey       => 'blob-preexisting-ref',
+  record     => {
+    '$type'   => 'app.bsky.feed.post',
+    text      => 'existing blob ref',
+    createdAt => '2026-03-10T00:00:01Z',
+    embed     => {
+      image => $blob,
+    },
+  },
+})->status_is(200);
+
 $t->post_ok('/xrpc/com.atproto.admin.updateSubjectStatus' => {
   Authorization => $admin_auth,
 } => json => {

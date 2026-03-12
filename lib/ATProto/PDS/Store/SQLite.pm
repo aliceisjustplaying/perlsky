@@ -758,6 +758,16 @@ sub blob_owned_by_did ($self, $cid, $did) {
   ) // 0);
 }
 
+sub blob_referenced_by_did ($self, $cid, $did) {
+  return 0 unless defined $cid && length $cid && defined $did && length $did;
+  return !!($self->dbh->selectrow_array(
+    q{SELECT 1 FROM blob_owners WHERE cid = ? AND did = ? AND referenced_at IS NOT NULL},
+    undef,
+    $cid,
+    $did,
+  ) // 0);
+}
+
 sub mark_blobs_referenced ($self, $did, @cids) {
   if (!defined($did) || ref($did) || (!length($did) && @cids)) {
     unshift @cids, $did if defined $did;
@@ -856,6 +866,7 @@ sub put_record ($self, %args) {
       did collection rkey cid value_json record_bytes repo_rev created_at updated_at
     )], qw(record_bytes)),
   );
+  $self->mark_blobs_referenced($did, _record_blob_cids($args{value}));
 
   return $self->get_record($did, $collection, $rkey);
 }
@@ -886,6 +897,7 @@ sub replace_records_for_did ($self, $did, $records) {
         did collection rkey cid value_json record_bytes repo_rev created_at updated_at
       )], qw(record_bytes)),
     );
+    $self->mark_blobs_referenced($did, _record_blob_cids($record->{value}));
   }
   return 1;
 }

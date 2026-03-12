@@ -94,16 +94,6 @@ $t->post_ok('/xrpc/com.atproto.repo.uploadBlob' => {
 my $blob = $t->tx->res->json->{blob};
 my $blob_cid = $blob->{ref}{'$link'};
 
-$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.getBlob')->query(
-  did => $did,
-  cid => $blob_cid,
-))->status_is(200)
-  ->header_is('X-Content-Type-Options' => 'nosniff')
-  ->header_like('Content-Disposition' => qr/\Aattachment; filename="/)
-  ->header_is('Content-Security-Policy' => "default-src 'none'; sandbox")
-  ->content_type_is('text/plain')
-  ->content_is('blob-bytes');
-
 $t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
   Authorization => "Bearer $access",
 } => json => {
@@ -116,6 +106,16 @@ $t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
     image   => $blob,
   },
 })->status_is(200);
+
+$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.getBlob')->query(
+  did => $did,
+  cid => $blob_cid,
+))->status_is(200)
+  ->header_is('X-Content-Type-Options' => 'nosniff')
+  ->header_like('Content-Disposition' => qr/\Aattachment; filename="/)
+  ->header_is('Content-Security-Policy' => "default-src 'none'; sandbox")
+  ->content_type_is('text/plain')
+  ->content_is('blob-bytes');
 
 $t->post_ok('/xrpc/com.atproto.server.createAccount' => json => {
   handle   => 'bob.example.test',
@@ -193,12 +193,8 @@ $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.listBlobs')->query(
 $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.getBlob')->query(
   did => $second_did,
   cid => $blob_cid,
-))->status_is(200)
-  ->header_is('X-Content-Type-Options' => 'nosniff')
-  ->header_like('Content-Disposition' => qr/\Aattachment; filename="/)
-  ->header_is('Content-Security-Policy' => "default-src 'none'; sandbox")
-  ->content_type_is('text/plain')
-  ->content_is('blob-bytes');
+))->status_is(400)
+  ->json_is('/error' => 'InvalidRequest');
 
 my @since_sorted_blob_cids = sort ($blob_cid, $blob_two_cid);
 

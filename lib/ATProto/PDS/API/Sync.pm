@@ -114,10 +114,10 @@ sub register_sync_handlers ($registry, $app) {
   $registry->register('com.atproto.sync.getBlob', sub ($c, $endpoint) {
     my $account = _repo_by_did_or_error($c, missing_status => 400);
     my $blob = $c->store->get_blob($c->param('cid') // q());
-    xrpc_error(404, 'BlobNotFound', 'Blob was not found')
-      unless $blob && $c->store->blob_owned_by_did($c->param('cid') // q(), $account->{did});
+    xrpc_error(400, 'InvalidRequest', 'Blob not found')
+      unless $blob && $c->store->blob_referenced_by_did($c->param('cid') // q(), $account->{did});
     assert_blob_readable($c, $account, $blob);
-    xrpc_error(404, 'BlobNotFound', 'Blob content is not available')
+    xrpc_error(400, 'InvalidRequest', 'Blob not found')
       unless $blob->{storage_path} && -f $blob->{storage_path};
     open(my $fh, '<:raw', $blob->{storage_path}) or xrpc_error(500, 'StorageFailure', 'Unable to read blob');
     local $/ = undef;
