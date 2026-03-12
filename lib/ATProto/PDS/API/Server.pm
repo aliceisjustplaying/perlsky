@@ -242,10 +242,21 @@ sub register_server_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.server.refreshSession', sub ($c, $endpoint) {
-    my (undef, $account, $session) = require_auth($c, audience => TOKEN_AUD_REFRESH);
+    my (undef, $account, $session);
+    my $ok = eval {
+      (undef, $account, $session) = require_auth($c, audience => TOKEN_AUD_REFRESH);
+      1;
+    };
+    if (!$ok) {
+      my $err = $@;
+      if (ref($err) eq 'HASH' && ($err->{error} // q()) eq 'ExpiredToken') {
+        xrpc_error(400, 'ExpiredToken', $err->{message});
+      }
+      die $err;
+    }
     assert_login_allowed($c, $account, allow_deactivated => 1);
     my $rotated = $c->store->rotate_session($session->{id});
-    xrpc_error(401, 'ExpiredToken', 'Refresh session has already been revoked') unless $rotated;
+    xrpc_error(400, 'ExpiredToken', 'Refresh session has already been revoked') unless $rotated;
     return _session_response($c, $account, $rotated);
   });
 
@@ -311,7 +322,7 @@ sub register_server_handlers ($registry, $app) {
     my (undef, $account) = require_auth(
       $c,
       audience       => TOKEN_AUD_ACCESS,
-      required_scope => 'full',
+      required_scope => 'standard',
       disallow_oauth => 1,
     );
     my $rows = $c->store->list_app_passwords_by_did($account->{did});
@@ -626,7 +637,7 @@ sub register_server_handlers ($registry, $app) {
           lxm  => $rpc_lxm,
         );
     } elsif (length($normalized_lxm) && _service_auth_method_requires_privileged_access($normalized_lxm) && !_scope_allows($scope, 'privileged')) {
-      xrpc_error(400, 'InvalidToken', 'Bad token scope');
+      xrpc_error(400, 'InvalidRequest', 'Bad token scope');
     }
     my $requested_exp = $c->param('exp');
     my $now = time;
@@ -1044,6 +1055,8 @@ sub _session_response ($c, $account, $session) {
 sub _canonical_access_scope ($scope = undef) {
   return TOKEN_AUD_ACCESS unless defined $scope && length $scope;
   return TOKEN_AUD_ACCESS if $scope eq 'atproto';
+  return 'com.atproto.appPass' if $scope eq 'app_password';
+  return 'com.atproto.appPassPrivileged' if $scope eq 'app_password_privileged';
   return $scope;
 }
 
@@ -1066,9 +1079,9 @@ sub _scope_allows ($scope, $required_scope) {
   return 1 if !defined($required_scope) || !length($required_scope);
   return $scope eq TOKEN_AUD_ACCESS
     if $required_scope eq 'full';
-  return $scope eq TOKEN_AUD_ACCESS || $scope eq 'app_password_privileged'
+  return $scope eq TOKEN_AUD_ACCESS || $scope eq 'com.atproto.appPassPrivileged'
     if $required_scope eq 'privileged';
-  return $scope eq TOKEN_AUD_ACCESS || $scope eq 'app_password' || $scope eq 'app_password_privileged'
+  return $scope eq TOKEN_AUD_ACCESS || $scope eq 'com.atproto.appPass' || $scope eq 'com.atproto.appPassPrivileged'
     if $required_scope eq 'standard';
   return 0;
 }

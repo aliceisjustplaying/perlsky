@@ -102,7 +102,7 @@ ok(
     id         => 'sess-app',
     did        => $account->{did},
     kind       => 'app_password',
-    scope      => 'app_password',
+    scope      => 'com.atproto.appPass',
     expires_at => 1_900_000_000,
   );
   my $full_session = $store->create_session(
@@ -118,7 +118,7 @@ ok(
     iss   => 'did:web:example.test',
     sub   => $account->{did},
     aud   => TOKEN_AUD_ACCESS,
-    scope => 'app_password',
+    scope => 'com.atproto.appPass',
     typ   => TOKEN_AUD_ACCESS,
     jti   => $app_session->{id},
     exp   => 1_900_000_000,

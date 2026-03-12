@@ -70,7 +70,7 @@ sub verify_login_password ($c, $account, $password) {
     if (verify_password($password, $salt, $hash)) {
       return {
         kind              => 'app_password',
-        scope             => $app_password->{privileged} ? 'app_password_privileged' : 'app_password',
+        scope             => $app_password->{privileged} ? 'com.atproto.appPassPrivileged' : 'com.atproto.appPass',
         app_password_name => $app_password->{name},
       };
     }

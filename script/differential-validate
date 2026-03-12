@@ -682,6 +682,168 @@ check(
   'refreshSession grace and successor semantics match the official reference PDS',
 );
 
+note('Comparing app password semantics');
+for my $name (sort keys %server) {
+  my $create_phone = post_json(
+    $server{$name}{origin},
+    'com.atproto.server.createAppPassword',
+    { name => 'phone' },
+    auth_header($server{$name}{access}),
+  );
+  check($create_phone->is_success, "$name createAppPassword succeeds for a standard app password");
+
+  my $create_desktop = post_json(
+    $server{$name}{origin},
+    'com.atproto.server.createAppPassword',
+    {
+      name       => 'desktop',
+      privileged => true,
+    },
+    auth_header($server{$name}{access}),
+  );
+  check($create_desktop->is_success, "$name createAppPassword succeeds for a privileged app password");
+  next unless $create_phone->is_success && $create_desktop->is_success;
+
+  my $phone_json   = $create_phone->json   || {};
+  my $desktop_json = $create_desktop->json || {};
+
+  my $list_before = get_json(
+    $server{$name}{origin},
+    'com.atproto.server.listAppPasswords',
+    undef,
+    auth_header($server{$name}{access}),
+  );
+  check($list_before->is_success, "$name listAppPasswords succeeds after creation");
+
+  my $phone_session = post_json(
+    $server{$name}{origin},
+    'com.atproto.server.createSession',
+    {
+      identifier => $server{$name}{handle},
+      password   => $phone_json->{password},
+    },
+  );
+  check($phone_session->is_success, "$name createSession succeeds with the standard app password");
+
+  my $desktop_session = post_json(
+    $server{$name}{origin},
+    'com.atproto.server.createSession',
+    {
+      identifier => $server{$name}{handle},
+      password   => $desktop_json->{password},
+    },
+  );
+  check($desktop_session->is_success, "$name createSession succeeds with the privileged app password");
+
+  my $phone_access   = ($phone_session->json   || {})->{accessJwt};
+  my $phone_refresh  = ($phone_session->json   || {})->{refreshJwt};
+  my $desktop_access = ($desktop_session->json || {})->{accessJwt};
+
+  my $nested_create = post_json(
+    $server{$name}{origin},
+    'com.atproto.server.createAppPassword',
+    { name => 'nested' },
+    auth_header($phone_access),
+  );
+  my $phone_list = get_json(
+    $server{$name}{origin},
+    'com.atproto.server.listAppPasswords',
+    undef,
+    auth_header($phone_access),
+  );
+  my $phone_service_auth = get_form(
+    $server{$name}{origin},
+    'com.atproto.server.getServiceAuth',
+    {
+      aud => 'did:web:api.bsky.app',
+      lxm => 'com.atproto.server.createaccount',
+    },
+    auth_header($phone_access),
+  );
+  my $desktop_service_auth = get_form(
+    $server{$name}{origin},
+    'com.atproto.server.getServiceAuth',
+    {
+      aud => 'did:web:api.bsky.app',
+      lxm => 'com.atproto.server.createaccount',
+    },
+    auth_header($desktop_access),
+  );
+
+  my $revoke_phone = post_json(
+    $server{$name}{origin},
+    'com.atproto.server.revokeAppPassword',
+    { name => 'phone' },
+    auth_header($server{$name}{access}),
+  );
+  check($revoke_phone->is_success, "$name revokeAppPassword succeeds for the standard app password");
+
+  my $revoked_refresh = post_empty(
+    $server{$name}{origin},
+    'com.atproto.server.refreshSession',
+    auth_header($phone_refresh),
+  );
+  my $list_after = get_json(
+    $server{$name}{origin},
+    'com.atproto.server.listAppPasswords',
+    undef,
+    auth_header($server{$name}{access}),
+  );
+
+  my %before_passwords = map {
+    (
+      ($_->{name} // q()) => {
+        privileged => $_->{privileged} ? 1 : 0,
+      }
+    )
+  } @{ ($list_before->json || {})->{passwords} || [] };
+
+  my %after_passwords = map {
+    (
+      ($_->{name} // q()) => {
+        privileged => $_->{privileged} ? 1 : 0,
+      }
+    )
+  } @{ ($list_after->json || {})->{passwords} || [] };
+
+  $server{$name}{app_passwords} = {
+    phone_create => {
+      name            => $phone_json->{name} // q(),
+      has_password    => length($phone_json->{password} // q()) ? 1 : 0,
+      privileged      => $phone_json->{privileged} ? 1 : 0,
+    },
+    desktop_create => {
+      name            => $desktop_json->{name} // q(),
+      has_password    => length($desktop_json->{password} // q()) ? 1 : 0,
+      privileged      => $desktop_json->{privileged} ? 1 : 0,
+    },
+    list_before => {
+      passwords => \%before_passwords,
+    },
+    phone_session_scope    => jwt_claims($phone_access)->{scope} // q(),
+    desktop_session_scope  => jwt_claims($desktop_access)->{scope} // q(),
+    nested_create_error    => normalize_xrpc_error($nested_create),
+    phone_list_error       => normalize_xrpc_error($phone_list),
+    phone_service_auth     => normalize_xrpc_error($phone_service_auth),
+    desktop_service_auth   => {
+      status    => $desktop_service_auth->code,
+      has_token => length((($desktop_service_auth->json || {})->{token}) // q()) ? 1 : 0,
+    },
+    revoked_refresh_error  => normalize_xrpc_error($revoked_refresh),
+    list_after => {
+      passwords => \%after_passwords,
+    },
+  };
+}
+
+if (!same_hash($server{reference}{app_passwords}, $server{perlsky}{app_passwords})) {
+  note('reference app passwords: ' . encode_json($server{reference}{app_passwords}));
+  note('perlsky app passwords: ' . encode_json($server{perlsky}{app_passwords}));
+  fail_check('app password lifecycle semantics match the official reference PDS');
+} else {
+  pass('app password lifecycle semantics match the official reference PDS');
+}
+
 if ($diff_account_did_method eq 'did:plc') {
   note('Comparing PLC identity semantics');
   for my $name (sort keys %server) {
