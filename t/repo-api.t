@@ -22,6 +22,7 @@ BEGIN {
 
 use Test::Mojo;
 use ATProto::PDS;
+use ATProto::PDS::Identity qw(service_did);
 use ATProto::PDS::Repo::CAR qw(read_car);
 
 my @mock_pids;
@@ -82,6 +83,7 @@ my $session = $t->tx->res->json;
 my $did     = $session->{did};
 my $access  = $session->{accessJwt};
 my $refresh = $session->{refreshJwt};
+my $service_did = service_did($t->app->settings);
 
 $t->get_ok("/xrpc/com.atproto.repo.describeRepo?repo=$did")
   ->status_is(200)
@@ -298,6 +300,30 @@ $t->get_ok("/xrpc/com.atproto.sync.getLatestCommit?did=$did")
   ->json_like('/cid' => qr/\Ab/)
   ->json_has('/rev');
 my $latest_commit_cid = $t->tx->res->json->{cid};
+
+$t->get_ok('/xrpc/com.atproto.server.getServiceAuth?aud=' . $service_did . '&lxm=com.atproto.repo.uploadBlob' => {
+  Authorization => "Bearer $access",
+})->status_is(200)
+  ->json_has('/token');
+my $upload_service_auth = $t->tx->res->json->{token};
+
+$t->post_ok('/xrpc/com.atproto.repo.uploadBlob' => {
+  Authorization => "Bearer $upload_service_auth",
+  'Content-Type' => 'text/plain',
+} => 'service-auth-blob')->status_is(200)
+  ->json_has('/blob/ref/$link');
+
+$t->get_ok('/xrpc/com.atproto.server.getServiceAuth?aud=' . $service_did . '&lxm=app.bsky.actor.getPreferences' => {
+  Authorization => "Bearer $access",
+})->status_is(200)
+  ->json_has('/token');
+my $wrong_service_auth = $t->tx->res->json->{token};
+
+$t->post_ok('/xrpc/com.atproto.repo.uploadBlob' => {
+  Authorization => "Bearer $wrong_service_auth",
+  'Content-Type' => 'text/plain',
+} => 'wrong-lxm-service-auth')->status_is(401)
+  ->json_is('/error' => 'InvalidToken');
 
 $t->get_ok("/xrpc/com.atproto.sync.getRecord?did=$did&collection=app.bsky.feed.post&rkey=first-post")
   ->status_is(200)

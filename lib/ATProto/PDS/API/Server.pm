@@ -38,7 +38,7 @@ use ATProto::PDS::PLC qw(account_did_method create_plc_account is_plc_did refres
 use ATProto::PDS::Repo::CAR qw(read_car);
 use ATProto::PDS::Util::BaseX qw(base64url_decode decode_base58btc);
 
-our @EXPORT_OK = qw(register_server_handlers require_auth session_view);
+our @EXPORT_OK = qw(register_server_handlers require_auth require_access_or_service_auth session_view);
 
 my %PROTECTED_SERVICE_AUTH_METHOD = map { lc($_) => 1 } qw(
   com.atproto.identity.requestPlcOperationSignature
@@ -786,6 +786,21 @@ sub require_auth ($c, %opts) {
   return ($claims, $account, $session);
 }
 
+sub require_access_or_service_auth ($c, %opts) {
+  my $auth = $c->req->headers->authorization // q();
+  if ($auth =~ /\ABearer\s+(.+)\z/i) {
+    my $token = $1;
+    if (my $claims = _parse_service_auth_claims($token)) {
+      my $lxm = $opts{lxm} // q();
+      xrpc_error(401, 'InvalidToken', 'Unexpected token audience')
+        if ($opts{audience} // TOKEN_AUD_ACCESS) eq TOKEN_AUD_REFRESH;
+      my $account = _verify_user_service_auth($c, $token, $claims, $lxm);
+      return ($claims, $account, undef);
+    }
+  }
+  return require_auth($c, %opts);
+}
+
 sub _jwt_decode_error ($message) {
   return ('ExpiredToken', 'Token has expired')
     if $message =~ /expired/i;
@@ -819,7 +834,33 @@ sub _verify_migration_service_auth ($c, $did, $lxm) {
   return undef unless $auth =~ /\ABearer\s+(.+)\z/i;
   my $token = $1;
 
-  my ($header_b64, $claims_b64, $sig_b64) = split /\./, $token, 3;
+  my $claims = _parse_service_auth_claims($token) or return undef;
+  return undef unless _same_did(($claims->{iss} // q()), $did);
+  return undef unless _audience_matches_service($c, $claims->{aud});
+  return undef unless lc($claims->{lxm} // q()) eq lc($lxm // q());
+  return undef unless _verify_service_auth_signature($c, $token, $claims->{iss});
+
+  return $claims->{iss};
+}
+
+sub _verify_user_service_auth ($c, $token, $claims, $lxm) {
+  xrpc_error(401, 'InvalidToken', 'Token subject is invalid')
+    unless defined($claims->{iss}) && ($claims->{iss} // q()) =~ /\Adid:/;
+  xrpc_error(401, 'InvalidToken', 'Unexpected token audience')
+    unless _audience_matches_service($c, $claims->{aud});
+  xrpc_error(401, 'InvalidToken', 'Token method did not match request')
+    unless lc($claims->{lxm} // q()) eq lc($lxm // q());
+  xrpc_error(401, 'InvalidToken', 'Token signature is invalid')
+    unless _verify_service_auth_signature($c, $token, $claims->{iss});
+
+  my $account = $c->store->get_account_by_did($claims->{iss});
+  xrpc_error(401, 'InvalidToken', 'Token subject no longer exists') unless $account;
+  xrpc_error(401, 'InvalidToken', 'Token subject has been deleted') if defined $account->{deleted_at};
+  return $account;
+}
+
+sub _parse_service_auth_claims ($token) {
+  my ($header_b64, $claims_b64, $sig_b64) = split /\./, ($token // q()), 3;
   return undef unless defined $sig_b64;
 
   my $header = eval { JSON::PP::decode_json(base64url_decode($header_b64)) };
@@ -828,35 +869,40 @@ sub _verify_migration_service_auth ($c, $did, $lxm) {
 
   my $claims = eval { JSON::PP::decode_json(base64url_decode($claims_b64)) };
   return undef if $@ || ref($claims) ne 'HASH';
-  return undef unless _same_did(($claims->{iss} // q()), $did);
 
   my $now = time;
   return undef if defined($claims->{nbf}) && $claims->{nbf} > $now;
   return undef if defined($claims->{iat}) && $claims->{iat} > ($now + 60);
   return undef if defined($claims->{exp}) && $claims->{exp} <= $now;
-  return undef unless _audience_matches_service($c, $claims->{aud});
-  return undef unless lc($claims->{lxm} // q()) eq lc($lxm // q());
+  return $claims;
+}
 
-  my $did_doc = _resolve_migration_did_doc($c, $did) or return undef;
-  my $public_key = _did_doc_atproto_public_key($did_doc) or return undef;
+sub _verify_service_auth_signature ($c, $token, $did) {
+  my ($header_b64, $claims_b64, $sig_b64) = split /\./, ($token // q()), 3;
+  return 0 unless defined $sig_b64;
+  my $did_doc = _resolve_migration_did_doc($c, $did) or return 0;
+  my $public_key = _did_doc_atproto_public_key($did_doc) or return 0;
 
   my $pk = eval {
     my $ecc = Crypt::PK::ECC->new;
     $ecc->import_key_raw($public_key, 'secp256k1');
     $ecc;
   };
-  return undef if $@ || !$pk;
+  return 0 if $@ || !$pk;
 
   my $verified = eval {
     $pk->verify_message_rfc7518(base64url_decode($sig_b64), "$header_b64.$claims_b64", 'SHA256');
   };
-  return undef if $@ || !$verified;
-
-  return $claims->{iss};
+  return $@ || !$verified ? 0 : 1;
 }
 
 sub _audience_matches_service ($c, $aud) {
-  my %acceptable = map { ($_ // q()) => 1 } grep { defined && length } (
+  my %acceptable = map {
+    my $value = $_ // q();
+    my $decoded = $value;
+    $decoded =~ s/%3a/:/ig;
+    ($value => 1, $decoded => 1);
+  } grep { defined && length } (
     service_did($c->app->settings),
     $c->config_value('base_url'),
   );

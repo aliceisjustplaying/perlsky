@@ -11,7 +11,7 @@ use File::Spec;
 use JSON::PP ();
 use Mojo::URL;
 
-use ATProto::PDS::API::Server qw(require_auth);
+use ATProto::PDS::API::Server qw(require_access_or_service_auth require_auth);
 use ATProto::PDS::API::Util qw(blob_ref resolve_repo xrpc_error);
 use ATProto::PDS::Auth::OAuth qw(
   oauth_required_permission_scope
@@ -120,7 +120,11 @@ sub register_repo_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.repo.uploadBlob', sub ($c, $endpoint) {
-    my ($claims, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS);
+    my ($claims, $account) = require_access_or_service_auth(
+      $c,
+      audience => TOKEN_AUD_ACCESS,
+      lxm      => $endpoint->{id},
+    );
     assert_repo_writable($c, $account);
     my $bytes = $c->req->body // q();
     my $mime_type = $c->req->headers->content_type || 'application/octet-stream';
