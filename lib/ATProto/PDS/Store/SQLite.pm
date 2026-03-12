@@ -1851,10 +1851,12 @@ sub _paginate ($rows, $limit, $cursor_key) {
   my @items = @$rows;
   my $cursor;
   if (@items > $limit) {
-    my $last = pop @items;
+    pop @items;
+    my $last = $items[-1];
     $cursor = ref($cursor_key) eq 'CODE'
       ? $cursor_key->($last)
-      : $last->{$cursor_key};
+      : $last->{$cursor_key}
+      if $last;
   }
   return {
     items  => \@items,

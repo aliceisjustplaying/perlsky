@@ -164,6 +164,28 @@ $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.listBlobs')->query(
 ))->status_is(200)
   ->json_is('/cids/0' => $blob_cid);
 
+$t->post_ok('/xrpc/com.atproto.repo.uploadBlob' => {
+  Authorization => "Bearer $access",
+  'Content-Type' => 'text/plain',
+} => 'blob-two')->status_is(200);
+
+my $blob_two_cid = $t->tx->res->json->{blob}{ref}{'$link'};
+my @sorted_blob_cids = sort ($blob_cid, $blob_two_cid);
+
+$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.listBlobs')->query(
+  did   => $did,
+  limit => 1,
+))->status_is(200)
+  ->json_is('/cids/0' => $sorted_blob_cids[0])
+  ->json_is('/cursor' => $sorted_blob_cids[0]);
+
+$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.listBlobs')->query(
+  did    => $did,
+  limit  => 1,
+  cursor => $sorted_blob_cids[0],
+))->status_is(200)
+  ->json_is('/cids/0' => $sorted_blob_cids[1]);
+
 $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.getBlob')->query(
   did => $second_did,
   cid => $blob_cid,

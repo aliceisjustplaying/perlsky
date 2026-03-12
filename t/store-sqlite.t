@@ -98,6 +98,27 @@ is($store->count_blobs_by_did($second_account->{did}), 1, 'second account counts
 is($store->list_blobs_by_did($account->{did})->{items}[0]{cid}, 'bafkreigh2akiscaildc', 'shared blob lists for first owner');
 is($store->list_blobs_by_did($second_account->{did})->{items}[0]{cid}, 'bafkreigh2akiscaildc', 'shared blob lists for second owner');
 
+$store->put_blob(
+  cid          => 'bafkreighsecondblob',
+  did          => $account->{did},
+  mime_type    => 'image/jpeg',
+  byte_size    => 4321,
+  storage_path => 'blobs/bafk-second.jpg',
+);
+
+my $blob_page_one = $store->list_blobs_by_did($account->{did}, limit => 1);
+is(
+  [ map { $_->{cid} } @{ $blob_page_one->{items} } ],
+  ['bafkreigh2akiscaildc'],
+  'blob pagination returns the first page item',
+);
+is($blob_page_one->{cursor}, 'bafkreigh2akiscaildc', 'blob pagination returns the last emitted cid as the cursor');
+is(
+  [ map { $_->{cid} } @{ $store->list_blobs_by_did($account->{did}, limit => 1, cursor => $blob_page_one->{cursor})->{items} } ],
+  ['bafkreighsecondblob'],
+  'blob pagination resumes from the emitted cursor without skipping items',
+);
+
 $store->set_repo_head(
   did        => $account->{did},
   commit_cid => 'bafycommit',
@@ -166,6 +187,32 @@ is(
   [ map { $_->{did} } @$feed_records ],
   [$account->{did}, $second_account->{did}],
   'collection-scoped record listings preserve did ordering for batched account lookup',
+);
+
+$store->put_record(
+  did        => $account->{did},
+  collection => 'app.bsky.feed.post',
+  rkey       => 'post-2',
+  cid        => 'bafypost2',
+  record_bytes => q(),
+  value      => {
+    '$type'   => 'app.bsky.feed.post',
+    text      => 'goodbye',
+    createdAt => '2026-03-11T19:02:00Z',
+  },
+);
+
+my $record_page_one = $store->list_records($account->{did}, 'app.bsky.feed.post', limit => 1);
+is(
+  [ map { $_->{rkey} } @{ $record_page_one->{items} } ],
+  ['post-1'],
+  'record pagination returns the first page item',
+);
+is($record_page_one->{cursor}, 'post-1', 'record pagination returns the last emitted rkey as the cursor');
+is(
+  [ map { $_->{rkey} } @{ $store->list_records($account->{did}, 'app.bsky.feed.post', limit => 1, cursor => $record_page_one->{cursor})->{items} } ],
+  ['post-2'],
+  'record pagination resumes from the emitted cursor without skipping items',
 );
 
 $store->revoke_session('sess-1', revoked_at => 123);
