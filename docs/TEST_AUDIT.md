@@ -115,6 +115,7 @@ The current suite splits into three broad buckets:
 
 | Test file | Bucket | Current note |
 | --- | --- | --- |
+| `t/admin-account-info-helper.t` | local correctness/infrastructure | focused helper coverage for admin account-view shaping, invite metadata, and entryway-mode omissions |
 | `t/api-util.t` | audited local regression | helper semantics, cursor validation, service-auth helper behavior |
 | `t/app-routes.t` | local correctness/infrastructure | app route exposure and startup wiring smoke |
 | `t/app.t` | audited local regression | application bootstrap plus malformed-handle rejection and startup hardening |
@@ -127,8 +128,10 @@ The current suite splits into three broad buckets:
 | `t/crypto-interop.t` | direct reference differential | pinned upstream crypto fixture coverage |
 | `t/delete-account.t` | audited local regression | reference-style account deletion flow using DID, password, and action token without a live bearer session |
 | `t/email-confirmation.t` | audited local regression | intentionally testing-friendly email flow plus strict missing-email and invalid-email validation semantics |
+| `t/email-update-helper.t` | audited local regression | shared email-update helper normalization, token revocation, and duplicate-email error semantics |
 | `t/event-stream.t` | audited local regression | wire-format, malformed frame, and event decoding coverage |
 | `t/extended-api.t` | audited local regression | broad XRPC behavior including invites and moderation-adjacent flows; still intentionally mixes conformance-ish happy paths with local-policy coverage |
+| `t/external-handle-update.t` | audited local regression | external-handle update semantics, including DID-resolution checks and empty-body success for external handle adoption |
 | `t/external-surface.t` | audited local regression | external repo/account surface including missing-blob behavior; intentionally broad, with order-insensitive assertions for label presence rather than brittle label ordering |
 | `t/firehose.t` | audited local regression | repo subscription lifecycle, cursor, and CAR behavior |
 | `t/identity.t` | local correctness/infrastructure | lower-level handle and DID helper coverage, including DNS-over-well-known preference and malformed-handle rejection |
@@ -152,12 +155,14 @@ The current suite splits into three broad buckets:
 | `t/repo-api.t` | audited local regression | record mutation and read semantics, but still lighter than ideal on some negative/reference edge cases |
 | `t/repo-firehose-car.t` | audited local regression | repo commit CAR shape and firehose interactions |
 | `t/repo_formats.t` | audited local regression | direct repo wire-format and CAR expectations |
+| `t/sentry.t` | local correctness/infrastructure | Sentry event shaping, stacktrace capture, and dispatcher exception-reporting smoke |
 | `t/server-auth.t` | direct reference differential | auth/session/service-auth behavior repeatedly compared to official runtime, including bounded create-session password semantics |
 | `t/service-proxy-local.t` | audited local regression | local appview fallback behavior |
 | `t/service-proxy.t` | audited local regression | upstream proxy behavior plus conservative local appview fallback and preference semantics |
 | `t/sqlite-binary.t` | local correctness/infrastructure | SQLite binary round-trip correctness |
 | `t/store-sqlite.t` | audited local regression | store-level session, invite, label, and repo persistence behavior |
 | `t/tid-repair.t` | local correctness/infrastructure | TID repair and recovery helpers |
+| `t/uncovered-endpoints.t` | audited local regression | broad catch-all coverage for locally implemented admin/temp/sync edges that are easy to miss in higher-level suites |
 
 ## What This Audit Does Not Yet Claim
 
