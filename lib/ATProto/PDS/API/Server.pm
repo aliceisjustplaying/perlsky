@@ -82,6 +82,8 @@ sub register_server_handlers ($registry, $app) {
       $email = _supported_email($body->{email});
       xrpc_error(400, 'InvalidRequest', 'This email address is not supported, please use a different email.')
         unless defined $email;
+      xrpc_error(400, 'InvalidRequest', "Email already taken: $body->{email}")
+        if $c->store->get_account_by_email($email);
     }
 
     my $invite;
@@ -137,21 +139,29 @@ sub register_server_handlers ($registry, $app) {
       signing_key_did       => $keys->{signing_key_did},
     });
 
-    my $account = $c->store->create_account(
-      account_id            => $account_id,
-      did                   => $did,
-      handle                => $handle,
-      email                 => $email,
-      email_confirmed_at    => _initial_email_confirmed_at($c, $email),
-      password_hash         => $password_record->{hash},
-      password_salt         => $password_record->{salt},
-      deactivated_at        => $deactivated_at,
-      did_doc               => $did_doc,
-      private_key           => $keys->{private_key},
-      public_key            => $keys->{public_key},
-      public_key_multibase  => $keys->{public_key_multibase},
-      signing_key_did       => $keys->{signing_key_did},
-    );
+    my $account = eval {
+      $c->store->create_account(
+        account_id            => $account_id,
+        did                   => $did,
+        handle                => $handle,
+        email                 => $email,
+        email_confirmed_at    => _initial_email_confirmed_at($c, $email),
+        password_hash         => $password_record->{hash},
+        password_salt         => $password_record->{salt},
+        deactivated_at        => $deactivated_at,
+        did_doc               => $did_doc,
+        private_key           => $keys->{private_key},
+        public_key            => $keys->{public_key},
+        public_key_multibase  => $keys->{public_key_multibase},
+        signing_key_did       => $keys->{signing_key_did},
+      );
+    };
+    if (!$account) {
+      my $err = $@;
+      xrpc_error(400, 'InvalidRequest', "Email already taken: $body->{email}")
+        if !ref($err) && defined($email) && ($err // q()) =~ /UNIQUE constraint failed: accounts\.email/;
+      die $err;
+    }
 
     my $repo = $c->repo_manager->initialize_repo($account);
     $account = $c->store->update_account($account->{did},
