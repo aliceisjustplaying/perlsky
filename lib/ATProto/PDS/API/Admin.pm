@@ -11,8 +11,9 @@ use JSON::PP ();
 use ATProto::PDS::API::Helpers qw(account_view find_account invite_code_view require_admin subject_key);
 use ATProto::PDS::API::Util qw(flatten_params xrpc_error);
 use ATProto::PDS::Auth::Password qw(hash_password);
+use ATProto::PDS::Constants qw(EVENT_TYPE_IDENTITY);
 use ATProto::PDS::Crypto::Secp256k1 qw(signing_did_to_public_key_multibase);
-use ATProto::PDS::Identity qw(account_did_doc normalize_handle service_did);
+use ATProto::PDS::Identity qw(account_did_doc normalize_handle resolve_handle_to_did service_did);
 use ATProto::PDS::Moderation qw(current_record_subject current_subject_status parse_at_uri);
 
 our @EXPORT_OK = qw(register_admin_handlers);
@@ -126,16 +127,26 @@ sub register_admin_handlers ($registry, $app) {
     my $body = $c->req->json || {};
     my $account = $c->store->get_account_by_did($body->{did} // q());
     xrpc_error(404, 'AccountNotFound', 'Account was not found') unless $account;
-    my $handle = normalize_handle($body->{handle}, $c->config_value('service_handle_domain', 'localhost'));
+    my $domain = $c->config_value('service_handle_domain', 'localhost');
+    my $handle = normalize_handle($body->{handle}, $domain);
+    $handle = normalize_handle($body->{handle}, undef, { no_append => 1 })
+      unless defined $handle;
     xrpc_error(400, 'InvalidHandle', 'Requested handle is invalid') unless defined $handle;
+    my $service_handle = normalize_handle($handle, $domain, { no_append => 1 });
+    if (!defined $service_handle) {
+      my $resolved_did = resolve_handle_to_did($c->app->settings, $handle);
+      xrpc_error(400, 'InvalidRequest', 'External handle did not resolve to DID')
+        unless defined $resolved_did && lc($resolved_did) eq lc($account->{did});
+    }
     my $existing = $c->store->get_account_by_handle($handle);
     xrpc_error(400, 'HandleNotAvailable', 'That handle is already registered')
       if $existing && ($existing->{did} // q()) ne $account->{did};
-    $c->store->update_account(
+    my $updated = $c->store->update_account(
       $account->{did},
       handle  => $handle,
       did_doc => account_did_doc($c->app->settings, { %$account, handle => $handle }),
     );
+    _append_identity_event($c, $updated);
     return {};
   });
 
@@ -147,11 +158,14 @@ sub register_admin_handlers ($registry, $app) {
     my $account = $c->store->get_account_by_did($body->{did} // q());
     xrpc_error(404, 'AccountNotFound', 'Account was not found') unless $account;
     my $password_record = hash_password($body->{password});
-    $c->store->update_account(
-      $account->{did},
-      password_hash => $password_record->{hash},
-      password_salt => $password_record->{salt},
-    );
+    $c->store->txn(sub ($dbh) {
+      $c->store->update_account(
+        $account->{did},
+        password_hash => $password_record->{hash},
+        password_salt => $password_record->{salt},
+      );
+      $c->store->revoke_sessions_by_did($account->{did});
+    });
     return {};
   });
 
@@ -229,20 +243,36 @@ sub register_admin_handlers ($registry, $app) {
     my $signing_key = $body->{signingKey} // q();
     xrpc_error(400, 'InvalidRequest', 'signingKey must be a did:key')
       unless $signing_key =~ /\Adid:key:/;
-    my $multibase = signing_did_to_public_key_multibase($signing_key);
+    my $multibase = eval { signing_did_to_public_key_multibase($signing_key) };
+    xrpc_error(400, 'InvalidRequest', 'signingKey must be a valid secp256k1 did:key')
+      if $@ || !defined($multibase) || !length($multibase);
     my $updated = {
       %$account,
       public_key_multibase => $multibase,
       signing_key_did      => $signing_key,
     };
-    $c->store->update_account(
+    my $stored = $c->store->update_account(
       $account->{did},
       public_key_multibase => $multibase,
       signing_key_did      => $signing_key,
       did_doc              => account_did_doc($c->app->settings, $updated),
     );
+    _append_identity_event($c, $stored);
     return {};
   });
+}
+
+sub _append_identity_event ($c, $account) {
+  $c->append_event(
+    did     => $account->{did},
+    type    => EVENT_TYPE_IDENTITY,
+    rev     => $account->{repo_rev},
+    payload => {
+      did    => $account->{did},
+      handle => $account->{handle},
+    },
+  );
+  return;
 }
 
 sub _subject_from_params ($c) {

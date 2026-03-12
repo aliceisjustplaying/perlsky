@@ -732,6 +732,23 @@ if ($diff_account_did_method eq 'did:plc') {
     same_hash($server{reference}{missing_plc_token_error}, $server{perlsky}{missing_plc_token_error}),
     'signPlcOperation matches the official reference PDS token requirement semantics',
   );
+
+  note('Comparing PLC submitPlcOperation validation');
+  for my $name (sort keys %server) {
+    my $res = post_json(
+      $server{$name}{origin},
+      'com.atproto.identity.submitPlcOperation',
+      { operation => {} },
+      auth_header($server{$name}{access}),
+    );
+    check(!$res->is_success, "$name submitPlcOperation rejects malformed operations");
+    $server{$name}{invalid_plc_operation_error} = normalize_xrpc_error($res);
+  }
+
+  check(
+    same_hash($server{reference}{invalid_plc_operation_error}, $server{perlsky}{invalid_plc_operation_error}),
+    'submitPlcOperation matches the official reference PDS invalid-operation semantics',
+  );
 }
 
 my $record = {

@@ -110,7 +110,11 @@ sub account_did_doc_valid_for_service ($config_or_url, $account) {
 
   my ($service) = grep {
     ref($_) eq 'HASH'
-      && (($_->{id} // q()) eq "$did#atproto_pds" || ($_->{type} // q()) eq 'AtprotoPersonalDataServer')
+      && (
+        ($_->{id} // q()) eq "$did#atproto_pds"
+        || ($_->{id} // q()) eq '#atproto_pds'
+        || ($_->{type} // q()) eq 'AtprotoPersonalDataServer'
+      )
   } @{ $doc->{service} || [] };
   return 0 unless $service;
   return 0 unless ($service->{type} // q()) eq 'AtprotoPersonalDataServer';
@@ -120,13 +124,21 @@ sub account_did_doc_valid_for_service ($config_or_url, $account) {
   return 1 unless length $expected_multibase;
 
   my ($verification_method) = grep {
-    ref($_) eq 'HASH' && (($_->{id} // q()) eq "$did#atproto")
+    ref($_) eq 'HASH'
+      && (
+        (($_->{id} // q()) eq "$did#atproto")
+        || (($_->{id} // q()) eq '#atproto')
+        || (($_->{publicKeyMultibase} // q()) eq $expected_multibase)
+      )
   } @{ $doc->{verificationMethod} || [] };
   return 0 unless $verification_method;
   return 0 unless ($verification_method->{publicKeyMultibase} // q()) eq $expected_multibase;
 
-  my %assertion_methods = map { ($_ // q()) => 1 } @{ $doc->{assertionMethod} || [] };
-  return 0 unless $assertion_methods{"$did#atproto"};
+  my @assertion_methods = @{ $doc->{assertionMethod} || [] };
+  if (@assertion_methods) {
+    my %assertion_methods = map { ($_ // q()) => 1 } @assertion_methods;
+    return 0 unless $assertion_methods{"$did#atproto"} || $assertion_methods{'#atproto'};
+  }
 
   return 1;
 }

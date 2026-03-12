@@ -135,6 +135,8 @@ sub register_misc_handlers ($registry, $app) {
       unless is_plc_did($account->{did});
     my $body = $c->req->json || {};
     my $operation = $body->{operation} || {};
+    xrpc_error(400, 'InvalidRequest', 'Invalid operation')
+      unless _valid_plc_operation($operation);
     my $rotation_did = ATProto::PDS::PLC::plc_rotation_did($c->app->settings);
     xrpc_error(400, 'InvalidRequest', q{Rotation keys do not include server's rotation key})
       unless grep { ($_ // q()) eq $rotation_did } @{ $operation->{rotationKeys} || [] };
@@ -180,14 +182,13 @@ sub register_misc_handlers ($registry, $app) {
       if $existing && ($existing->{did} // q()) ne $account->{did};
     xrpc_error(400, 'HandleNotAvailable', 'That handle is reserved')
       if $c->store->get_reserved_handle($handle);
-    my $did_doc = is_plc_did($account->{did})
-      ? plc_update_handle($c->app->settings, $account, $handle)
-      : account_did_doc($c->app->settings, { %$account, handle => $handle });
-    my $updated = $c->store->update_account(
-      $account->{did},
-      handle  => $handle,
-      did_doc => $did_doc,
-    );
+    my %changes = (handle => $handle);
+    if (is_plc_did($account->{did})) {
+      plc_update_handle($c->app->settings, $account, $handle);
+    } else {
+      $changes{did_doc} = account_did_doc($c->app->settings, { %$account, handle => $handle });
+    }
+    my $updated = $c->store->update_account($account->{did}, %changes);
     _append_identity_event($c, $updated);
     return {};
   });
@@ -308,6 +309,7 @@ sub register_misc_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.temp.revokeAccountCredentials', sub ($c, $endpoint) {
+    require_admin($c);
     my $body = $c->req->json || {};
     my $account = find_account($c, $body->{account} // q());
     xrpc_error(404, 'AccountNotFound', 'Account was not found') unless $account;
@@ -357,6 +359,23 @@ sub _assert_full_non_oauth_access ($claims) {
   return if oauth_scope_has_atproto($claims->{scope} // q());
   xrpc_error(400, 'InvalidToken', 'Bad token scope')
     unless (($claims->{scope} // TOKEN_AUD_ACCESS) eq TOKEN_AUD_ACCESS);
+  return 1;
+}
+
+sub _valid_plc_operation ($operation) {
+  return 0 unless ref($operation) eq 'HASH';
+  return 0 unless ($operation->{type} // q()) eq 'plc_operation';
+  return 0 unless ref($operation->{rotationKeys}) eq 'ARRAY' && @{ $operation->{rotationKeys} };
+  return 0 unless ref($operation->{alsoKnownAs}) eq 'ARRAY';
+  return 0 unless ref($operation->{verificationMethods}) eq 'HASH' && keys %{ $operation->{verificationMethods} };
+  return 0 unless ref($operation->{services}) eq 'HASH' && ref($operation->{services}{atproto_pds}) eq 'HASH';
+  return 0 unless defined($operation->{sig}) && !ref($operation->{sig}) && length($operation->{sig});
+  return 0 if exists($operation->{prev}) && defined($operation->{prev}) && ref($operation->{prev});
+  return 0 if grep { !defined($_) || ref($_) || !length($_) } @{ $operation->{rotationKeys} };
+  return 0 if grep { !defined($_) || ref($_) || !length($_) } @{ $operation->{alsoKnownAs} };
+  for my $value (values %{ $operation->{verificationMethods} }) {
+    return 0 if !defined($value) || ref($value) || !length($value);
+  }
   return 1;
 }
 

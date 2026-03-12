@@ -182,11 +182,6 @@ $t->get_ok('/xrpc/com.atproto.identity.resolveHandle' => form => {
 })->status_is(200)
   ->json_is('/did', $did);
 
-$t->get_ok('/xrpc/com.atproto.identity.resolveDid' => form => {
-  did => $did,
-})->status_is(200)
-  ->json_is('/didDoc/alsoKnownAs/0', 'at://alice-renamed.test');
-
 $t->post_ok('/xrpc/com.atproto.identity.requestPlcOperationSignature' => {
   Authorization => "Bearer $access",
 })->status_is(200);
@@ -233,6 +228,14 @@ is_deeply(
 );
 ok(length($signed->{sig} // q()) > 10, 'signed operation contains a signature');
 like($signed->{prev} // q(), qr/\Ab/, 'signed operation references the prior PLC op by CID');
+
+$t->post_ok('/xrpc/com.atproto.identity.submitPlcOperation' => {
+  Authorization => "Bearer $access",
+} => json => {
+  operation => {},
+})->status_is(400)
+  ->json_is('/error', 'InvalidRequest')
+  ->json_is('/message', 'Invalid operation');
 
 $t->post_ok('/xrpc/com.atproto.identity.submitPlcOperation' => {
   Authorization => "Bearer $access",

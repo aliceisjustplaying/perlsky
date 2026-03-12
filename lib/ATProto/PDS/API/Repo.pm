@@ -20,7 +20,6 @@ use ATProto::PDS::Auth::OAuth qw(
 use ATProto::PDS::Constants qw(TOKEN_AUD_ACCESS);
 use ATProto::PDS::Identity qw(account_did_doc normalize_handle resolve_handle_to_did);
 use ATProto::PDS::Moderation qw(assert_record_readable assert_repo_readable assert_repo_writable is_record_takedown parse_at_uri);
-use ATProto::PDS::PLC qw(is_plc_did refresh_plc_did_doc);
 use ATProto::PDS::Repo::CID;
 use ATProto::PDS::Repo::DagCbor qw(encode_dag_cbor);
 
@@ -408,11 +407,24 @@ sub _record_uri ($did, $collection, $rkey) {
   return "at://$did/$collection/$rkey";
 }
 
+sub _describe_repo_did_doc ($c, $account) {
+  return $account->{did_doc} if ref($account->{did_doc}) eq 'HASH';
+  return account_did_doc($c->app->settings, $account);
+}
+
+sub _describe_repo_handle_is_correct ($c, $account, $did_doc) {
+  my $handle = normalize_handle($account->{handle}, undef, { no_append => 1 });
+  return 0 unless defined $handle;
+  my $doc_handle = _did_doc_handle($did_doc);
+  return defined($doc_handle) && lc($doc_handle) eq lc($handle) ? 1 : 0;
+}
+
 sub _did_doc_handle ($did_doc) {
   return undef unless ref($did_doc) eq 'HASH';
   for my $aka (@{ $did_doc->{alsoKnownAs} || [] }) {
     next unless defined $aka && $aka =~ m{\Aat://(.+)\z};
-    return $1;
+    my $handle = normalize_handle($1, undef, { no_append => 1 });
+    return $handle if defined $handle;
   }
   return undef;
 }
