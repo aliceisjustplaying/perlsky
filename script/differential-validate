@@ -2303,6 +2303,12 @@ for my $name (sort keys %server) {
     },
     admin_auth_header($server{$name}{admin_password}),
   );
+  my $info_missing = get_form(
+    $server{$name}{origin},
+    'com.atproto.admin.getAccountInfo',
+    { did => 'did:web:missing.test' },
+    admin_auth_header($server{$name}{admin_password}),
+  );
   my $send_missing = post_json(
     $server{$name}{origin},
     'com.atproto.admin.sendEmail',
@@ -2327,6 +2333,30 @@ for my $name (sort keys %server) {
     {
       did => 'did:web:missing.test',
     },
+    admin_auth_header($server{$name}{admin_password}),
+  );
+  my $subject_active = get_form(
+    $server{$name}{origin},
+    'com.atproto.admin.getSubjectStatus',
+    { did => $server{$name}{did} },
+    admin_auth_header($server{$name}{admin_password}),
+  );
+  my $subject_missing = get_form(
+    $server{$name}{origin},
+    'com.atproto.admin.getSubjectStatus',
+    { did => 'did:web:missing.test' },
+    admin_auth_header($server{$name}{admin_password}),
+  );
+  my $subject_missing_blob_did = get_form(
+    $server{$name}{origin},
+    'com.atproto.admin.getSubjectStatus',
+    { blob => 'bafkqaaa' },
+    admin_auth_header($server{$name}{admin_password}),
+  );
+  my $subject_missing_ref = get_form(
+    $server{$name}{origin},
+    'com.atproto.admin.getSubjectStatus',
+    {},
     admin_auth_header($server{$name}{admin_password}),
   );
   my $disable_admin = post_json(
@@ -2394,6 +2424,7 @@ for my $name (sort keys %server) {
 
   my $info_json = $info->json || {};
   my @infos = @{ $info_json->{infos} || [] };
+  my $subject_active_json = $subject_active->json || {};
   my $disabled_json = $disabled_info->json || {};
   my $enabled_json  = $enabled_info->json || {};
 
@@ -2403,12 +2434,23 @@ for my $name (sort keys %server) {
       returned_count   => scalar @infos,
       first_is_primary => (@infos && (($infos[0]{did} // q()) eq $server{$name}{did})) ? 1 : 0,
     },
+    get_info_missing      => normalize_xrpc_error($info_missing),
     send_missing         => normalize_xrpc_error($send_missing),
     update_email_missing => normalize_xrpc_error($update_email_missing),
     delete_missing       => {
       status => $delete_missing->code // 0,
       body   => $delete_missing->body,
     },
+    get_subject_active => {
+      status             => $subject_active->code // 0,
+      subject_is_primary => (($subject_active_json->{subject}{did} // q()) eq $server{$name}{did}) ? 1 : 0,
+      subject_type       => $subject_active_json->{subject}{'$type'},
+      takedown_applied   => $subject_active_json->{takedown}{applied} ? 1 : 0,
+      deactivated_applied => $subject_active_json->{deactivated}{applied} ? 1 : 0,
+    },
+    get_subject_missing          => normalize_xrpc_error($subject_missing),
+    get_subject_missing_blob_did => normalize_xrpc_error($subject_missing_blob_did),
+    get_subject_missing_ref      => normalize_xrpc_error($subject_missing_ref),
     disable_admin_codes => normalize_xrpc_error($disable_admin),
     disable_account_invites => {
       status           => $disable_invites->code // 0,

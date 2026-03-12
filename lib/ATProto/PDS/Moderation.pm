@@ -62,14 +62,35 @@ sub current_record_subject ($c, $uri) {
 sub current_subject_status ($c, $subject) {
   my $key = subject_key($subject);
   my $status = $c->store->get_subject_status($key);
+  my $current_subject = $status ? ($status->{subject} || $subject) : $subject;
+  if (exists($subject->{did}) && !exists($subject->{uri}) && !exists($subject->{cid})) {
+    my $account = $c->store->get_account_by_did($subject->{did});
+    return undef unless $account;
+    return {
+      ($status ? %{$status} : ()),
+      subject => {
+        did    => $subject->{did},
+        '$type' => (($status && $status->{subject}{'$type'}) ? $status->{subject}{'$type'} : 'com.atproto.admin.defs#repoRef'),
+      },
+      takedown => ($status && $status->{takedown}) ? $status->{takedown} : { applied => JSON::PP::false },
+      deactivated => defined($account->{deactivated_at})
+        ? { applied => JSON::PP::true }
+        : (($status && $status->{deactivated}) ? $status->{deactivated} : { applied => JSON::PP::false }),
+    };
+  }
   return undef unless $status;
-  my $current_subject = $status->{subject} || $subject;
   if (exists $subject->{uri}) {
     my $current = current_record_subject($c, $subject->{uri});
     return undef unless $current;
     $current_subject = {
       %{$current},
-      ($status->{subject}{'$type'} ? ('$type' => $status->{subject}{'$type'}) : ()),
+      '$type' => (($status->{subject}{'$type'}) ? $status->{subject}{'$type'} : 'com.atproto.repo.strongRef'),
+    };
+  } elsif (exists($subject->{did}) && exists($subject->{cid})) {
+    $current_subject = {
+      did    => $subject->{did},
+      cid    => $subject->{cid},
+      '$type' => (($status->{subject}{'$type'}) ? $status->{subject}{'$type'} : 'com.atproto.admin.defs#repoBlobRef'),
     };
   }
   return {

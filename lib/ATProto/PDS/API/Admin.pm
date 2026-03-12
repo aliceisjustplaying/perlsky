@@ -23,7 +23,7 @@ sub register_admin_handlers ($registry, $app) {
   $registry->register('com.atproto.admin.getAccountInfo', sub ($c, $endpoint) {
     require_admin($c);
     my $account = $c->store->get_account_by_did($c->param('did') // q());
-    xrpc_error(404, 'AccountNotFound', 'Account was not found') unless $account;
+    xrpc_error(400, 'NotFound', 'Account not found') unless $account;
     return admin_account_view($c->store, $account, entryway => $c->config_value('entryway', 0));
   });
 
@@ -57,7 +57,7 @@ sub register_admin_handlers ($registry, $app) {
     require_admin($c);
     my $subject = _subject_from_params($c);
     my $status = current_subject_status($c, $subject);
-    xrpc_error(404, 'NotFound', 'Subject not found') unless $status;
+    xrpc_error(400, 'NotFound', 'Subject not found') unless $status;
     return {
       subject => $status->{subject},
       ($status->{takedown} ? (takedown => $status->{takedown}) : ()),
@@ -303,11 +303,13 @@ sub _append_identity_event ($c, $account) {
 sub _subject_from_params ($c) {
   return { did => $c->param('did') } if defined($c->param('did')) && !defined($c->param('uri')) && !defined($c->param('blob'));
   return { uri => $c->param('uri') } if defined $c->param('uri');
+  xrpc_error(400, 'InvalidRequest', 'Must provide a did to request blob state')
+    if defined($c->param('blob')) && !defined($c->param('did'));
   return {
     did => $c->param('did'),
     cid => $c->param('blob'),
   } if defined $c->param('blob');
-  xrpc_error(400, 'InvalidRequest', 'A subject reference is required');
+  xrpc_error(400, 'InvalidRequest', 'No provided subject');
 }
 
 sub _validated_subject ($c, $subject) {

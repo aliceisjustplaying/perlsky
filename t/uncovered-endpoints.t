@@ -151,6 +151,14 @@ $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.admin.getAccountInfos')->query(
 
 is(scalar @{ $t->tx->res->json->{infos} || [] }, 1, 'getAccountInfos returns only existing accounts');
 
+$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.admin.getAccountInfo')->query(
+  did => 'did:web:missing.test',
+) => {
+  Authorization => $admin_auth,
+})->status_is(400)
+  ->json_is('/error' => 'NotFound')
+  ->json_is('/message' => 'Account not found');
+
 $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.admin.searchAccounts')->query(
   email => 'ALICE@EXAMPLE.TEST',
 ) => {
@@ -185,6 +193,38 @@ $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.admin.getAccountInfo')->query(
   Authorization => $admin_auth,
 })->status_is(200)
   ->json_is('/email' => 'alice+admin@example.test');
+
+$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.admin.getSubjectStatus')->query(
+  did => $did,
+) => {
+  Authorization => $admin_auth,
+})->status_is(200)
+  ->json_is('/subject/did' => $did)
+  ->json_is('/subject/$type' => 'com.atproto.admin.defs#repoRef')
+  ->json_is('/takedown/applied' => JSON::PP::false)
+  ->json_is('/deactivated/applied' => JSON::PP::false);
+
+$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.admin.getSubjectStatus')->query(
+  did => 'did:web:missing.test',
+) => {
+  Authorization => $admin_auth,
+})->status_is(400)
+  ->json_is('/error' => 'NotFound')
+  ->json_is('/message' => 'Subject not found');
+
+$t->get_ok('/xrpc/com.atproto.admin.getSubjectStatus' => {
+  Authorization => $admin_auth,
+})->status_is(400)
+  ->json_is('/error' => 'InvalidRequest')
+  ->json_is('/message' => 'No provided subject');
+
+$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.admin.getSubjectStatus')->query(
+  blob => 'bafkqaaa',
+) => {
+  Authorization => $admin_auth,
+})->status_is(400)
+  ->json_is('/error' => 'InvalidRequest')
+  ->json_is('/message' => 'Must provide a did to request blob state');
 
 $t->post_ok('/xrpc/com.atproto.admin.sendEmail' => {
   Authorization => $admin_auth,

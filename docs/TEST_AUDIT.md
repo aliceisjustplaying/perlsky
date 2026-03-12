@@ -13,7 +13,7 @@ That does not mean every test has been manually revalidated against every other 
 The current baseline for saying "the audited suite is green" is:
 
 - `prove -lr t`
-  - latest full green result in the realigned Meridian worktree: `Files=48, Tests=2967`
+  - latest full green result in the realigned Meridian worktree: `Files=48, Tests=3000`
 - `prove -lv t/server-auth.t`
 - `perl -c script/differential-validate`
 - `PERLSKY_RUN_REFERENCE_DIFF=1 prove -lv t/reference-differential.t`
@@ -58,8 +58,10 @@ When the official runtime and upstream comments disagree, the runtime behavior w
 - The executable differential harness now proves that handle-conflict shape directly for both user and admin handle-update flows, not just local regression tests.
 - `com.atproto.server.createSession` invalid-credential failures now use the reference runtime’s `401 AuthenticationRequired` shape instead of the older local `AuthRequired` variant.
 - `com.atproto.admin.sendEmail` now follows the reference runtime’s `400 InvalidRequest` / `Recipient not found` shape for a missing recipient instead of returning a local `404 AccountNotFound`.
+- `com.atproto.admin.getAccountInfo` now follows the reference runtime’s `400 NotFound` / `Account not found` shape for a missing DID instead of returning a local `404 AccountNotFound`.
 - `com.atproto.admin.updateAccountEmail` now follows the reference runtime’s `400 InvalidRequest` / `Account does not exist: ...` shape for a missing account identifier instead of a local `404 AccountNotFound`.
 - `com.atproto.admin.deleteAccount` is now reference-style idempotent for missing DIDs: it succeeds and emits the same deleted account event shape instead of failing locally with `404 AccountNotFound`.
+- `com.atproto.admin.getSubjectStatus` now follows the reference runtime more closely for repo subjects: existing repos return a synthesized active subject status even without a stored moderation row, missing repos use `400 NotFound` / `Subject not found`, blob requests without a DID use `400 InvalidRequest` / `Must provide a did to request blob state`, and entirely missing subject references use `400 InvalidRequest` / `No provided subject`.
 - `com.atproto.admin.updateAccountPassword` follows the reference runtime’s looser admin policy: it rejects overlong passwords with `400 InvalidRequest` / `Invalid password length.`, but does not impose the normal user-facing minimum-length gate.
 - `com.atproto.admin.disableAccountInvites` / `enableAccountInvites` now ignore the local `note` field so the visible account state matches the official runtime instead of carrying an extra stored `inviteNote`.
 - `com.atproto.admin.getInviteCodes` now matches the official runtime on sort validation, always-emitted cursor behavior, total `available` counts, and newest-first `uses` ordering.
