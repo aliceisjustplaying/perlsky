@@ -69,21 +69,7 @@ sub register_builtin_handlers ($registry, $app) {
       error   => 'InvalidHandle',
       message => 'Handle is invalid',
     } unless defined $handle && length $handle;
-    if (my $account = $c->store->get_account_by_handle($handle)) {
-      return { did => $account->{did} };
-    }
-
-    if ($handle eq $service_handle) {
-      return {
-        did => service_did($c->app->settings),
-      };
-    }
-
-    if (my $did = resolve_handle_to_did($c->app->settings, $handle)) {
-      return { did => $did };
-    }
-
-    if (my $did = _resolve_remote_handle_via_appview($c, $handle)) {
+    if (my $did = _resolve_handle_to_did($c, $handle)) {
       return { did => $did };
     }
 
@@ -104,6 +90,9 @@ sub register_builtin_handlers ($registry, $app) {
         handle => $account->{handle},
         didDoc => $account->{did_doc} || account_did_doc($c->app->settings, $account),
       };
+    }
+    if (my $remote = _resolve_remote_identity($c, $identifier)) {
+      return $remote;
     }
 
     die {
@@ -149,6 +138,30 @@ sub register_builtin_handlers ($registry, $app) {
   });
 }
 
+sub _resolve_handle_to_did ($c, $handle) {
+  return undef unless defined $handle && length $handle;
+  my $service_handle = lc($c->config_value('service_handle_domain', 'localhost'));
+  if (my $account = $c->store->get_account_by_handle($handle)) {
+    return $account->{did};
+  }
+  return service_did($c->app->settings) if $handle eq $service_handle;
+  return resolve_handle_to_did($c->app->settings, $handle)
+    // _resolve_remote_handle_via_appview($c, $handle);
+}
+
+sub _resolve_remote_identity ($c, $identifier) {
+  if ($identifier =~ /^did:/) {
+    my $did_doc = _resolve_remote_did_doc($c, $identifier) or return undef;
+    return _identity_info_from_did_doc($c, $did_doc);
+  }
+
+  my $handle = normalize_handle($identifier, undef, { no_append => 1 });
+  return undef unless defined $handle && length $handle;
+  my $did = _resolve_handle_to_did($c, $handle) or return undef;
+  my $did_doc = _resolve_remote_did_doc($c, $did) or return undef;
+  return _identity_info_from_did_doc($c, $did_doc, $handle);
+}
+
 sub _resolve_remote_handle_via_appview ($c, $handle) {
   my $origin = $c->config_value('bsky_appview_url', 'https://api.bsky.app');
   return undef unless defined $origin && length $origin;
@@ -171,6 +184,32 @@ sub _resolve_remote_handle_via_appview ($c, $handle) {
   my $json = $res->json;
   return undef unless ref($json) eq 'HASH' && defined($json->{did}) && length($json->{did});
   return $json->{did};
+}
+
+sub _identity_info_from_did_doc ($c, $did_doc, $fallback = undef) {
+  return {
+    did    => $did_doc->{id},
+    handle => _validated_handle_for_did_doc($c, $did_doc, $fallback),
+    didDoc => $did_doc,
+  };
+}
+
+sub _validated_handle_for_did_doc ($c, $did_doc, $fallback = undef) {
+  my $candidate = _did_doc_handle($did_doc) // $fallback;
+  return 'handle.invalid' unless defined $candidate && length $candidate;
+  my $resolved = _resolve_handle_to_did($c, $candidate);
+  return 'handle.invalid' unless defined $resolved && _same_did($resolved, $did_doc->{id});
+  return $candidate;
+}
+
+sub _did_doc_handle ($did_doc) {
+  return undef unless ref($did_doc) eq 'HASH';
+  for my $aka (@{ $did_doc->{alsoKnownAs} || [] }) {
+    next unless defined $aka && $aka =~ /\Aat:\/\/(.+)\z/i;
+    my $handle = normalize_handle($1, undef, { no_append => 1 });
+    return $handle if defined $handle;
+  }
+  return undef;
 }
 
 sub _resolve_remote_did_doc ($c, $did) {

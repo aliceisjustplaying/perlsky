@@ -52,6 +52,7 @@ $appview_app->routes->get('/actor/did.json')->to(cb => sub {
   $c->render(json => {
     '@context' => ['https://www.w3.org/ns/did/v1'],
     id         => $did,
+    alsoKnownAs => ['at://actor.example.test'],
     service    => [{
       id              => "$did#atproto_pds",
       type            => 'AtprotoPersonalDataServer',
@@ -107,6 +108,44 @@ $t->get_ok("/xrpc/com.atproto.identity.resolveDid?did=$remote_did_web")
   ->status_is(200)
   ->json_is('/didDoc/id' => $remote_did_web)
   ->json_is('/didDoc/service/0/serviceEndpoint' => 'https://actor.example.test');
+
+{
+  no warnings 'redefine';
+  local *ATProto::PDS::Identity::_resolve_handle_dns = sub {
+    my ($handle) = @_;
+    return $remote_did_web if $handle eq 'actor.example.test';
+    return undef;
+  };
+  local *ATProto::PDS::Identity::_resolve_handle_well_known = sub { return undef; };
+
+  $t->get_ok("/xrpc/com.atproto.identity.resolveIdentity?identifier=$remote_did_web")
+    ->status_is(200)
+    ->json_is('/did' => $remote_did_web)
+    ->json_is('/handle' => 'actor.example.test')
+    ->json_is('/didDoc/id' => $remote_did_web);
+
+  $t->get_ok('/xrpc/com.atproto.identity.resolveIdentity?identifier=actor.example.test')
+    ->status_is(200)
+    ->json_is('/did' => $remote_did_web)
+    ->json_is('/handle' => 'actor.example.test')
+    ->json_is('/didDoc/id' => $remote_did_web);
+}
+
+{
+  no warnings 'redefine';
+  local *ATProto::PDS::Identity::_resolve_handle_dns = sub {
+    my ($handle) = @_;
+    return 'did:web:127.0.0.1%3A65535:someone-else' if $handle eq 'actor.example.test';
+    return undef;
+  };
+  local *ATProto::PDS::Identity::_resolve_handle_well_known = sub { return undef; };
+
+  $t->get_ok("/xrpc/com.atproto.identity.resolveIdentity?identifier=$remote_did_web")
+    ->status_is(200)
+    ->json_is('/did' => $remote_did_web)
+    ->json_is('/handle' => 'handle.invalid')
+    ->json_is('/didDoc/id' => $remote_did_web);
+}
 
 done_testing;
 
