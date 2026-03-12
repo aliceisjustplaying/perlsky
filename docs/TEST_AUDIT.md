@@ -116,7 +116,7 @@ The current suite splits into three broad buckets:
 Current suite counts by bucket:
 
 - `direct reference differential`: `5`
-- `audited local regression`: `31`
+- `audited local regression`: `32`
 - `local correctness/infrastructure`: `13`
 
 | Test file | Bucket | Current note |
@@ -168,6 +168,7 @@ Current suite counts by bucket:
 | `t/service-proxy.t` | audited local regression | upstream proxy behavior plus conservative local appview fallback and preference semantics |
 | `t/sqlite-binary.t` | local correctness/infrastructure | SQLite binary round-trip correctness |
 | `t/store-sqlite.t` | audited local regression | store-level session, invite, label, and repo persistence behavior |
+| `t/temp-endpoints.t` | audited local regression | isolated local coverage for `com.atproto.temp.*` semantics and admin credential revocation behavior |
 | `t/tid-repair.t` | local correctness/infrastructure | TID repair and recovery helpers |
 | `t/uncovered-endpoints.t` | audited local regression | intentionally mixed catch-all for admin/temp/sync/local-policy edges that are easy to miss elsewhere; useful coverage, but one of the least reference-pure suites in the tree |
 
@@ -182,7 +183,7 @@ The broadest suites are green and audited, but they still mix several categories
 - `t/import-repo.t`
   Is close to a clean conformance suite, but still includes the local `accepting_imports` gate in the same file.
 - `t/uncovered-endpoints.t`
-  Exists specifically to stop lesser-used local endpoints from falling out of coverage; it should be read as a pragmatic safety net, not as a pure reference-alignment suite.
+  Exists specifically to stop lesser-used local endpoints from falling out of coverage; it is a little narrower after moving the self-contained `com.atproto.temp.*` checks into `t/temp-endpoints.t`, but it should still be read as a pragmatic safety net, not as a pure reference-alignment suite.
 
 ## What This Audit Does Not Yet Claim
 
