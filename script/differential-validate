@@ -1351,6 +1351,32 @@ check(
   'deleteSession revocation behavior matches the official reference PDS',
 );
 
+note('Comparing createRecord stray swapRecord handling');
+for my $name (sort keys %server) {
+  my $res = post_json($server{$name}{origin}, 'com.atproto.repo.createRecord', {
+    repo       => $server{$name}{did},
+    collection => 'app.bsky.feed.post',
+    rkey       => 'swapcreate',
+    swapRecord => 'bafyreifakecidmismatch',
+    record     => {
+      %{$record},
+      text => "swap create validation for $name",
+    },
+  }, auth_header($server{$name}{access}));
+  check($res->is_success, "$name createRecord ignores a stray swapRecord like the reference runtime");
+  next unless $res->is_success;
+  my $json = $res->json || {};
+  $server{$name}{create_record_swap} = {
+    uri_ok => (($json->{uri} // q()) =~ m{/app\.bsky\.feed\.post/swapcreate\z}) ? 1 : 0,
+    cid_ok => (defined $json->{cid} && length $json->{cid}) ? 1 : 0,
+  };
+}
+
+check(
+  same_hash($server{reference}{create_record_swap}, $server{perlsky}{create_record_swap}),
+  'createRecord agrees on stray swapRecord handling',
+);
+
 note('Comparing getServiceAuth post-takedown behavior');
 for my $name (sort keys %server) {
   my $update = post_json(

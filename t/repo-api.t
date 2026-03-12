@@ -134,11 +134,11 @@ $t->post_ok('/xrpc/com.atproto.repo.createRecord' => { Authorization => "Bearer 
   swapRecord => 'bafyreifakecidmismatch',
   record     => {
     '$type'   => 'app.bsky.feed.post',
-    text      => 'create should reject swapRecord',
+    text      => 'create ignores stray swapRecord',
     createdAt => '2026-03-10T00:00:45Z',
   },
-})->status_is(400)
-  ->json_is('/error' => 'InvalidSwap');
+})->status_is(200)
+  ->json_is('/uri' => "at://$did/app.bsky.feed.post/swap-create");
 
 $t->post_ok('/xrpc/com.atproto.repo.putRecord' => { Authorization => "Bearer $access" } => json => {
   repo       => $did,

@@ -48,12 +48,6 @@ sub register_repo_handlers ($registry, $app) {
       collection => $body->{collection},
       rkey       => $body->{rkey},
       value      => $body->{record},
-      (exists $body->{swapRecord}
-        ? (
-          swap_record_present => 1,
-          swap_record         => $body->{swapRecord},
-        )
-        : ()),
     }, include_result => 1);
   });
 
