@@ -164,6 +164,43 @@ $t->get_ok("/xrpc/com.atproto.repo.getRecord?repo=$did&collection=app.bsky.feed.
   ->status_is(200)
   ->json_is('/value/text' => 'put created this record');
 
+$t->get_ok("/xrpc/com.atproto.repo.getRecord?repo=$did&collection=app.bsky.feed.post&rkey=first-post&cid=$updated_cid")
+  ->status_is(200)
+  ->json_is('/cid' => $updated_cid)
+  ->json_is('/value/text' => 'hello from updated perl');
+
+$t->get_ok("/xrpc/com.atproto.repo.getRecord?repo=$did&collection=app.bsky.feed.post&rkey=first-post&cid=bafyreifakecidmismatch")
+  ->status_is(404)
+  ->json_is('/error' => 'RecordNotFound');
+
+$t->post_ok('/xrpc/com.atproto.repo.putRecord' => { Authorization => "Bearer $access" } => json => {
+  repo       => $did,
+  collection => 'app.bsky.feed.post',
+  rkey       => 'first-post',
+  swapRecord => 'bafyreifakecidmismatch',
+  record     => {
+    '$type'   => 'app.bsky.feed.post',
+    text      => 'swap mismatch should fail',
+    createdAt => '2026-03-10T00:03:00Z',
+  },
+})->status_is(400)
+  ->json_is('/error' => 'InvalidSwap');
+
+$t->post_ok('/xrpc/com.atproto.repo.putRecord' => { Authorization => "Bearer $access" } => json => {
+  repo       => $did,
+  collection => 'app.bsky.feed.post',
+  rkey       => 'first-post',
+  swapRecord => $updated_cid,
+  record     => {
+    '$type'   => 'app.bsky.feed.post',
+    text      => 'hello from swapped perl',
+    createdAt => '2026-03-10T00:03:00Z',
+  },
+})->status_is(200)
+  ->json_is('/uri' => "at://$did/app.bsky.feed.post/first-post")
+  ->json_like('/cid' => qr/\Ab/);
+my $swapped_cid = $t->tx->res->json->{cid};
+
 $t->get_ok('/xrpc/com.atproto.repo.getRecord?repo=did:plc:by3jhwdqgbtrcc7q4tkkv3cf&collection=app.bsky.feed.post&rkey=3mgsm5nr5i22a')
   ->status_is(200)
   ->header_is('ETag' => 'W/"remote-record"')
@@ -198,17 +235,17 @@ $t->get_ok("/xrpc/com.atproto.sync.getLatestCommit?did=$did")
 
 $t->get_ok("/xrpc/com.atproto.repo.getRecord?repo=$did&collection=app.bsky.feed.post&rkey=first-post")
   ->status_is(200)
-  ->json_is('/value/text' => 'hello from updated perl');
+  ->json_is('/value/text' => 'hello from swapped perl');
 
 $t->get_ok("/xrpc/com.atproto.repo.listRecords?repo=$did&collection=app.bsky.feed.post")
   ->status_is(200)
   ->json_is('/records/0/value/text' => 'put created this record')
-  ->json_is('/records/1/value/text' => 'hello from updated perl');
+  ->json_is('/records/1/value/text' => 'hello from swapped perl');
 
 $t->get_ok('/xrpc/com.atproto.repo.listRecords?repo=Repo-Owner.Localhost&collection=app.bsky.feed.post')
   ->status_is(200)
   ->json_is('/records/0/value/text' => 'put created this record')
-  ->json_is('/records/1/value/text' => 'hello from updated perl');
+  ->json_is('/records/1/value/text' => 'hello from swapped perl');
 
 $t->get_ok("/xrpc/com.atproto.sync.getLatestCommit?did=$did")
   ->status_is(200)
@@ -222,7 +259,7 @@ $t->get_ok("/xrpc/com.atproto.sync.getRecord?did=$did&collection=app.bsky.feed.p
 my $record_proof = read_car($t->tx->res->body);
 is($record_proof->{roots}[0]->to_string, $latest_commit_cid, 'sync.getRecord roots the latest commit');
 ok(
-  scalar(grep { $_->{cid}->to_string eq $updated_cid } @{ $record_proof->{blocks} || [] }),
+  scalar(grep { $_->{cid}->to_string eq $swapped_cid } @{ $record_proof->{blocks} || [] }),
   'sync.getRecord proof includes the current record block',
 );
 
@@ -253,6 +290,15 @@ $t->post_ok('/xrpc/com.atproto.repo.deleteRecord' => { Authorization => "Bearer 
   repo       => $did,
   collection => 'app.bsky.feed.post',
   rkey       => 'first-post',
+  swapRecord => $updated_cid,
+})->status_is(400)
+  ->json_is('/error' => 'InvalidSwap');
+
+$t->post_ok('/xrpc/com.atproto.repo.deleteRecord' => { Authorization => "Bearer $access" } => json => {
+  repo       => $did,
+  collection => 'app.bsky.feed.post',
+  rkey       => 'first-post',
+  swapRecord => $swapped_cid,
 })->status_is(200);
 
 $t->get_ok("/xrpc/com.atproto.repo.getRecord?repo=$did&collection=app.bsky.feed.post&rkey=first-post")
@@ -265,7 +311,7 @@ $t->get_ok("/xrpc/com.atproto.sync.getRecord?did=$did&collection=app.bsky.feed.p
 my $missing_record_proof = read_car($t->tx->res->body);
 ok(@{ $missing_record_proof->{blocks} || [] } >= 2, 'missing sync proof still includes commit and MST blocks');
 ok(
-  !scalar(grep { $_->{cid}->to_string eq $updated_cid } @{ $missing_record_proof->{blocks} || [] }),
+  !scalar(grep { $_->{cid}->to_string eq $swapped_cid } @{ $missing_record_proof->{blocks} || [] }),
   'missing sync proof omits the deleted record block',
 );
 

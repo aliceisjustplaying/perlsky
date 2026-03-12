@@ -80,7 +80,12 @@ sub register_repo_handlers ($registry, $app) {
       return undef;
     }
     assert_repo_readable($c, $account);
-    my $row = $c->store->get_record($account->{did}, $c->param('collection'), $c->param('rkey'));
+    my $row = $c->store->get_record(
+      $account->{did},
+      $c->param('collection'),
+      $c->param('rkey'),
+      $c->param('cid'),
+    );
     xrpc_error(404, 'RecordNotFound', 'Record was not found') unless $row;
     assert_record_readable($c, _record_uri($account->{did}, $row->{collection}, $row->{rkey}));
     return _record_view($account->{did}, $row);
@@ -317,6 +322,12 @@ sub _put_record ($c, $body) {
       collection => $collection,
       rkey       => $rkey,
       value      => $body->{record},
+      (exists $body->{swapRecord}
+        ? (
+          swap_record_present => 1,
+          swap_record         => $body->{swapRecord},
+        )
+        : ()),
     }],
     swap_commit => $body->{swapCommit},
   );
@@ -340,6 +351,12 @@ sub _delete_record ($c, $body) {
       action     => 'delete',
       collection => $body->{collection},
       rkey       => $body->{rkey},
+      (exists $body->{swapRecord}
+        ? (
+          swap_record_present => 1,
+          swap_record         => $body->{swapRecord},
+        )
+        : ()),
     }],
     swap_commit => $body->{swapCommit},
   );

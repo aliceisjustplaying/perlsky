@@ -89,6 +89,28 @@ sub apply_writes ($self, $account, $writes, %opts) {
     my $rkey = $write->{rkey} // next_tid();
     my $path = $collection . '/' . $rkey;
     my $previous = $previous_records{$path};
+    my $current_cid = $previous ? $previous->{cid} : undef;
+
+    if ($write->{swap_record_present}) {
+      my $swap_record = $write->{swap_record};
+      die {
+        status  => 400,
+        error   => 'InvalidSwap',
+        message => 'swapRecord did not match the current record',
+      } if $action eq 'create' && defined $swap_record;
+      die {
+        status  => 400,
+        error   => 'InvalidSwap',
+        message => 'swapRecord did not match the current record',
+      } if ($action eq 'update' || $action eq 'delete') && !defined $swap_record;
+      my $mismatch = (defined($current_cid) || defined($swap_record))
+        && (!defined($current_cid) || !defined($swap_record) || $current_cid ne $swap_record);
+      die {
+        status  => 400,
+        error   => 'InvalidSwap',
+        message => 'swapRecord did not match the current record',
+      } if $mismatch;
+    }
 
     if ($action eq 'delete') {
       xrpc_error(400, 'InvalidRequest', 'Could not locate record: at://' . $did . '/' . $path)

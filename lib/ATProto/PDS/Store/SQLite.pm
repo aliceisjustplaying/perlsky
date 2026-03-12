@@ -895,16 +895,20 @@ sub delete_record ($self, $did, $collection, $rkey) {
   return 1;
 }
 
-sub get_record ($self, $did, $collection, $rkey) {
+sub get_record ($self, $did, $collection, $rkey, $cid = undef) {
+  my @bind = ($did, $collection, $rkey);
+  my $sql = q{
+    SELECT * FROM records
+    WHERE did = ? AND collection = ? AND rkey = ?
+  };
+  if (defined $cid && length $cid) {
+    $sql .= q{ AND cid = ?};
+    push @bind, $cid;
+  }
   my $row = $self->dbh->selectrow_hashref(
-    q{
-      SELECT * FROM records
-      WHERE did = ? AND collection = ? AND rkey = ?
-    },
+    $sql,
     undef,
-    $did,
-    $collection,
-    $rkey,
+    @bind,
   );
   return _row_to_record($row);
 }
