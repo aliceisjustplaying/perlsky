@@ -1,12 +1,15 @@
 # perlsky
 
+An AT Protocol Personal Data Server written in Perl 5 that has been extensively tested and aims for accuracy and parity with the official PDS. Nonetheless, **use it at your own risk**.
+
+![perlsky-screenshot](assets/screenshot.png)
+
 ## Why
 
 Look, it started as a joke and then quickly got out of hand.
 
 ## What
 
-An AT Protocol Personal Data Server written in Perl 5. It runs self-contained on SQLite and filesystem blob storage, loads the official `com.atproto.*` lexicons at runtime, and is meant to be pleasant to hack on if you like Perl. It has been extensively tested and aims for accuracy and parity with the official PDS. It is ready to use in Production for at least smaller servers.
 
 ## Quick start
 
@@ -48,7 +51,7 @@ prove -lr t
 
 ### Differential validation
 
-`perlsky` can be tested side-by-side against the official `@atproto/pds` to verify matching behavior on accounts, repos, moderation, sync, firehose, and `importRepo`:
+`perlsky` can be tested side-by-side against the official `@atproto/pds` to verify matching behavior on accounts, repos, moderation, sync, firehose, and `importRepo`. This isn't bulletproof but it still helped to shake out a lot of subtle and not-so-subtle bugs:
 
 ```sh
 script/differential-validate
@@ -63,13 +66,13 @@ PERLSKY_RUN_REFERENCE_DIFF=1 prove -lv t/reference-differential-plc.t
 
 The harness installs the reference runtime into `.tools/reference-runtime` with Node 20 via `fnm`.
 
-### Browser smoke — [atproto-smoke](https://github.com/aliceisjustplaying/atproto-smoke)
+### Browser smoke — [atproto-smoke](https://tangled.org/alice.mosphere.at/atproto-smoke)
 
-End-to-end smoke tests drive real `bsky.app` sessions against a running `perlsky` instance — posting, following, lists, notifications, settings, and more. The browser runtime is a standalone project, [atproto-smoke](https://github.com/aliceisjustplaying/atproto-smoke), designed to work with any AT Protocol PDS. `perlsky` provides a thin adapter script on top of it.
+End-to-end smoke tests drive real `bsky.app` sessions against a running `perlsky` instance — posting, following, lists, notifications, settings, and more. The browser runtime is a standalone project, [atproto-smoke](https://tangled.org/alice.mosphere.at/atproto-smoke), designed to work with any AT Protocol PDS. `perlsky` provides a thin adapter script on top of it.
 
 ```sh
 # clone atproto-smoke next to perlsky (one-time)
-git clone https://github.com/aliceisjustplaying/atproto-smoke.git ../atproto-smoke
+git clone https://tangled.org/alice.mosphere.at/atproto-smoke.git ../atproto-smoke
 cd ../atproto-smoke && npm install && cd -
 
 # bootstrap a reusable smoke account pair, then run
