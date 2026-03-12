@@ -1997,6 +1997,68 @@ check(
   'getBlob payload and hardening headers match the official reference PDS',
 );
 
+note('Comparing blob subject-status semantics');
+for my $name (sort keys %server) {
+  my $blob_cid = $server{$name}{sync_blob}{cid};
+  my $takedown = post_json(
+    $server{$name}{origin},
+    'com.atproto.admin.updateSubjectStatus',
+    {
+      subject  => {
+        '$type' => 'com.atproto.admin.defs#repoBlobRef',
+        did     => $server{$name}{did},
+        cid     => $blob_cid,
+      },
+      takedown => { applied => true },
+    },
+    admin_auth_header($server{$name}{admin_password}),
+  );
+  check($takedown->is_success, "$name blob takedown succeeds for subject-status comparison");
+  next unless $takedown->is_success;
+
+  my $takedown_json = $takedown->json || {};
+  my $status = get_form(
+    $server{$name}{origin},
+    'com.atproto.admin.getSubjectStatus',
+    {
+      did  => $server{$name}{did},
+      blob => $blob_cid,
+    },
+    admin_auth_header($server{$name}{admin_password}),
+  );
+  my $status_json = $status->json || {};
+
+  my $restore = post_json(
+    $server{$name}{origin},
+    'com.atproto.admin.updateSubjectStatus',
+    {
+      subject  => {
+        '$type' => 'com.atproto.admin.defs#repoBlobRef',
+        did     => $server{$name}{did},
+        cid     => $blob_cid,
+      },
+      takedown => { applied => false },
+    },
+    admin_auth_header($server{$name}{admin_password}),
+  );
+  check($restore->is_success, "$name blob takedown restore succeeds for subject-status comparison");
+
+  $server{$name}{blob_subject_status} = {
+    update_subject_type    => $takedown_json->{subject}{'$type'},
+    update_takedown        => $takedown_json->{takedown}{applied} ? 1 : 0,
+    update_has_deactivated => exists($takedown_json->{deactivated}) ? 1 : 0,
+    status_ok              => $status->is_success ? 1 : 0,
+    status_subject_type    => $status_json->{subject}{'$type'},
+    status_takedown        => $status_json->{takedown}{applied} ? 1 : 0,
+    restore_status         => $restore->code // 0,
+  };
+}
+
+check(
+  same_hash($server{reference}{blob_subject_status}, $server{perlsky}{blob_subject_status}),
+  'blob subject-status semantics match the official reference PDS',
+);
+
 note('Comparing listRepos');
 for my $name (sort keys %server) {
   my $list_repos = get_form($server{$name}{origin}, 'com.atproto.sync.listRepos', {
