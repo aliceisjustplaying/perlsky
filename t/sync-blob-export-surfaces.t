@@ -94,6 +94,12 @@ $t->post_ok('/xrpc/com.atproto.repo.uploadBlob' => {
 my $blob = $t->tx->res->json->{blob};
 my $blob_cid = $blob->{ref}{'$link'};
 
+$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.getBlob')->query(
+  did => $did,
+  cid => $blob_cid,
+))->status_is(400)
+  ->json_is('/error' => 'InvalidRequest');
+
 $t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
   Authorization => "Bearer $access",
 } => json => {

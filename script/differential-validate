@@ -2105,6 +2105,10 @@ for my $name (sort keys %server) {
   next unless $upload->is_success;
 
   my $blob = ($upload->json || {})->{blob};
+  my $preref_blob = get_form($server{$name}{origin}, 'com.atproto.sync.getBlob', {
+    did => $server{$name}{did},
+    cid => $blob->{ref}{'$link'},
+  });
   my $create = post_json(
     $server{$name}{origin},
     'com.atproto.repo.createRecord',
@@ -2154,6 +2158,7 @@ for my $name (sort keys %server) {
     ok                 => $res->is_success ? 1 : 0,
     returns_blob       => (scalar grep { $_ eq $blob_cid } @{ $json->{cids} || [] }) ? 1 : 0,
     cursor_matches_tail => (($json->{cursor} // q()) eq (($json->{cids} || [])->[-1] // q())) ? 1 : 0,
+    preref_blob        => normalize_xrpc_error($preref_blob),
     secondary_empty    => @{ $secondary_json->{cids} || [] } ? 0 : 1,
     missing_repo       => normalize_xrpc_error($missing_repo),
   };
