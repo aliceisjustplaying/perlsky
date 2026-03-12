@@ -29,7 +29,7 @@ use ATProto::PDS::Constants qw(
   TOKEN_AUD_ACCESS
   TOKEN_AUD_REFRESH
 );
-use ATProto::PDS::Identity qw(account_did account_did_doc normalize_handle service_did);
+use ATProto::PDS::Identity qw(account_did account_did_doc account_did_doc_valid_for_service normalize_handle service_did);
 use ATProto::PDS::Moderation qw(assert_login_allowed is_repo_takedown);
 use ATProto::PDS::PLC qw(account_did_method create_plc_account is_plc_did refresh_plc_did_doc);
 use ATProto::PDS::Repo::CAR qw(read_car);
@@ -248,7 +248,9 @@ sub register_server_handlers ($registry, $app) {
       activated          => (!defined($account->{deactivated_at}) && !defined($account->{deleted_at}))
         ? JSON::PP::true
         : JSON::PP::false,
-      validDid           => ($account->{did} // q()) =~ /^did:/ ? JSON::PP::true : JSON::PP::false,
+      validDid           => account_did_doc_valid_for_service($c->app->settings, $account)
+        ? JSON::PP::true
+        : JSON::PP::false,
       repoCommit         => $account->{repo_commit_cid} // q(),
       repoRev            => $account->{repo_rev} // q(),
       repoBlocks         => 0 + $block_count,

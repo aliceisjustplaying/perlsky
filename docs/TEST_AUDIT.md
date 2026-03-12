@@ -13,7 +13,7 @@ That does not mean every test has been manually revalidated against every other 
 The current baseline for saying "the audited suite is green" is:
 
 - `prove -lr t`
-  - last full green result in the realigned Meridian worktree: `Files=44, Tests=2508`
+  - last full green result in the realigned Meridian worktree: `Files=44, Tests=2525`
 - `prove -lv t/server-auth.t`
 - `perl -c script/differential-validate`
 - `PERLSKY_RUN_REFERENCE_DIFF=1 prove -lv t/reference-differential.t`
@@ -54,6 +54,7 @@ When the official runtime and upstream comments disagree, the runtime behavior w
 - Remote `did:web` DID docs, conservative `resolveIdentity` handle validation, and external handle adoption all need explicit coverage because small resolver-policy drifts turn into visible interop bugs quickly.
 - `com.atproto.repo.getRecord` must honor `cid` when present, and `putRecord` / `deleteRecord` must actually enforce `swapRecord`; those negative edges are now covered directly.
 - `com.atproto.server.requestPasswordReset` and `com.atproto.server.deleteAccount` now follow the reference form-token flow, with focused regression coverage for missing-account and bearerless deletion semantics.
+- `com.atproto.server.checkAccountStatus` must validate the stored DID document against the PDS service endpoint and signing key, and `com.atproto.repo.describeRepo` must derive `didDoc` / `handleIsCorrect` from that document instead of hardcoding success.
 - `com.atproto.sync.getBlob` should ship the same download-hardening headers as the reference PDS (`X-Content-Type-Options`, `Content-Disposition`, `Content-Security-Policy`).
 
 ## Known Intentional Divergences

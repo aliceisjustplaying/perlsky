@@ -18,7 +18,9 @@ use ATProto::PDS::Auth::OAuth qw(
   oauth_scope_allows_permission
 );
 use ATProto::PDS::Constants qw(TOKEN_AUD_ACCESS);
+use ATProto::PDS::Identity qw(account_did_doc normalize_handle resolve_handle_to_did);
 use ATProto::PDS::Moderation qw(assert_record_readable assert_repo_readable assert_repo_writable is_record_takedown parse_at_uri);
+use ATProto::PDS::PLC qw(is_plc_did refresh_plc_did_doc);
 use ATProto::PDS::Repo::CID;
 use ATProto::PDS::Repo::DagCbor qw(encode_dag_cbor);
 
@@ -27,13 +29,16 @@ our @EXPORT_OK = qw(register_repo_handlers);
 sub register_repo_handlers ($registry, $app) {
   $registry->register('com.atproto.repo.describeRepo', sub ($c, $endpoint) {
     my $account = _readable_repo($c, $c->param('repo'));
+    my $did_doc = _describe_repo_did_doc($c, $account);
 
     return {
       handle          => $account->{handle},
       did             => $account->{did},
-      didDoc          => $account->{did_doc},
+      didDoc          => $did_doc,
       collections     => $c->store->list_collections_for_did($account->{did}),
-      handleIsCorrect => JSON::PP::true,
+      handleIsCorrect => _describe_repo_handle_is_correct($c, $account, $did_doc)
+        ? JSON::PP::true
+        : JSON::PP::false,
     };
   });
 
@@ -401,6 +406,15 @@ sub _commit_view ($commit) {
 
 sub _record_uri ($did, $collection, $rkey) {
   return "at://$did/$collection/$rkey";
+}
+
+sub _did_doc_handle ($did_doc) {
+  return undef unless ref($did_doc) eq 'HASH';
+  for my $aka (@{ $did_doc->{alsoKnownAs} || [] }) {
+    next unless defined $aka && $aka =~ m{\Aat://(.+)\z};
+    return $1;
+  }
+  return undef;
 }
 
 sub _record_view ($did, $row) {

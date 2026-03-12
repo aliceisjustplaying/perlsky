@@ -955,6 +955,28 @@ check(
   'record takedown sync proof semantics match the official reference PDS',
 );
 
+note('Comparing describeRepo');
+for my $name (sort keys %server) {
+  my $res = get_form($server{$name}{origin}, 'com.atproto.repo.describeRepo', {
+    repo => $server{$name}{did},
+  });
+  check($res->is_success, "$name describeRepo succeeds");
+  next unless $res->is_success;
+  my $json = $res->json || {};
+  $server{$name}{describe_repo} = {
+    handle_matches_account  => (($json->{handle} // q()) eq ($server{$name}{handle} // q())) ? 1 : 0,
+    did_matches_account     => (($json->{did} // q()) eq ($server{$name}{did} // q())) ? 1 : 0,
+    did_doc_id_matches_did  => (($json->{didDoc}{id} // q()) eq ($server{$name}{did} // q())) ? 1 : 0,
+    handle_is_correct       => $json->{handleIsCorrect} ? 1 : 0,
+    collections_nonempty    => @{ $json->{collections} || [] } >= 1 ? 1 : 0,
+  };
+}
+
+check(
+  same_hash($server{reference}{describe_repo}, $server{perlsky}{describe_repo}),
+  'describeRepo matches the official reference PDS semantics',
+);
+
 note('Comparing listRecords');
 for my $name (sort keys %server) {
   my $res = get_form($server{$name}{origin}, 'com.atproto.repo.listRecords', {
@@ -1001,6 +1023,34 @@ for my $name (sort keys %server) {
 check(
   same_hash($server{reference}{latest_commit}, $server{perlsky}{latest_commit}),
   'getLatestCommit matches the official reference PDS semantics',
+);
+
+note('Comparing checkAccountStatus');
+for my $name (sort keys %server) {
+  my $res = get_form(
+    $server{$name}{origin},
+    'com.atproto.server.checkAccountStatus',
+    {},
+    auth_header($server{$name}{access}),
+  );
+  check($res->is_success, "$name checkAccountStatus succeeds");
+  next unless $res->is_success;
+  my $json = $res->json || {};
+  $server{$name}{check_account_status} = {
+    activated                => $json->{activated} ? 1 : 0,
+    valid_did                => $json->{validDid} ? 1 : 0,
+    repo_commit_matches_head => (($json->{repoCommit} // q()) eq ($server{$name}{latest_commit_raw}{cid} // q())) ? 1 : 0,
+    repo_rev_matches_head    => (($json->{repoRev} // q()) eq ($server{$name}{latest_commit_raw}{rev} // q())) ? 1 : 0,
+    repo_blocks_positive     => ($json->{repoBlocks} // 0) > 0 ? 1 : 0,
+    indexed_records_positive => ($json->{indexedRecords} // 0) > 0 ? 1 : 0,
+    private_state_values     => 0 + ($json->{privateStateValues} // 0),
+    blob_counts_match        => (($json->{expectedBlobs} // -1) == ($json->{importedBlobs} // -2)) ? 1 : 0,
+  };
+}
+
+check(
+  same_hash($server{reference}{check_account_status}, $server{perlsky}{check_account_status}),
+  'checkAccountStatus matches the official reference PDS semantics',
 );
 
 note('Comparing getHead');

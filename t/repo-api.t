@@ -83,6 +83,26 @@ my $did     = $session->{did};
 my $access  = $session->{accessJwt};
 my $refresh = $session->{refreshJwt};
 
+$t->get_ok("/xrpc/com.atproto.repo.describeRepo?repo=$did")
+  ->status_is(200)
+  ->json_is('/did' => $did)
+  ->json_is('/didDoc/id' => $did)
+  ->json_is('/handleIsCorrect' => JSON::PP::true);
+
+my $account = $t->app->store->get_account_by_did($did);
+my $original_did_doc = $account->{did_doc};
+my %stale_did_doc = %{$original_did_doc};
+$stale_did_doc{alsoKnownAs} = ['at://stale-handle.localhost'];
+$t->app->store->update_account($did, did_doc => \%stale_did_doc);
+
+$t->get_ok("/xrpc/com.atproto.repo.describeRepo?repo=$did")
+  ->status_is(200)
+  ->json_is('/did' => $did)
+  ->json_is('/didDoc/alsoKnownAs/0' => 'at://stale-handle.localhost')
+  ->json_is('/handleIsCorrect' => JSON::PP::false);
+
+$t->app->store->update_account($did, did_doc => $original_did_doc);
+
 $t->post_ok('/xrpc/com.atproto.repo.createRecord' => { Authorization => "Bearer $access" } => json => {
   repo       => $did,
   collection => 'app.bsky.feed.post',

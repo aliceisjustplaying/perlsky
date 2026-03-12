@@ -14,6 +14,7 @@ use ATProto::PDS::PLC qw(account_did_method format_plc_did_doc is_plc_did recomm
 our @EXPORT_OK = qw(
   account_did
   account_did_doc
+  account_did_doc_valid_for_service
   did_to_path
   is_valid_handle
   normalize_handle
@@ -96,6 +97,38 @@ sub account_did_doc ($config_or_url, $account) {
     $doc{assertionMethod} = ["$did#atproto"];
   }
   return \%doc;
+}
+
+sub account_did_doc_valid_for_service ($config_or_url, $account) {
+  return 0 unless ref($account) eq 'HASH';
+  my $config = _coerce_config($config_or_url);
+  my $did = $account->{did} // q();
+  return 0 unless length $did;
+
+  my $doc = $account->{did_doc} || account_did_doc($config, $account);
+  return 0 unless ref($doc) eq 'HASH';
+
+  my ($service) = grep {
+    ref($_) eq 'HASH'
+      && (($_->{id} // q()) eq "$did#atproto_pds" || ($_->{type} // q()) eq 'AtprotoPersonalDataServer')
+  } @{ $doc->{service} || [] };
+  return 0 unless $service;
+  return 0 unless ($service->{type} // q()) eq 'AtprotoPersonalDataServer';
+  return 0 unless ($service->{serviceEndpoint} // q()) eq ($config->{base_url} // 'http://127.0.0.1:7755');
+
+  my $expected_multibase = $account->{public_key_multibase} // q();
+  return 1 unless length $expected_multibase;
+
+  my ($verification_method) = grep {
+    ref($_) eq 'HASH' && (($_->{id} // q()) eq "$did#atproto")
+  } @{ $doc->{verificationMethod} || [] };
+  return 0 unless $verification_method;
+  return 0 unless ($verification_method->{publicKeyMultibase} // q()) eq $expected_multibase;
+
+  my %assertion_methods = map { ($_ // q()) => 1 } @{ $doc->{assertionMethod} || [] };
+  return 0 unless $assertion_methods{"$did#atproto"};
+
+  return 1;
 }
 
 sub did_to_path ($did) {

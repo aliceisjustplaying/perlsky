@@ -205,12 +205,50 @@ $t->get_ok('/xrpc/com.atproto.server.checkAccountStatus' => {
   Authorization => "Bearer $access",
 })->status_is(200)
   ->json_has('/activated')
+  ->json_is('/validDid' => JSON::PP::true)
   ->json_has('/repoCommit')
   ->json_has('/repoRev')
   ->json_has('/repoBlocks')
   ->json_has('/indexedRecords')
   ->json_has('/expectedBlobs')
   ->json_has('/importedBlobs');
+
+my $account = $app->store->get_account_by_did($did);
+my $original_did_doc = $account->{did_doc};
+
+my %bad_endpoint_doc = %{$original_did_doc};
+$bad_endpoint_doc{service} = [
+  map {
+    my %copy = %{$_};
+    $copy{serviceEndpoint} = 'https://elsewhere.example'
+      if ($copy{id} // q()) eq "$did#atproto_pds";
+    \%copy;
+  } @{ $original_did_doc->{service} || [] }
+];
+$app->store->update_account($did, did_doc => \%bad_endpoint_doc);
+
+$t->get_ok('/xrpc/com.atproto.server.checkAccountStatus' => {
+  Authorization => "Bearer $access",
+})->status_is(200)
+  ->json_is('/validDid' => JSON::PP::false);
+
+my %bad_key_doc = %{$original_did_doc};
+$bad_key_doc{verificationMethod} = [
+  map {
+    my %copy = %{$_};
+    $copy{publicKeyMultibase} = 'zQmInvalidSigningKey'
+      if ($copy{id} // q()) eq "$did#atproto";
+    \%copy;
+  } @{ $original_did_doc->{verificationMethod} || [] }
+];
+$app->store->update_account($did, did_doc => \%bad_key_doc);
+
+$t->get_ok('/xrpc/com.atproto.server.checkAccountStatus' => {
+  Authorization => "Bearer $access",
+})->status_is(200)
+  ->json_is('/validDid' => JSON::PP::false);
+
+$app->store->update_account($did, did_doc => $original_did_doc);
 
 $t->get_ok('/xrpc/com.atproto.server.checkAccountStatus' => {
   Authorization => "Bearer $second_access",
