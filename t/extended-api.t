@@ -19,7 +19,6 @@ BEGIN {
 }
 
 use Test::Mojo;
-use Mojo::URL;
 use ATProto::PDS;
 
 my $root = File::Spec->rel2abs(File::Spec->catdir($Bin, '..'));
@@ -237,89 +236,23 @@ $t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
   },
 })->status_is(200);
 
-$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.listBlobs')->query(
-  did => $did,
-))->status_is(200)
+$t->get_ok('/xrpc/com.atproto.sync.listBlobs?did=' . $did)
+  ->status_is(200)
   ->json_is('/cids/0', $blob_cid);
 
-$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.getBlob')->query(
-  did => $did,
-  cid => $blob_cid,
-))->status_is(200);
+$t->get_ok('/xrpc/com.atproto.sync.getBlob?did=' . $did . '&cid=' . $blob_cid)
+  ->status_is(200);
 is($t->tx->res->body, 'blob-bytes', 'blob bytes are served back');
 like($t->tx->res->headers->content_type // '', qr{image/png}, 'blob content type preserved');
 
-$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.getLatestCommit')->query(
-  did => $did,
-))->status_is(200)
+$t->get_ok('/xrpc/com.atproto.sync.getLatestCommit?did=' . $did)
+  ->status_is(200)
   ->json_has('/cid');
 
 my $commit_cid = $t->tx->res->json->{cid};
 
-$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.getBlocks')->query(
-  did  => $did,
-  cids => $commit_cid,
-))->status_is(200);
+$t->get_ok('/xrpc/com.atproto.sync.getBlocks?did=' . $did . '&cids=' . $commit_cid)
+  ->status_is(200);
 like($t->tx->res->headers->content_type // '', qr{application/vnd\.ipld\.car}, 'block export is a CAR');
 
-$t->post_ok('/xrpc/com.atproto.admin.updateSubjectStatus' => {
-  Authorization => $admin_auth,
-} => json => {
-  subject  => { did => $did },
-  takedown => { applied => JSON::PP::true, ref => 'unit-test' },
-})->status_is(200);
-
-$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.label.queryLabels')->query(
-  uriPatterns => "at://$did*",
-))->status_is(200);
-ok(
-  _find_label($t->tx->res->json->{labels}, val => '!hide'),
-  'queryLabels includes the takedown label',
-);
-
-$t->get_ok('/xrpc/com.atproto.temp.fetchLabels?limit=10')
-  ->status_is(200);
-ok(
-  _find_label($t->tx->res->json->{labels}, val => '!hide'),
-  'fetchLabels includes the takedown label',
-);
-
-$t->post_ok('/xrpc/com.atproto.admin.updateSubjectStatus' => {
-  Authorization => $admin_auth,
-} => json => {
-  subject  => { did => $did },
-  takedown => { applied => JSON::PP::false, ref => 'unit-test' },
-})->status_is(200);
-
-$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.label.queryLabels')->query(
-  uriPatterns => "at://$did*",
-))->status_is(200);
-ok(
-  _find_label($t->tx->res->json->{labels}, val => '!hide', neg => JSON::PP::true),
-  'queryLabels includes the negated takedown label',
-);
-
-$t->get_ok('/xrpc/com.atproto.temp.fetchLabels?limit=10')
-  ->status_is(200);
-ok(
-  _find_label($t->tx->res->json->{labels}, val => '!hide', neg => JSON::PP::true),
-  'fetchLabels includes the negated takedown label',
-);
-
 done_testing;
-
-sub _find_label {
-  my ($labels, %expected) = @_;
-  return 0 unless ref($labels) eq 'ARRAY';
-  for my $label (@$labels) {
-    next unless ref($label) eq 'HASH';
-    my $matches = 1;
-    for my $key (keys %expected) {
-      next if defined($label->{$key}) && "$label->{$key}" eq "$expected{$key}";
-      $matches = 0;
-      last;
-    }
-    return 1 if $matches;
-  }
-  return 0;
-}

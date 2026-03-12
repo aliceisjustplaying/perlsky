@@ -13,7 +13,7 @@ That does not mean every test has been manually revalidated against every other 
 The current baseline for saying "the audited suite is green" is:
 
 - `prove -lr t`
-  - latest full green result in the realigned Meridian worktree: `Files=54, Tests=3043`
+  - latest full green result in the realigned Meridian worktree: `Files=55, Tests=3047`
 - `prove -lv t/server-auth.t`
 - `perl -c script/differential-validate`
 - `PERLSKY_RUN_REFERENCE_DIFF=1 prove -lv t/reference-differential.t`
@@ -116,7 +116,7 @@ The current suite splits into three broad buckets:
 Current suite counts by bucket:
 
 - `direct reference differential`: `5`
-- `audited local regression`: `36`
+- `audited local regression`: `37`
 - `local correctness/infrastructure`: `13`
 
 | Test file | Bucket | Current note |
@@ -138,9 +138,9 @@ Current suite counts by bucket:
 | `t/email-confirmation.t` | audited local regression | intentionally testing-friendly email flow plus strict missing-email and invalid-email validation semantics |
 | `t/email-update-helper.t` | audited local regression | shared email-update helper normalization, token revocation, and duplicate-email error semantics |
 | `t/event-stream.t` | audited local regression | wire-format, malformed frame, and event decoding coverage |
-| `t/extended-api.t` | audited local regression | mixes reference-aligned repo/sync/moderation happy paths with still-local label fetch/query smoke and account/invite flows, but is cleaner after splitting reserved-handle and crawl-host checks out |
+| `t/extended-api.t` | audited local regression | focused mixed coverage for invite issuance, `applyWrites`, identity refresh/update, email flows, and blob/sync happy paths after the label RPCs were split out |
 | `t/external-handle-update.t` | audited local regression | external-handle update semantics, including DID-resolution checks and empty-body success for external handle adoption |
-| `t/external-surface.t` | audited local regression | focused external-surface coverage for repo/blob/account-status and label behavior after splitting the local discovery surfaces out |
+| `t/external-surface.t` | audited local regression | focused external-surface coverage for repo/blob/account-status and missing-blob behavior after splitting discovery and label RPC checks into dedicated suites |
 | `t/firehose.t` | audited local regression | repo subscription lifecycle, cursor, and CAR behavior |
 | `t/identity.t` | local correctness/infrastructure | lower-level handle and DID helper coverage, including DNS-over-well-known preference and malformed-handle rejection |
 | `t/import-repo.t` | audited local regression | focused `importRepo` snapshot-restore and rollback behavior, now cleaner after splitting the disabled-import policy gate into its own suite |
@@ -149,6 +149,7 @@ Current suite counts by bucket:
 | `t/invite-admin.t` | audited local regression | isolated invite-management coverage for admin listing/disabling and self-service invite-account gating |
 | `t/ipld-canonical.t` | local correctness/infrastructure | canonical IPLD encoding invariants |
 | `t/ipld-codecs.t` | local correctness/infrastructure | DAG-CBOR and codec coverage |
+| `t/label-rpc-surfaces.t` | audited local regression | isolated local label-RPC coverage for `queryLabels` and `temp.fetchLabels` account/record takedown visibility |
 | `t/labels.t` | audited local regression | label persistence, replay, negation, and cursor behavior |
 | `t/local-service-surfaces.t` | audited local regression | isolated local-only coverage for reserved handles and crawler host tracking surfaces |
 | `t/metrics.t` | audited local regression | metrics endpoint, token-gating smoke, and instrumentation contract for local appview behavior |
@@ -181,9 +182,9 @@ Current suite counts by bucket:
 The broadest suites are green and audited, but they still mix several categories of behavior inside the same file:
 
 - `t/extended-api.t`
-  Carries real conformance value for `applyWrites`, blob/sync flows, and moderation/label visibility, but it still mixes those with some local product behavior such as label fetch/query smoke and invite/account flows.
+  Carries real conformance value for `applyWrites`, blob/sync flows, and account/email identity lifecycle behavior, but it still mixes those with local product behavior such as self-service invite flows.
 - `t/external-surface.t`
-  Carries strong external-surface coverage for repo export, blob access, account-status behavior, and label visibility. It is cleaner after moving discovery-specific checks into `t/discovery-surfaces.t`, but still remains broader than a single-endpoint conformance file.
+  Carries strong external-surface coverage for repo export, blob access, account-status behavior, and missing-blob listing. It is cleaner after moving discovery and label-RPC checks into dedicated suites, but still remains broader than a single-endpoint conformance file.
 - `t/uncovered-endpoints.t`
   Exists specifically to stop a few lesser-used local endpoints from falling out of coverage; it is much narrower now that the temp, invite, and admin-account blocks have moved into dedicated suites, but it should still be read as a pragmatic safety net, not as a pure reference-alignment suite.
 

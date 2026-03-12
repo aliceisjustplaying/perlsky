@@ -278,21 +278,6 @@ $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.admin.getAccountInfo')->query(
 })->status_is(200)
   ->json_is('/handle' => 'alice.example.test');
 
-$t->post_ok('/xrpc/com.atproto.admin.updateSubjectStatus' => {
-  Authorization => $admin_auth,
-} => json => {
-  subject  => { uri => $record_uri, cid => $record_cid },
-  takedown => { applied => JSON::PP::true },
-})->status_is(200);
-
-$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.label.queryLabels')->query(
-  uriPatterns => $record_uri,
-))->status_is(200);
-ok(
-  _find_label($t->tx->res->json->{labels}, val => '!hide', uri => $record_uri),
-  'queryLabels includes the record takedown label',
-);
-
 for my $cid ($blob_cid, $nested_blob_cid) {
   $app->store->dbh->do(
     q{DELETE FROM blob_owners WHERE cid = ?},
@@ -332,19 +317,3 @@ $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.repo.listMissingBlobs')->query(
   ->json_is('/cursor' => $missing_cids[1]);
 
 done_testing;
-
-sub _find_label {
-  my ($labels, %expected) = @_;
-  return 0 unless ref($labels) eq 'ARRAY';
-  for my $label (@$labels) {
-    next unless ref($label) eq 'HASH';
-    my $matches = 1;
-    for my $key (keys %expected) {
-      next if defined($label->{$key}) && "$label->{$key}" eq "$expected{$key}";
-      $matches = 0;
-      last;
-    }
-    return 1 if $matches;
-  }
-  return 0;
-}

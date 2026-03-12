@@ -46,9 +46,9 @@ These surfaces are covered locally but are not currently executable-differenced 
 - `com.atproto.sync.listReposByCollection`
   Present in the published lexicon and covered locally in `t/discovery-surfaces.t`, but not exposed by the current official runtime.
 - `com.atproto.temp.*`
-  `requestPhoneVerification`, `revokeAccountCredentials`, `checkSignupQueue`, `dereferenceScope`, and `fetchLabels` are locally covered in `t/temp-endpoints.t`, `t/extended-api.t`, and `t/external-surface.t`, but do not have a like-for-like official public comparison surface.
+  `requestPhoneVerification`, `revokeAccountCredentials`, `checkSignupQueue`, and `dereferenceScope` are locally covered in `t/temp-endpoints.t`, while `fetchLabels` is covered in `t/label-rpc-surfaces.t`; these do not have a like-for-like official public comparison surface.
 - local label RPCs
-  `com.atproto.label.queryLabels`, `subscribeLabels`, and `com.atproto.temp.fetchLabels` are verified locally; the official runtime does not provide a directly comparable local-labeler implementation.
+  `com.atproto.label.queryLabels`, `subscribeLabels`, and `com.atproto.temp.fetchLabels` are verified locally in `t/label-rpc-surfaces.t` and `t/labels.t`; the official runtime does not provide a directly comparable local-labeler implementation.
 - local appview emulation
   `app.bsky.actor.getPreferences`, `putPreferences`, `notification.getPreferences`, `notification.putPreferencesV2`, and the conservative local feed/thread/profile fallback behavior are locally regression-tested rather than compared against an official self-hosted AppView implementation.
 
