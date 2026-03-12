@@ -116,7 +116,7 @@ The current suite splits into three broad buckets:
 Current suite counts by bucket:
 
 - `direct reference differential`: `5`
-- `audited local regression`: `34`
+- `audited local regression`: `35`
 - `local correctness/infrastructure`: `13`
 
 | Test file | Bucket | Current note |
@@ -133,12 +133,13 @@ Current suite counts by bucket:
 | `t/crawlers.t` | audited local regression | outbound crawl notification semantics |
 | `t/crypto-interop.t` | direct reference differential | pinned upstream crypto fixture coverage |
 | `t/delete-account.t` | audited local regression | reference-style account deletion flow using DID, password, and action token without a live bearer session |
+| `t/discovery-surfaces.t` | audited local regression | isolated local discovery-surface coverage for endpoint catalog wiring, lexicon lookup, handle availability, and `listReposByCollection` |
 | `t/email-confirmation.t` | audited local regression | intentionally testing-friendly email flow plus strict missing-email and invalid-email validation semantics |
 | `t/email-update-helper.t` | audited local regression | shared email-update helper normalization, token revocation, and duplicate-email error semantics |
 | `t/event-stream.t` | audited local regression | wire-format, malformed frame, and event decoding coverage |
 | `t/extended-api.t` | audited local regression | mixes reference-aligned repo/sync/moderation happy paths with still-local label fetch/query smoke and account/invite flows, but is cleaner after splitting reserved-handle and crawl-host checks out |
 | `t/external-handle-update.t` | audited local regression | external-handle update semantics, including DID-resolution checks and empty-body success for external handle adoption |
-| `t/external-surface.t` | audited local regression | mixes reference-aligned repo/sync/blob/account-status behavior with local-only surfaces such as `resolveLexicon`, `checkHandleAvailability`, and `listReposByCollection`; intentionally broad, with order-insensitive label assertions rather than brittle ordering |
+| `t/external-surface.t` | audited local regression | focused external-surface coverage for repo/blob/account-status and label behavior after splitting the local discovery surfaces out |
 | `t/firehose.t` | audited local regression | repo subscription lifecycle, cursor, and CAR behavior |
 | `t/identity.t` | local correctness/infrastructure | lower-level handle and DID helper coverage, including DNS-over-well-known preference and malformed-handle rejection |
 | `t/import-repo.t` | audited local regression | focused `importRepo` snapshot-restore and rollback behavior, now cleaner after splitting the disabled-import policy gate into its own suite |
@@ -181,7 +182,7 @@ The broadest suites are green and audited, but they still mix several categories
 - `t/extended-api.t`
   Carries real conformance value for `applyWrites`, blob/sync flows, and moderation/label visibility, but it still mixes those with some local product behavior such as label fetch/query smoke and invite/account flows.
 - `t/external-surface.t`
-  Carries strong external-surface coverage for repo export, blob access, and account-status behavior, but also covers local-only surfaces such as `resolveLexicon`, `checkHandleAvailability`, and `listReposByCollection`.
+  Carries strong external-surface coverage for repo export, blob access, account-status behavior, and label visibility. It is cleaner after moving discovery-specific checks into `t/discovery-surfaces.t`, but still remains broader than a single-endpoint conformance file.
 - `t/import-repo.t`
   Is close to a clean conformance suite, but still includes the local `accepting_imports` gate in the same file.
 - `t/uncovered-endpoints.t`

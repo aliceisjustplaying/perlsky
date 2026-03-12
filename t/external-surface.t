@@ -42,23 +42,6 @@ my $app = ATProto::PDS->new(
 my $t = Test::Mojo->new($app);
 my $admin_auth = 'Basic YWRtaW46YWRtaW4tc2VjcmV0';
 
-for my $endpoint (@{ $app->endpoint_catalog }) {
-  ok($app->api_registry->handler_for($endpoint->{id}), "$endpoint->{id} has a handler");
-}
-
-$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.lexicon.resolveLexicon')->query(
-  nsid => 'com.atproto.server.createSession',
-))->status_is(200)
-  ->json_is('/schema/id' => 'com.atproto.server.createSession')
-  ->json_has('/cid')
-  ->json_has('/uri');
-
-$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.temp.checkHandleAvailability')->query(
-  handle => 'alice.example.test',
-))->status_is(200)
-  ->json_is('/handle' => 'alice.example.test')
-  ->json_has('/result');
-
 $t->post_ok('/xrpc/com.atproto.server.createAccount' => json => {
   handle   => 'alice.example.test',
   email    => 'alice@example.test',
@@ -68,11 +51,6 @@ $t->post_ok('/xrpc/com.atproto.server.createAccount' => json => {
 my $session = $t->tx->res->json;
 my $did     = $session->{did};
 my $access  = $session->{accessJwt};
-
-$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.temp.checkHandleAvailability')->query(
-  handle => 'alice.example.test',
-))->status_is(200)
-  ->json_has('/result/suggestions/0/handle');
 
 $t->post_ok('/xrpc/com.atproto.repo.createRecord' => { Authorization => "Bearer $access" } => json => {
   repo       => $did,
@@ -88,11 +66,6 @@ $t->post_ok('/xrpc/com.atproto.repo.createRecord' => { Authorization => "Bearer 
 my $record = $t->tx->res->json;
 my $record_uri = $record->{uri};
 my $record_cid = $record->{cid};
-
-$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.listReposByCollection')->query(
-  collection => 'app.bsky.feed.post',
-))->status_is(200)
-  ->json_is('/repos/0/did' => $did);
 
 $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.getLatestCommit')->query(
   did => $did,
