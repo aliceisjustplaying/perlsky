@@ -473,7 +473,8 @@ sub register_server_handlers ($registry, $app) {
       },
     );
     _assert_full_non_oauth_access($claims);
-    return {} unless $account->{email};
+    xrpc_error(400, 'InvalidRequest', 'account does not have an email address')
+      unless defined($account->{email}) && length($account->{email});
     issue_account_action_token(
       $c,
       $account,
@@ -527,6 +528,8 @@ sub register_server_handlers ($registry, $app) {
       },
     );
     _assert_full_non_oauth_access($claims);
+    xrpc_error(400, 'InvalidRequest', 'account does not have an email address')
+      unless defined($account->{email}) && length($account->{email});
     my $token_required = defined $account->{email_confirmed_at} ? 1 : 0;
     if ($token_required) {
       issue_account_action_token(
@@ -550,6 +553,9 @@ sub register_server_handlers ($registry, $app) {
       disallow_oauth => 1,
     );
     my $body = $c->req->json || {};
+    my $email = _supported_email($body->{email});
+    xrpc_error(400, 'InvalidRequest', 'This email address is not supported, please use a different email.')
+      unless defined $email;
     if (defined $account->{email_confirmed_at}) {
       xrpc_error(400, 'TokenRequired', 'A confirmation token is required to update email')
         unless defined($body->{token}) && length($body->{token});
@@ -561,7 +567,7 @@ sub register_server_handlers ($registry, $app) {
         unless ($token->{did} // q()) eq $account->{did};
       $c->store->consume_action_token($token->{token});
     }
-    update_account_email($c, $account->{did}, $body->{email});
+    update_account_email($c, $account->{did}, $email);
     return {};
   });
 
@@ -572,6 +578,8 @@ sub register_server_handlers ($registry, $app) {
       required_scope => 'full',
       disallow_oauth => 1,
     );
+    xrpc_error(400, 'InvalidRequest', 'account does not have an email address')
+      unless defined($account->{email}) && length($account->{email});
     issue_account_action_token(
       $c,
       $account,
@@ -1149,6 +1157,14 @@ sub _initial_email_confirmed_at ($c, $email) {
 sub _normalize_email ($email) {
   return undef unless defined $email;
   return lc $email;
+}
+
+sub _supported_email ($email) {
+  my $normalized = _normalize_email($email);
+  return undef unless defined($normalized) && length($normalized);
+  return undef if $normalized =~ /\s/;
+  return undef unless $normalized =~ /\A[^\s\@]+\@[A-Za-z0-9](?:[A-Za-z0-9\-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9\-]{0,61}[A-Za-z0-9])?)+\z/;
+  return $normalized;
 }
 
 sub _require_action_token ($c, %args) {

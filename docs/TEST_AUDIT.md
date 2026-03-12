@@ -1,6 +1,6 @@
 # Test Audit Status
 
-As of 2026-03-12, the focused test-correctness and reference-audit pass is complete on rewritten history through `6f181ab`.
+As of 2026-03-12, the focused test-correctness and reference-audit pass is complete on rewritten history through the current post-`6f181ab` conformance sweep.
 
 That does not mean every test has been manually revalidated against every other PDS implementation line by line. It means:
 
@@ -13,7 +13,7 @@ That does not mean every test has been manually revalidated against every other 
 The current baseline for saying "the audited suite is green" is:
 
 - `prove -lr t`
-  - latest full green result in the realigned Meridian worktree: `Files=48, Tests=2880`
+  - latest full green result in the realigned Meridian worktree: `Files=48, Tests=2898`
 - `prove -lv t/server-auth.t`
 - `perl -c script/differential-validate`
 - `PERLSKY_RUN_REFERENCE_DIFF=1 prove -lv t/reference-differential.t`
@@ -49,6 +49,7 @@ When the official runtime and upstream comments disagree, the runtime behavior w
 - Deactivated accounts should still be able to establish and refresh sessions, but those responses must stay marked `active=false` with `status=deactivated`.
 - Local `app.bsky.*` emulation must be conservative: only synthesize owner-local feed/thread data when the PDS can answer authoritatively, and proxy upstream instead of inventing partial global state.
 - Account email handling needs consistent normalization on write, lookup, session creation, and confirmation checks; treating email case inconsistently leaves both tests and user-facing auth behavior brittle.
+- `com.atproto.server.requestEmailConfirmation`, `requestEmailUpdate`, and `requestAccountDelete` should reject accounts with no stored email using the official `400 InvalidRequest` / `account does not have an email address` shape, and `updateEmail` should reject unsupported syntax with the official `This email address is not supported, please use a different email.` message.
 - `app.bsky.actor.putPreferences` and `app.bsky.notification.putPreferencesV2` now have explicit shape validation plus focused regression coverage, turning an earlier hardening concern into a pinned contract.
 - `com.atproto.identity.resolveHandle` should reject malformed handles with `400 InvalidRequest`, not quietly treat them as misses or return a local `InvalidHandle` variant.
 - `com.atproto.identity.resolveHandle` should treat well-formed but unresolved handles as `400 InvalidRequest` with `Unable to resolve handle`, matching the official runtime instead of returning a local `404 HandleNotFound`.
@@ -98,7 +99,7 @@ The current suite splits into three broad buckets:
 | `t/crawlers.t` | audited local regression | outbound crawl notification semantics |
 | `t/crypto-interop.t` | direct reference differential | pinned upstream crypto fixture coverage |
 | `t/delete-account.t` | audited local regression | reference-style account deletion flow using DID, password, and action token without a live bearer session |
-| `t/email-confirmation.t` | audited local regression | intentionally testing-friendly email flow |
+| `t/email-confirmation.t` | audited local regression | intentionally testing-friendly email flow plus strict missing-email and invalid-email validation semantics |
 | `t/event-stream.t` | audited local regression | wire-format, malformed frame, and event decoding coverage |
 | `t/extended-api.t` | audited local regression | broad XRPC behavior including invites and moderation-adjacent flows; still intentionally mixes conformance-ish happy paths with local-policy coverage |
 | `t/external-surface.t` | audited local regression | external repo/account surface including missing-blob behavior; intentionally broad, with order-insensitive assertions for label presence rather than brittle label ordering |

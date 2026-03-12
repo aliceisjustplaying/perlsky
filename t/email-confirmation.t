@@ -124,6 +124,14 @@ ok(
   'stale confirmation tokens cannot confirm a changed email address',
 );
 
+$t->post_ok('/xrpc/com.atproto.server.updateEmail' => {
+  Authorization => "Bearer $alice->{accessJwt}",
+} => json => {
+  email => 'not-an-email',
+})->status_is(400)
+  ->json_is('/error' => 'InvalidRequest')
+  ->json_is('/message' => 'This email address is not supported, please use a different email.');
+
 $t->post_ok('/xrpc/com.atproto.server.createAccount' => json => {
   handle   => 'bob.example.test',
   email    => 'bob@example.test',
@@ -190,5 +198,29 @@ $bypass_t->post_ok('/xrpc/com.atproto.server.confirmEmail' => json => {
   token => $carol_token->{token},
 })->status_is(200)
   ->json_is({});
+
+$bypass_t->post_ok('/xrpc/com.atproto.server.createAccount' => json => {
+  handle   => 'noemail.example.test',
+  password => 'hunter22',
+})->status_is(200);
+my $noemail = $bypass_t->tx->res->json;
+
+$bypass_t->post_ok('/xrpc/com.atproto.server.requestEmailConfirmation' => {
+  Authorization => "Bearer $noemail->{accessJwt}",
+} => json => {})->status_is(400)
+  ->json_is('/error' => 'InvalidRequest')
+  ->json_is('/message' => 'account does not have an email address');
+
+$bypass_t->post_ok('/xrpc/com.atproto.server.requestEmailUpdate' => {
+  Authorization => "Bearer $noemail->{accessJwt}",
+} => json => {})->status_is(400)
+  ->json_is('/error' => 'InvalidRequest')
+  ->json_is('/message' => 'account does not have an email address');
+
+$bypass_t->post_ok('/xrpc/com.atproto.server.requestAccountDelete' => {
+  Authorization => "Bearer $noemail->{accessJwt}",
+} => json => {})->status_is(400)
+  ->json_is('/error' => 'InvalidRequest')
+  ->json_is('/message' => 'account does not have an email address');
 
 done_testing;
