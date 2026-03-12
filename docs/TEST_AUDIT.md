@@ -136,12 +136,12 @@ Current suite counts by bucket:
 | `t/email-confirmation.t` | audited local regression | intentionally testing-friendly email flow plus strict missing-email and invalid-email validation semantics |
 | `t/email-update-helper.t` | audited local regression | shared email-update helper normalization, token revocation, and duplicate-email error semantics |
 | `t/event-stream.t` | audited local regression | wire-format, malformed frame, and event decoding coverage |
-| `t/extended-api.t` | audited local regression | broad XRPC behavior including invites and moderation-adjacent flows; still intentionally mixes conformance-ish happy paths with local-policy coverage |
+| `t/extended-api.t` | audited local regression | mixes reference-aligned repo/sync/moderation happy paths with local-only surfaces such as reserved handles, temp endpoints, label fetch/query smoke, and direct `requestCrawl` exposure |
 | `t/external-handle-update.t` | audited local regression | external-handle update semantics, including DID-resolution checks and empty-body success for external handle adoption |
-| `t/external-surface.t` | audited local regression | external repo/account surface including missing-blob behavior; intentionally broad, with order-insensitive assertions for label presence rather than brittle label ordering |
+| `t/external-surface.t` | audited local regression | mixes reference-aligned repo/sync/blob/account-status behavior with local-only surfaces such as `resolveLexicon`, `checkHandleAvailability`, and `listReposByCollection`; intentionally broad, with order-insensitive label assertions rather than brittle ordering |
 | `t/firehose.t` | audited local regression | repo subscription lifecycle, cursor, and CAR behavior |
 | `t/identity.t` | local correctness/infrastructure | lower-level handle and DID helper coverage, including DNS-over-well-known preference and malformed-handle rejection |
-| `t/import-repo.t` | audited local regression | import/snapshot restore behavior, including perlsky's intentionally tolerant malformed-record import semantics and explicit rollback to the imported snapshot |
+| `t/import-repo.t` | audited local regression | mostly reference-aligned `importRepo` snapshot-restore and rollback behavior, plus one local policy assertion for the disabled-import service gate |
 | `t/invite-gating.t` | audited local regression | self-service invite flag behavior |
 | `t/ipld-canonical.t` | local correctness/infrastructure | canonical IPLD encoding invariants |
 | `t/ipld-codecs.t` | local correctness/infrastructure | DAG-CBOR and codec coverage |
@@ -168,7 +168,20 @@ Current suite counts by bucket:
 | `t/sqlite-binary.t` | local correctness/infrastructure | SQLite binary round-trip correctness |
 | `t/store-sqlite.t` | audited local regression | store-level session, invite, label, and repo persistence behavior |
 | `t/tid-repair.t` | local correctness/infrastructure | TID repair and recovery helpers |
-| `t/uncovered-endpoints.t` | audited local regression | broad catch-all coverage for locally implemented admin/temp/sync edges that are easy to miss in higher-level suites |
+| `t/uncovered-endpoints.t` | audited local regression | intentionally mixed catch-all for admin/temp/sync/local-policy edges that are easy to miss elsewhere; useful coverage, but one of the least reference-pure suites in the tree |
+
+### Broad Mixed Suites
+
+The broadest suites are green and audited, but they still mix several categories of behavior inside the same file:
+
+- `t/extended-api.t`
+  Carries real conformance value for `applyWrites`, blob/sync flows, and moderation/label visibility, but it also includes clearly local-only assertions for temp endpoints, local crawler exposure, and self-service invite policy.
+- `t/external-surface.t`
+  Carries strong external-surface coverage for repo export, blob access, and account-status behavior, but also covers local-only surfaces such as `resolveLexicon`, `checkHandleAvailability`, and `listReposByCollection`.
+- `t/import-repo.t`
+  Is close to a clean conformance suite, but still includes the local `accepting_imports` gate in the same file.
+- `t/uncovered-endpoints.t`
+  Exists specifically to stop lesser-used local endpoints from falling out of coverage; it should be read as a pragmatic safety net, not as a pure reference-alignment suite.
 
 ## What This Audit Does Not Yet Claim
 
