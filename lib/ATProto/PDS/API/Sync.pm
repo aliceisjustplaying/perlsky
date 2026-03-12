@@ -161,6 +161,7 @@ sub register_sync_handlers ($registry, $app) {
     my $account = _readable_repo_by_did($c);
     my $page = $c->store->list_blobs_by_did(
       $account->{did},
+      since  => $c->param('since'),
       limit  => $c->param('limit') // 500,
       cursor => $c->param('cursor'),
     );

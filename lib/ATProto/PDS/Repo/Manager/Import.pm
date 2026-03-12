@@ -50,7 +50,7 @@ sub import_repo_car ($self, $account, $car_bytes) {
     message => 'imported repo belongs to a different DID',
   } unless ($commit->{did} // q()) eq $did;
 
-  my $records = _records_from_import($commit->{data}, \%blocks);
+  my $records = _records_from_import($commit->{data}, \%blocks, $commit->{rev});
   my %imported = map { $_->{collection} . '/' . $_->{rkey} => $_ } @$records;
   my %previous = map {
     $_->{collection} . '/' . $_->{rkey} => $_
@@ -207,6 +207,7 @@ sub _repair_records_for_repo ($account, $records) {
       value        => $value,
       cid          => $cid,
       record_bytes => $record_bytes,
+      repo_rev     => $account->{repo_rev},
     };
   }
 
@@ -263,13 +264,13 @@ sub _rewrite_owned_at_uris ($value, $hosts, $path_map, $counter_ref) {
   return $value;
 }
 
-sub _records_from_import ($root_cid, $blocks) {
+sub _records_from_import ($root_cid, $blocks, $import_rev = undef) {
   my @records;
-  _walk_mst($root_cid, $blocks, \@records);
+  _walk_mst($root_cid, $blocks, \@records, $import_rev);
   return \@records;
 }
 
-sub _walk_mst ($cid, $blocks, $records) {
+sub _walk_mst ($cid, $blocks, $records, $import_rev = undef) {
   return unless $cid;
   my $block = $blocks->{ _cid_string($cid) } or die {
     status  => 400,
@@ -277,7 +278,7 @@ sub _walk_mst ($cid, $blocks, $records) {
     message => 'missing MST block in imported CAR',
   };
   my $node = decode_dag_cbor($block->{bytes});
-  _walk_mst($node->{l}, $blocks, $records) if $node->{l};
+    _walk_mst($node->{l}, $blocks, $records, $import_rev) if $node->{l};
 
   my $previous = q();
   for my $entry (@{ $node->{e} || [] }) {
@@ -304,11 +305,12 @@ sub _walk_mst ($cid, $blocks, $records) {
       cid          => _cid_string($record_cid),
       value        => decode_dag_cbor($record_block->{bytes}),
       record_bytes => $record_block->{bytes},
+      repo_rev     => $import_rev,
       created_at   => time,
       updated_at   => time,
     };
 
-    _walk_mst($entry->{t}, $blocks, $records) if $entry->{t};
+    _walk_mst($entry->{t}, $blocks, $records, $import_rev) if $entry->{t};
     $previous = $path;
   }
 }

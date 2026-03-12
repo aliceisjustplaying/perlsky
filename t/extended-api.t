@@ -237,6 +237,17 @@ $t->request_ok($blob_tx)->status_is(200);
 my $blob = $t->tx->res->json->{blob};
 my $blob_cid = $blob->{ref}{'$link'};
 
+$t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
+  Authorization => "Bearer $access",
+} => json => {
+  repo       => $did,
+  collection => 'com.example.attach',
+  record     => {
+    '$type' => 'com.example.attach',
+    blob    => $blob,
+  },
+})->status_is(200);
+
 $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.listBlobs')->query(
   did => $did,
 ))->status_is(200)

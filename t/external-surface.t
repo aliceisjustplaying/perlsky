@@ -169,7 +169,7 @@ $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.listBlobs')->query(
 $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.listBlobs')->query(
   did => $second_did,
 ))->status_is(200)
-  ->json_is('/cids/0' => $blob_cid);
+  ->json_is('/cids' => []);
 
 $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.getBlocks')->query(
   did  => $second_did,
@@ -184,21 +184,21 @@ $t->post_ok('/xrpc/com.atproto.repo.uploadBlob' => {
 } => 'blob-two')->status_is(200);
 
 my $blob_two_cid = $t->tx->res->json->{blob}{ref}{'$link'};
-my @sorted_blob_cids = sort ($blob_cid, $blob_two_cid);
+my @sorted_blob_cids = sort ($blob_cid);
 
 $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.listBlobs')->query(
   did   => $did,
   limit => 1,
 ))->status_is(200)
   ->json_is('/cids/0' => $sorted_blob_cids[0])
-  ->json_is('/cursor' => $sorted_blob_cids[0]);
+  ->json_is('/cursor' => undef);
 
 $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.listBlobs')->query(
   did    => $did,
   limit  => 1,
   cursor => $sorted_blob_cids[0],
 ))->status_is(200)
-  ->json_is('/cids/0' => $sorted_blob_cids[1]);
+  ->json_is('/cids' => []);
 
 $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.getBlob')->query(
   did => $second_did,
@@ -236,6 +236,14 @@ $t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
 })->status_is(200);
 
 my $nested_record_uri = $t->tx->res->json->{uri};
+my @since_sorted_blob_cids = sort ($blob_cid, $nested_blob_cid);
+
+$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.listBlobs')->query(
+  did   => $did,
+  since => $latest->{rev},
+))->status_is(200)
+  ->json_is('/cids/0' => $since_sorted_blob_cids[0])
+  ->json_is('/cids/1' => $since_sorted_blob_cids[1]);
 
 $t->get_ok('/xrpc/com.atproto.server.checkAccountStatus' => {
   Authorization => "Bearer $access",

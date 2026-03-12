@@ -1273,6 +1273,61 @@ check(
   'getCheckout matches the official reference PDS semantics',
 );
 
+note('Comparing listBlobs since semantics');
+for my $name (sort keys %server) {
+  my $session = post_json($server{$name}{origin}, 'com.atproto.server.createSession', {
+    identifier => $server{$name}{renamed_handle} || $server{$name}{handle},
+    password   => 'hunter22',
+  });
+  check($session->is_success, "$name createSession succeeds for listBlobs comparison");
+  next unless $session->is_success;
+
+  my $upload = post_bytes(
+    $server{$name}{origin},
+    'com.atproto.repo.uploadBlob',
+    "blob bytes for $name",
+    'text/plain',
+    auth_header(($session->json || {})->{accessJwt}),
+  );
+  check($upload->is_success, "$name uploadBlob succeeds for listBlobs comparison");
+  next unless $upload->is_success;
+
+  my $blob = ($upload->json || {})->{blob};
+  my $create = post_json(
+    $server{$name}{origin},
+    'com.atproto.repo.createRecord',
+    {
+      repo       => $server{$name}{did},
+      collection => 'com.example.blobtest',
+      rkey       => 'blobtest',
+      record     => {
+        '$type' => 'com.example.blobtest',
+        blob    => $blob,
+      },
+    },
+    auth_header(($session->json || {})->{accessJwt}),
+  );
+  check($create->is_success, "$name createRecord with blob succeeds for listBlobs comparison");
+
+  my $res = get_form($server{$name}{origin}, 'com.atproto.sync.listBlobs', {
+    did   => $server{$name}{did},
+    since => $server{$name}{latest_commit_raw}{rev},
+  });
+  check($res->is_success, "$name listBlobs with since succeeds");
+  my $json = $res->json || {};
+  my $blob_cid = $blob->{ref}{'$link'};
+  $server{$name}{list_blobs_since} = {
+    ok                 => $res->is_success ? 1 : 0,
+    returns_blob       => grep { $_ eq $blob_cid } @{ $json->{cids} || [] } ? 1 : 0,
+    cursor_matches_tail => (($json->{cursor} // q()) eq (($json->{cids} || [])->[-1] // q())) ? 1 : 0,
+  };
+}
+
+check(
+  same_hash($server{reference}{list_blobs_since}, $server{perlsky}{list_blobs_since}),
+  'listBlobs since semantics match the official reference PDS',
+);
+
 note('Comparing listMissingBlobs empty-state semantics');
 for my $name (sort keys %server) {
   my $res = get_form($server{$name}{origin}, 'com.atproto.repo.listMissingBlobs', {}, auth_header($server{$name}{access}));

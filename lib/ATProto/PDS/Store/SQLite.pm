@@ -795,21 +795,17 @@ sub mark_blobs_referenced ($self, $did, @cids) {
 sub list_blobs_by_did ($self, $did, %args) {
   my $limit = $args{limit} // 500;
   my $cursor = $args{cursor};
-  my @bind = ($did);
-  my $sql = q{
-    SELECT b.*
-    FROM blobs b
-    JOIN blob_owners bo ON bo.cid = b.cid
-    WHERE bo.did = ?
-  };
+  my $since = $args{since};
+  my %seen;
+  my @rows = map { +{ cid => $_ } } sort grep { !$seen{$_}++ } map {
+    _record_blob_cids($_->{value})
+  } grep {
+    !defined($since) || !length($since) || (defined($_->{repo_rev}) && $_->{repo_rev} gt $since)
+  } @{ $self->all_records_for_did($did) };
   if (defined $cursor && length $cursor) {
-    $sql .= q{ AND b.cid > ?};
-    push @bind, $cursor;
+    @rows = grep { $_->{cid} gt $cursor } @rows;
   }
-  $sql .= q{ ORDER BY b.cid LIMIT ?};
-  push @bind, $limit + 1;
-  my $rows = $self->dbh->selectall_arrayref($sql, { Slice => {} }, @bind);
-  return _paginate($rows, $limit, 'cid');
+  return _paginate(\@rows, $limit, 'cid');
 }
 
 sub count_blobs_by_did ($self, $did) {
@@ -831,12 +827,13 @@ sub put_record ($self, %args) {
     $self->dbh,
     q{
       INSERT INTO records (
-        did, collection, rkey, cid, value_json, record_bytes, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        did, collection, rkey, cid, value_json, record_bytes, repo_rev, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(did, collection, rkey) DO UPDATE SET
         cid = excluded.cid,
         value_json = excluded.value_json,
         record_bytes = excluded.record_bytes,
+        repo_rev = excluded.repo_rev,
         updated_at = excluded.updated_at
     },
     [
@@ -846,11 +843,12 @@ sub put_record ($self, %args) {
       $cid,
       encode_json($args{value}),
       $args{record_bytes},
+      $args{repo_rev},
       $args{created_at} // $now,
       $now,
     ],
     _blob_bind_positions_for_names([qw(
-      did collection rkey cid value_json record_bytes created_at updated_at
+      did collection rkey cid value_json record_bytes repo_rev created_at updated_at
     )], qw(record_bytes)),
   );
 
@@ -865,8 +863,8 @@ sub replace_records_for_did ($self, $did, $records) {
       $dbh,
       q{
         INSERT INTO records (
-          did, collection, rkey, cid, value_json, record_bytes, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          did, collection, rkey, cid, value_json, record_bytes, repo_rev, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
       },
       [
         $did,
@@ -875,11 +873,12 @@ sub replace_records_for_did ($self, $did, $records) {
         $record->{cid},
         encode_json($record->{value}),
         $record->{record_bytes},
+        $record->{repo_rev},
         $record->{created_at} // time,
         $record->{updated_at} // time,
       ],
       _blob_bind_positions_for_names([qw(
-        did collection rkey cid value_json record_bytes created_at updated_at
+        did collection rkey cid value_json record_bytes repo_rev created_at updated_at
       )], qw(record_bytes)),
     );
   }
@@ -1671,6 +1670,22 @@ sub default_migrations {
         },
       ],
     },
+    {
+      version => 11,
+      statements => [
+        q{ALTER TABLE records ADD COLUMN repo_rev TEXT},
+        q{
+          UPDATE records
+          SET repo_rev = (
+            SELECT accounts.repo_rev
+            FROM accounts
+            WHERE accounts.did = records.did
+          )
+          WHERE repo_rev IS NULL
+        },
+        q{CREATE INDEX IF NOT EXISTS records_by_did_repo_rev ON records (did, repo_rev, rkey)},
+      ],
+    },
   );
 }
 
@@ -1721,6 +1736,28 @@ sub _row_to_record ($row) {
   $row->{value} = decode_json($row->{value_json}) if defined $row->{value_json};
   delete $row->{value_json};
   return $row;
+}
+
+sub _record_blob_cids ($value) {
+  return () unless defined $value;
+  if (ref($value) eq 'HASH') {
+    if (($value->{'$type'} // q()) eq 'blob' && ref($value->{ref}) eq 'HASH' && defined($value->{ref}{'$link'})) {
+      return ($value->{ref}{'$link'});
+    }
+    my @found;
+    for my $child (values %$value) {
+      push @found, _record_blob_cids($child);
+    }
+    return @found;
+  }
+  if (ref($value) eq 'ARRAY') {
+    my @found;
+    for my $child (@$value) {
+      push @found, _record_blob_cids($child);
+    }
+    return @found;
+  }
+  return ();
 }
 
 sub _execute_sql ($dbh, $sql, $params = undef, $blob_positions = undef) {

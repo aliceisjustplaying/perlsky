@@ -92,6 +92,38 @@ $store->put_blob(
   byte_size    => 1234,
   storage_path => 'blobs/bafk.png',
 );
+$store->put_record(
+  did          => $account->{did},
+  collection   => 'com.example.attach',
+  rkey         => 'blob-one',
+  cid          => 'bafyattach1',
+  record_bytes => q(),
+  value        => {
+    '$type' => 'com.example.attach',
+    blob    => {
+      '$type'    => 'blob',
+      ref        => { '$link' => 'bafkreigh2akiscaildc' },
+      mimeType   => 'image/png',
+      size       => 1234,
+    },
+  },
+);
+$store->put_record(
+  did          => $second_account->{did},
+  collection   => 'com.example.attach',
+  rkey         => 'blob-one',
+  cid          => 'bafyattach2',
+  record_bytes => q(),
+  value        => {
+    '$type' => 'com.example.attach',
+    blob    => {
+      '$type'    => 'blob',
+      ref        => { '$link' => 'bafkreigh2akiscaildc' },
+      mimeType   => 'image/png',
+      size       => 1234,
+    },
+  },
+);
 ok($store->blob_owned_by_did('bafkreigh2akiscaildc', $second_account->{did}), 'second owner is tracked for shared blob');
 is($store->count_blobs_by_did($account->{did}), 1, 'first account still counts shared blob');
 is($store->count_blobs_by_did($second_account->{did}), 1, 'second account counts shared blob');
@@ -104,6 +136,22 @@ $store->put_blob(
   mime_type    => 'image/jpeg',
   byte_size    => 4321,
   storage_path => 'blobs/bafk-second.jpg',
+);
+$store->put_record(
+  did          => $account->{did},
+  collection   => 'com.example.attach',
+  rkey         => 'blob-two',
+  cid          => 'bafyattach3',
+  record_bytes => q(),
+  value        => {
+    '$type' => 'com.example.attach',
+    blob    => {
+      '$type'    => 'blob',
+      ref        => { '$link' => 'bafkreighsecondblob' },
+      mimeType   => 'image/jpeg',
+      size       => 4321,
+    },
+  },
 );
 
 my $blob_page_one = $store->list_blobs_by_did($account->{did}, limit => 1);

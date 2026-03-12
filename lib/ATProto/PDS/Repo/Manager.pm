@@ -75,6 +75,7 @@ sub apply_writes ($self, $account, $writes, %opts) {
         rkey        => $_->{rkey},
         cid         => $_->{cid},
         value       => $_->{value},
+        repo_rev    => $_->{repo_rev},
         record_bytes => $_->{record_bytes},
       }
     } @{ $store->all_records_for_did($did) }
@@ -191,6 +192,12 @@ sub apply_writes ($self, $account, $writes, %opts) {
   my $snapshot_car_bytes = $artifacts->{snapshot_car_bytes};
   my $car_bytes = $artifacts->{firehose_car_bytes};
   my $sync_car_bytes = $artifacts->{sync_car_bytes};
+
+  for my $op (@ops) {
+    next if ($op->{action} // q()) eq 'delete';
+    next unless $records->{ $op->{path} };
+    $records->{ $op->{path} }{repo_rev} = $rev;
+  }
 
   $store->txn(sub ($dbh) {
     for my $block (@{ $artifacts->{repo_blocks} }) {
