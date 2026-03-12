@@ -2,6 +2,7 @@ use v5.34;
 use warnings;
 
 use Config ();
+use File::Path qw(remove_tree);
 use File::Spec;
 use FindBin qw($Bin);
 use Test::More;
@@ -18,10 +19,23 @@ BEGIN {
 
 use Test::Mojo;
 use ATProto::PDS;
-use ATProto::PDS::Config qw(load_config);
 
 my $root   = File::Spec->rel2abs(File::Spec->catdir($Bin, '..'));
-my $config = load_config(File::Spec->catfile($root, 'etc', 'perlsky.example.json'));
+my $tmp    = File::Spec->catdir($root, 'data', 'tmp-tests', 'app-routes');
+remove_tree($tmp) if -d $tmp;
+my $config = {
+  host                  => '127.0.0.1',
+  port                  => 7755,
+  base_url              => 'http://127.0.0.1:7755',
+  hostname              => 'localhost',
+  service_did_method    => 'did:web',
+  service_handle_domain => 'localhost',
+  invite_code_required  => 0,
+  jwt_secret            => 'test-secret',
+  admin_password        => 'admin-secret',
+  data_dir              => $tmp,
+  db_path               => File::Spec->catfile($tmp, 'perlsky.sqlite'),
+};
 my $t      = Test::Mojo->new(
   ATProto::PDS->new(
     project_root => $root,
@@ -43,6 +57,18 @@ $t->get_ok('/xrpc/com.atproto.server.describeServer')
   ->status_is(200)
   ->json_is('/availableUserDomains/0' => 'localhost')
   ->json_like('/did' => qr/\Adid:web:/);
+
+$t->get_ok('/.well-known/oauth-protected-resource')
+  ->status_is(200)
+  ->json_is('/resource' => 'http://127.0.0.1:7755')
+  ->json_is('/authorization_servers/0' => 'http://127.0.0.1:7755');
+
+$t->get_ok('/.well-known/oauth-authorization-server')
+  ->status_is(200)
+  ->json_is('/issuer' => 'http://127.0.0.1:7755')
+  ->json_is('/authorization_endpoint' => 'http://127.0.0.1:7755/oauth/authorize')
+  ->json_is('/token_endpoint' => 'http://127.0.0.1:7755/oauth/token')
+  ->json_is('/pushed_authorization_request_endpoint' => 'http://127.0.0.1:7755/oauth/par');
 
 my $suffix = time . int(rand(1_000_000));
 my $routeprobe_handle = "routeprobe-$suffix.localhost";
