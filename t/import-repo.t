@@ -101,7 +101,8 @@ is(scalar @{ $t->tx->res->json->{records} || [] }, 2, 'invalid import leaves rep
 $t->post_ok('/xrpc/com.atproto.repo.importRepo' => {
   Authorization => "Bearer $access",
   'Content-Type' => 'application/vnd.ipld.car',
-} => $snapshot)->status_is(200);
+} => $snapshot)->status_is(200)
+  ->content_is(q());
 
 $t->get_ok('/xrpc/com.atproto.repo.listRecords' => form => {
   repo       => $did,

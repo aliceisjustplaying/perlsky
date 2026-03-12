@@ -9,7 +9,7 @@ use Exporter 'import';
 use JSON::PP ();
 
 use ATProto::PDS::EventStream qw(encode_message_frame);
-use ATProto::PDS::API::Util qw(flatten_params iso8601 pump_event_subscription resolve_did_account subscription_start_seq xrpc_error);
+use ATProto::PDS::API::Util qw(flatten_params iso8601 pump_event_subscription render_empty_success resolve_did_account subscription_start_seq xrpc_error);
 use ATProto::PDS::Constants qw(
   EVENT_TYPE_ACCOUNT
   EVENT_TYPE_COMMIT
@@ -178,7 +178,7 @@ sub register_sync_handlers ($registry, $app) {
       last_seq     => $c->store->latest_event_seq,
       status       => { status => 'active' },
     );
-    return {};
+    return render_empty_success($c);
   });
 
   $registry->register('com.atproto.sync.notifyOfUpdate', sub ($c, $endpoint) {
@@ -189,7 +189,7 @@ sub register_sync_handlers ($registry, $app) {
       last_seq    => $c->store->latest_event_seq,
       status      => { status => 'active' },
     );
-    return {};
+    return render_empty_success($c);
   });
 
   $registry->register('com.atproto.sync.listHosts', sub ($c, $endpoint) {

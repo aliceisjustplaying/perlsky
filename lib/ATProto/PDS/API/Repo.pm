@@ -12,7 +12,7 @@ use JSON::PP ();
 use Mojo::URL;
 
 use ATProto::PDS::API::Server qw(require_access_or_service_auth require_auth);
-use ATProto::PDS::API::Util qw(blob_ref resolve_repo xrpc_error);
+use ATProto::PDS::API::Util qw(blob_ref render_empty_success resolve_repo xrpc_error);
 use ATProto::PDS::Auth::OAuth qw(
   oauth_required_permission_scope
   oauth_scope_allows_permission
@@ -201,7 +201,7 @@ sub register_repo_handlers ($registry, $app) {
       die $err if ref($err) eq 'HASH';
       xrpc_error(400, 'InvalidRequest', 'Repo import CAR was invalid');
     };
-    return {};
+    return render_empty_success($c);
   });
 }
 

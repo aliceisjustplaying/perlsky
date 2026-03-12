@@ -134,7 +134,7 @@ my $before_admin_handle_seq = $app->store->latest_event_seq;
     did    => $did,
     handle => 'alice.external.test',
   })->status_is(200)
-    ->json_is({});
+    ->content_is(q());
 }
 
 my $handle_event = $app->store->list_events_from($before_admin_handle_seq + 1, limit => 1)->[0];
@@ -172,7 +172,7 @@ $t->post_ok('/xrpc/com.atproto.admin.updateAccountEmail' => {
   account => $did,
   email   => 'Alice+Admin@Example.Test',
 })->status_is(200)
-  ->json_is({});
+  ->content_is(q());
 
 $account = $app->store->get_account_by_did($did);
 is($account->{email}, 'alice+admin@example.test', 'admin.updateAccountEmail normalizes email');
@@ -249,7 +249,7 @@ $t->post_ok('/xrpc/com.atproto.admin.updateAccountSigningKey' => {
   did        => $did,
   signingKey => $reserved_signing_key,
 })->status_is(200)
-  ->json_is({});
+  ->content_is(q());
 
 my $signing_event = $app->store->list_events_from($handle_event->{seq} + 1, limit => 1)->[0];
 is($signing_event->{type}, 'identity', 'admin.updateAccountSigningKey appends an identity event');
@@ -354,7 +354,7 @@ $t->post_ok('/xrpc/com.atproto.admin.disableInviteCodes' => {
 } => json => {
   codes => [$admin_codes[0]],
 })->status_is(200)
-  ->json_is({});
+  ->content_is(q());
 
 ok($app->store->get_invite_code($admin_codes[0])->{disabled}, 'disableInviteCodes marks the requested code disabled');
 
@@ -436,7 +436,7 @@ $t->post_ok('/xrpc/com.atproto.admin.disableInviteCodes' => {
 } => json => {
   codes => [$user_code],
 })->status_is(200)
-  ->json_is({});
+  ->content_is(q());
 
 my ($disabled_row) = grep { $_->{code} eq $user_code } @{ $app->store->list_invite_codes_for_account($did) || [] };
 ok($disabled_row && $disabled_row->{disabled}, 'disableInviteCodes disables the requested invite code');
@@ -451,7 +451,7 @@ $t->post_ok('/xrpc/com.atproto.admin.disableInviteCodes' => {
 $t->post_ok('/xrpc/com.atproto.sync.notifyOfUpdate' => json => {
   hostname => 'crawler.example.test',
 })->status_is(200)
-  ->json_is({});
+  ->content_is(q());
 
 $t->get_ok('/xrpc/com.atproto.sync.getHostStatus' => form => {
   hostname => 'crawler.example.test',
@@ -561,9 +561,10 @@ $t->get_ok('/xrpc/com.atproto.temp.dereferenceScope?scope=ref:')
   ->status_is(400)
   ->json_is('/error' => 'InvalidScopeReference');
 
-$t->post_ok('/xrpc/com.atproto.temp.requestPhoneVerification' => json => {})
-  ->status_is(200)
-  ->json_is({});
+$t->post_ok('/xrpc/com.atproto.temp.requestPhoneVerification' => json => {
+  phoneNumber => '+441234567890',
+})->status_is(200)
+  ->content_is(q());
 
 $t->post_ok('/xrpc/com.atproto.temp.revokeAccountCredentials' => json => {
   account => $did,
@@ -575,7 +576,7 @@ $t->post_ok('/xrpc/com.atproto.temp.revokeAccountCredentials' => {
 } => json => {
   account => $did,
 })->status_is(200)
-  ->json_is({});
+  ->content_is(q());
 
 $t->get_ok('/xrpc/com.atproto.server.getSession' => {
   Authorization => "Bearer $access",

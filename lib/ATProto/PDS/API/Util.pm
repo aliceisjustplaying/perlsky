@@ -17,6 +17,7 @@ our @EXPORT_OK = qw(
   flatten_params
   iso8601
   pump_event_subscription
+  render_empty_success
   resolve_did_account
   resolve_repo
   subscription_start_seq
@@ -50,6 +51,11 @@ sub iso8601 ($epoch = undef) {
     $gmt[1],
     $gmt[0],
   );
+}
+
+sub render_empty_success ($c) {
+  $c->render(data => q());
+  return;
 }
 
 sub resolve_did_account ($c, $did) {

@@ -10,7 +10,7 @@ use JSON::PP ();
 
 use ATProto::PDS::API::Helpers qw(find_account issue_account_action_token require_admin subject_key);
 use ATProto::PDS::API::Server qw(require_auth);
-use ATProto::PDS::API::Util qw(flatten_params iso8601 pump_event_subscription subscription_start_seq xrpc_error);
+use ATProto::PDS::API::Util qw(flatten_params iso8601 pump_event_subscription render_empty_success subscription_start_seq xrpc_error);
 use ATProto::PDS::Auth::OAuth qw(oauth_scope_has_atproto);
 use ATProto::PDS::Auth::Password qw(hash_password random_hex);
 use ATProto::PDS::Constants qw(
@@ -81,7 +81,7 @@ sub register_misc_handlers ($registry, $app) {
       subject => 'PLC update requested',
       content => sub ($token) { "Use token $token->{token} to authorize your PLC operation." },
     );
-    return _render_empty_success($c);
+    return render_empty_success($c);
   });
 
   $registry->register('com.atproto.identity.signPlcOperation', sub ($c, $endpoint) {
@@ -154,7 +154,7 @@ sub register_misc_handlers ($registry, $app) {
     my $did_doc = refresh_plc_did_doc($c->app->settings, $account->{did});
     $account = $c->store->update_account($account->{did}, did_doc => $did_doc);
     _append_identity_event($c, $account);
-    return _render_empty_success($c);
+    return render_empty_success($c);
   });
 
   $registry->register('com.atproto.identity.updateHandle', sub ($c, $endpoint) {
@@ -192,7 +192,7 @@ sub register_misc_handlers ($registry, $app) {
     }
     my $updated = $c->store->update_account($account->{did}, %changes);
     _append_identity_event($c, $updated);
-    return _render_empty_success($c);
+    return render_empty_success($c);
   });
 
   $registry->register('com.atproto.lexicon.resolveLexicon', sub ($c, $endpoint) {
@@ -287,7 +287,7 @@ sub register_misc_handlers ($registry, $app) {
     my $handle = normalize_handle($body->{handle}, $domain);
     xrpc_error(400, 'InvalidHandle', 'Requested handle is invalid') unless defined $handle;
     $c->store->reserve_handle($handle);
-    return {};
+    return render_empty_success($c);
   });
 
   $registry->register('com.atproto.temp.checkSignupQueue', sub ($c, $endpoint) {
@@ -307,7 +307,7 @@ sub register_misc_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.temp.requestPhoneVerification', sub ($c, $endpoint) {
-    return {};
+    return render_empty_success($c);
   });
 
   $registry->register('com.atproto.temp.revokeAccountCredentials', sub ($c, $endpoint) {
@@ -325,7 +325,7 @@ sub register_misc_handlers ($registry, $app) {
       $c->store->revoke_sessions_by_did($account->{did});
       $c->store->revoke_app_passwords_by_did($account->{did});
     });
-    return {};
+    return render_empty_success($c);
   });
 }
 
@@ -362,11 +362,6 @@ sub _assert_full_non_oauth_access ($claims) {
   xrpc_error(400, 'InvalidToken', 'Bad token scope')
     unless (($claims->{scope} // TOKEN_AUD_ACCESS) eq TOKEN_AUD_ACCESS);
   return 1;
-}
-
-sub _render_empty_success ($c) {
-  $c->render(data => q());
-  return;
 }
 
 sub _valid_plc_operation ($operation) {

@@ -319,7 +319,8 @@ ok(
 
 $t->post_ok('/xrpc/com.atproto.sync.requestCrawl' => json => {
   hostname => 'relay.example.test',
-})->status_is(200);
+})->status_is(200)
+  ->content_is(q());
 
 $t->get_ok('/xrpc/com.atproto.sync.listHosts')
   ->status_is(200)

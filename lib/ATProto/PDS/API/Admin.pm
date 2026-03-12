@@ -9,7 +9,7 @@ use Exporter 'import';
 use JSON::PP ();
 
 use ATProto::PDS::API::Helpers qw(account_view admin_account_view find_account invite_code_view require_admin subject_key update_account_email);
-use ATProto::PDS::API::Util qw(flatten_params xrpc_error);
+use ATProto::PDS::API::Util qw(flatten_params render_empty_success xrpc_error);
 use ATProto::PDS::Auth::Password qw(hash_password);
 use ATProto::PDS::Constants qw(EVENT_TYPE_IDENTITY);
 use ATProto::PDS::Crypto::Secp256k1 qw(signing_did_to_public_key_multibase);
@@ -153,7 +153,7 @@ sub register_admin_handlers ($registry, $app) {
       did_doc => account_did_doc($c->app->settings, { %$account, handle => $handle }),
     );
     _append_identity_event($c, $updated);
-    return {};
+    return render_empty_success($c);
   });
 
   $registry->register('com.atproto.admin.updateAccountPassword', sub ($c, $endpoint) {
@@ -182,7 +182,7 @@ sub register_admin_handlers ($registry, $app) {
     xrpc_error(400, 'InvalidRequest', 'Account does not exist: ' . ($body->{account} // q()))
       unless $account;
     update_account_email($c, $account->{did}, $body->{email});
-    return {};
+    return render_empty_success($c);
   });
 
   $registry->register('com.atproto.admin.deleteAccount', sub ($c, $endpoint) {
@@ -221,7 +221,7 @@ sub register_admin_handlers ($registry, $app) {
       codes    => $body->{codes},
       accounts => $body->{accounts},
     );
-    return {};
+    return render_empty_success($c);
   });
 
   $registry->register('com.atproto.admin.getInviteCodes', sub ($c, $endpoint) {
@@ -282,7 +282,7 @@ sub register_admin_handlers ($registry, $app) {
       did_doc              => account_did_doc($c->app->settings, $updated),
     );
     _append_identity_event($c, $stored);
-    return {};
+    return render_empty_success($c);
   });
 }
 
@@ -405,8 +405,7 @@ sub _set_account_invites ($c, $identifier, $disabled, $note) {
     invites_disabled => $disabled ? 1 : 0,
     invite_note      => undef,
   );
-  $c->render(data => q());
-  return;
+  return render_empty_success($c);
 }
 
 sub _append_account_event ($c, $did, $account, $payload) {
