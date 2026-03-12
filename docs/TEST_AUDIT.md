@@ -143,7 +143,7 @@ Current suite counts by bucket:
 | `t/email-confirmation.t` | audited local regression | intentionally testing-friendly email flow plus strict missing-email and invalid-email validation semantics |
 | `t/email-update-helper.t` | audited local regression | shared email-update helper normalization, token revocation, and duplicate-email error semantics |
 | `t/event-stream.t` | audited local regression | wire-format, malformed frame, and event decoding coverage |
-| `t/extended-api.t` | audited local regression | focused `applyWrites` happy-path and missing-delete behavior after the self-service invite, identity/email, label, and blob/sync happy paths were split out |
+| `t/applywrites-surfaces.t` | audited local regression | focused `applyWrites` happy-path and missing-delete behavior after the self-service invite, identity/email, label, and blob/sync happy paths were split out |
 | `t/external-handle-update.t` | audited local regression | external-handle update semantics, including DID-resolution checks and empty-body success for external handle adoption |
 | `t/external-surface.t` | audited local regression | focused external-surface coverage for repo/blob export and missing-blob behavior after splitting discovery, label RPC, and account-status checks into dedicated suites |
 | `t/firehose.t` | audited local regression | repo subscription lifecycle, cursor, and CAR behavior |
@@ -185,7 +185,7 @@ Current suite counts by bucket:
 
 The broadest suites are green and audited, but a small number still mix several categories of behavior inside the same file:
 
-- `t/extended-api.t`
+- `t/applywrites-surfaces.t`
   Carries real conformance value for `applyWrites`, but it is now much narrower and mostly acts as a focused repo-write regression suite.
 - `t/external-surface.t`
   Carries strong external-surface coverage for repo/blob export and missing-blob listing. It is cleaner after moving discovery, label-RPC, and account-status checks into dedicated suites, but still remains broader than a single-endpoint conformance file.
@@ -211,7 +211,7 @@ If the goal becomes "audit all tests" in the strongest possible sense, the next 
 4. decide whether to tighten admin auth to reference semantics or document the bearer shortcut as a permanent extension
 5. keep local testing-only toggles, like the email-confirmation bypass, pinned in focused suites instead of letting broad mixed suites depend on them implicitly
 6. keep narrowing the local `ServiceProxy` surface until every locally answered `app.bsky.*` field is either authoritative or explicitly documented as a local-only extension
-7. keep documenting broad suites like `t/extended-api.t` and `t/external-surface.t` as mixed conformance-plus-product coverage rather than over-claiming that every assertion is a pure reference check
+7. keep documenting broad suites like `t/applywrites-surfaces.t` and `t/external-surface.t` as mixed conformance-plus-product coverage rather than over-claiming that every assertion is a pure reference check
 
 ## Practical Reading Of The Current Status
 
