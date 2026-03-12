@@ -560,6 +560,20 @@ for my $name (sort keys %server) {
   check(($res->json->{did} // q()) eq $server{$name}{did}, "$name resolveHandle returns the created DID");
 }
 
+for my $name (sort keys %server) {
+  my $res = get_form(
+    $server{$name}{origin},
+    'com.atproto.identity.resolveHandle',
+    { handle => 'missing.test' },
+  );
+  $server{$name}{resolve_handle_missing} = normalize_xrpc_error($res);
+}
+
+check(
+  same_hash($server{reference}{resolve_handle_missing}, $server{perlsky}{resolve_handle_missing}),
+  'resolveHandle missing-handle semantics match the official reference PDS',
+);
+
 note('Comparing subscribeRepos bootstrap backfill');
 for my $name (sort keys %server) {
   my $frames = frames_until_quiet("$server{$name}{origin}/xrpc/com.atproto.sync.subscribeRepos?cursor=0");

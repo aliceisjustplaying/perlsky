@@ -129,8 +129,9 @@ my $t = Test::Mojo->new($app);
     ->json_is('/did' => $remote_did);
 
   $t->get_ok('/xrpc/com.atproto.identity.resolveHandle?handle=missing.example.test')
-    ->status_is(404)
-    ->json_is('/error' => 'HandleNotFound');
+    ->status_is(400)
+    ->json_is('/error' => 'InvalidRequest')
+    ->json_is('/message' => 'Unable to resolve handle');
 }
 
 $t->get_ok("/xrpc/com.atproto.identity.resolveDid?did=$remote_did_web")

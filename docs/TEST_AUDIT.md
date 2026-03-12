@@ -51,6 +51,7 @@ When the official runtime and upstream comments disagree, the runtime behavior w
 - Account email handling needs consistent normalization on write, lookup, session creation, and confirmation checks; treating email case inconsistently leaves both tests and user-facing auth behavior brittle.
 - `app.bsky.actor.putPreferences` and `app.bsky.notification.putPreferencesV2` now have explicit shape validation plus focused regression coverage, turning an earlier hardening concern into a pinned contract.
 - `com.atproto.identity.resolveHandle` should reject malformed handles with `400 InvalidHandle`, not quietly treat them as misses.
+- `com.atproto.identity.resolveHandle` should treat well-formed but unresolved handles as `400 InvalidRequest` with `Unable to resolve handle`, matching the official runtime instead of returning a local `404 HandleNotFound`.
 - Remote `did:web` DID docs, conservative `resolveIdentity` handle validation, and external handle adoption all need explicit coverage because small resolver-policy drifts turn into visible interop bugs quickly.
 - Remote `did:plc` DID docs should resolve through the PLC directory defaults even when `plc_url` is not explicitly configured; gating that path on local config silently breaks federated identity lookups.
 - `com.atproto.repo.getRecord` must honor `cid` when present, and `putRecord` / `deleteRecord` must actually enforce `swapRecord`; those negative edges are now covered directly.

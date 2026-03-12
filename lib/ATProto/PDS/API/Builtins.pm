@@ -74,9 +74,9 @@ sub register_builtin_handlers ($registry, $app) {
     }
 
     die {
-      status  => 404,
-      error   => 'HandleNotFound',
-      message => "No DID found for handle $handle",
+      status  => 400,
+      error   => 'InvalidRequest',
+      message => 'Unable to resolve handle',
     };
   });
 
