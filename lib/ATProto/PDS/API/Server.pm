@@ -11,7 +11,7 @@ use JSON::PP ();
 use Mojo::URL;
 use Mojo::UserAgent;
 
-use ATProto::PDS::API::Helpers qw(find_account invite_code_view issue_account_action_token require_admin update_account_email verify_account_password verify_login_password);
+use ATProto::PDS::API::Helpers qw(find_account invite_code_view issue_account_action_token require_admin supported_email update_account_email verify_account_password verify_login_password);
 use ATProto::PDS::API::Util qw(iso8601 xrpc_error);
 use ATProto::PDS::Auth::OAuth qw(
   oauth_scope_allows
@@ -79,7 +79,7 @@ sub register_server_handlers ($registry, $app) {
       if length($password) > $NEW_PASSWORD_MAX_LENGTH;
     my $email = undef;
     if (defined($body->{email}) && length($body->{email})) {
-      $email = _supported_email($body->{email});
+      $email = supported_email($body->{email});
       xrpc_error(400, 'InvalidRequest', 'This email address is not supported, please use a different email.')
         unless defined $email;
       xrpc_error(400, 'InvalidRequest', "Email already taken: $body->{email}")
@@ -229,13 +229,13 @@ sub register_server_handlers ($registry, $app) {
     xrpc_error(401, 'AuthenticationRequired', 'Password too long. Consider resetting your password.')
       if length($body->{password} // q()) > $OLD_PASSWORD_MAX_LENGTH;
     my $account = find_account($c, $body->{identifier} // q());
-    xrpc_error(401, 'AuthRequired', 'Invalid identifier or password') unless $account;
-    xrpc_error(401, 'AuthRequired', 'Invalid identifier or password')
+    xrpc_error(401, 'AuthenticationRequired', 'Invalid identifier or password') unless $account;
+    xrpc_error(401, 'AuthenticationRequired', 'Invalid identifier or password')
       if defined $account->{deleted_at};
     my $authn = verify_login_password($c, $account, $body->{password} // q());
-    xrpc_error(401, 'AuthRequired', 'Invalid identifier or password') unless $authn;
+    xrpc_error(401, 'AuthenticationRequired', 'Invalid identifier or password') unless $authn;
     if (($authn->{kind} // q()) eq 'app_password' && is_repo_takedown($c, $account->{did})) {
-      xrpc_error(401, 'AuthRequired', 'Invalid identifier or password');
+      xrpc_error(401, 'AuthenticationRequired', 'Invalid identifier or password');
     }
     assert_login_allowed(
       $c,
@@ -578,7 +578,7 @@ sub register_server_handlers ($registry, $app) {
       disallow_oauth => 1,
     );
     my $body = $c->req->json || {};
-    my $email = _supported_email($body->{email});
+    my $email = supported_email($body->{email});
     xrpc_error(400, 'InvalidRequest', 'This email address is not supported, please use a different email.')
       unless defined $email;
     if (defined $account->{email_confirmed_at}) {
@@ -1184,14 +1184,6 @@ sub _initial_email_confirmed_at ($c, $email) {
 sub _normalize_email ($email) {
   return undef unless defined $email;
   return lc $email;
-}
-
-sub _supported_email ($email) {
-  my $normalized = _normalize_email($email);
-  return undef unless defined($normalized) && length($normalized);
-  return undef if $normalized =~ /\s/;
-  return undef unless $normalized =~ /\A[^\s\@]+\@[A-Za-z0-9](?:[A-Za-z0-9\-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9\-]{0,61}[A-Za-z0-9])?)+\z/;
-  return $normalized;
 }
 
 sub _require_action_token ($c, %args) {

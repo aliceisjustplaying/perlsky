@@ -100,7 +100,7 @@ $t->post_ok('/xrpc/com.atproto.server.createSession' => json => {
   identifier => 'alice.example.test',
   password   => 'hunter22',
 })->status_is(401)
-  ->json_is('/error' => 'AuthRequired');
+  ->json_is('/error' => 'AuthenticationRequired');
 
 $t->post_ok('/xrpc/com.atproto.server.deleteAccount' => json => {
   did      => $did,

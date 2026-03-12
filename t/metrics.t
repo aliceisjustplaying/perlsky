@@ -99,7 +99,7 @@ $t->post_ok('/xrpc/com.atproto.server.createSession' => json => {
   identifier => 'alice.test',
   password   => 'wrong-password',
 })->status_is(401)
-  ->json_is('/error' => 'AuthRequired');
+  ->json_is('/error' => 'AuthenticationRequired');
 
 $t->get_ok('/xrpc/example.unsupported.method')
   ->status_is(404)
@@ -139,7 +139,7 @@ like(
 );
 like(
   $metrics,
-  qr/perlsky_xrpc_errors_total\{endpoint_type="procedure",error="AuthRequired",method="POST",nsid="com\.atproto\.server\.createSession",status="401"\} 1\b/,
+  qr/perlsky_xrpc_errors_total\{endpoint_type="procedure",error="AuthenticationRequired",method="POST",nsid="com\.atproto\.server\.createSession",status="401"\} 1\b/,
   'handled XRPC errors are exported with their error code',
 );
 like(

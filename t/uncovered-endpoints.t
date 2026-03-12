@@ -274,7 +274,7 @@ $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.admin.getAccountInfo')->query(
   Authorization => $admin_auth,
 })->status_is(200)
   ->json_is('/invitesDisabled' => JSON::PP::true)
-  ->json_is('/inviteNote' => 'paused for audit');
+  ->json_hasnt('/inviteNote');
 
 $t->post_ok('/xrpc/com.atproto.server.createInviteCode' => {
   Authorization => "Bearer $access",
@@ -358,8 +358,23 @@ $t->post_ok('/xrpc/com.atproto.admin.sendEmail' => {
   recipientDid => 'did:web:example.test:users:missing',
   subject      => 'Hello',
   content      => 'Testing',
-})->status_is(404)
-  ->json_is('/error' => 'AccountNotFound');
+})->status_is(400)
+  ->json_is('/error' => 'InvalidRequest')
+  ->json_is('/message' => 'Recipient not found');
+
+$t->post_ok('/xrpc/com.atproto.admin.updateAccountPassword' => {
+  Authorization => $admin_auth,
+} => json => {
+  did      => $did,
+  password => 'short',
+})->status_is(200)
+  ->json_is({});
+
+$t->post_ok('/xrpc/com.atproto.server.createSession' => json => {
+  identifier => 'alice.external.test',
+  password   => 'short',
+})->status_is(200)
+  ->json_has('/accessJwt');
 
 $t->post_ok('/xrpc/com.atproto.admin.updateAccountPassword' => {
   Authorization => $admin_auth,
@@ -430,12 +445,12 @@ $t->post_ok('/xrpc/com.atproto.server.createSession' => json => {
   identifier => 'alice.example.test',
   password   => $app_password,
 })->status_is(401)
-  ->json_is('/error' => 'AuthRequired');
+  ->json_is('/error' => 'AuthenticationRequired');
 
 $t->post_ok('/xrpc/com.atproto.server.createSession' => json => {
   identifier => 'alice.example.test',
   password   => 'new-hunter22',
 })->status_is(401)
-  ->json_is('/error' => 'AuthRequired');
+  ->json_is('/error' => 'AuthenticationRequired');
 
 done_testing;

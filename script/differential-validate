@@ -572,6 +572,7 @@ for my $name (sort keys %server) {
   my $json = $res->json || {};
   $server{$name}{secondary_did}    = $json->{did};
   $server{$name}{secondary_handle} = $json->{handle};
+  $server{$name}{secondary_email}  = $name eq 'reference' ? 'bob-ref@test.com' : 'bob-perl@test.com';
 }
 
 note('Comparing account password boundary semantics');
@@ -643,7 +644,6 @@ for my $name (sort keys %server) {
     },
     admin_auth_header($server{$name}{admin_password}),
   );
-
   $server{$name}{handle_conflicts} = {
     identity_update_dup => normalize_xrpc_error($duplicate_identity_handle),
     admin_update_dup    => normalize_xrpc_error($duplicate_admin_handle),
@@ -2212,6 +2212,130 @@ check(
   same_hash($server{reference}{service_auth_takedown}, $server{perlsky}{service_auth_takedown}),
   'getServiceAuth agrees on post-takedown behavior',
 );
+
+note('Comparing admin account-management semantics');
+for my $name (sort keys %server) {
+  my $info = get_form(
+    $server{$name}{origin},
+    'com.atproto.admin.getAccountInfos',
+    {
+      dids => [ $server{$name}{did}, 'did:web:missing.test' ],
+    },
+    admin_auth_header($server{$name}{admin_password}),
+  );
+  my $send_missing = post_json(
+    $server{$name}{origin},
+    'com.atproto.admin.sendEmail',
+    {
+      recipientDid => 'did:web:missing.test',
+      content      => 'hello',
+    },
+    admin_auth_header($server{$name}{admin_password}),
+  );
+  my $disable_admin = post_json(
+    $server{$name}{origin},
+    'com.atproto.admin.disableInviteCodes',
+    { accounts => ['admin'] },
+    admin_auth_header($server{$name}{admin_password}),
+  );
+  my $disable_invites = post_json(
+    $server{$name}{origin},
+    'com.atproto.admin.disableAccountInvites',
+    {
+      account => $server{$name}{did},
+      note    => 'diff disable',
+    },
+    admin_auth_header($server{$name}{admin_password}),
+  );
+  my $disabled_info = get_form(
+    $server{$name}{origin},
+    'com.atproto.admin.getAccountInfo',
+    { did => $server{$name}{did} },
+    admin_auth_header($server{$name}{admin_password}),
+  );
+  my $enable_invites = post_json(
+    $server{$name}{origin},
+    'com.atproto.admin.enableAccountInvites',
+    {
+      account => $server{$name}{did},
+      note    => 'diff enable',
+    },
+    admin_auth_header($server{$name}{admin_password}),
+  );
+  my $enabled_info = get_form(
+    $server{$name}{origin},
+    'com.atproto.admin.getAccountInfo',
+    { did => $server{$name}{did} },
+    admin_auth_header($server{$name}{admin_password}),
+  );
+  my $short_password = post_json(
+    $server{$name}{origin},
+    'com.atproto.admin.updateAccountPassword',
+    {
+      did      => $server{$name}{secondary_did},
+      password => 'short',
+    },
+    admin_auth_header($server{$name}{admin_password}),
+  );
+  my $reset_password = post_json(
+    $server{$name}{origin},
+    'com.atproto.admin.updateAccountPassword',
+    {
+      did      => $server{$name}{secondary_did},
+      password => 'newhunter22',
+    },
+    admin_auth_header($server{$name}{admin_password}),
+  );
+  my $old_secondary_login = post_json($server{$name}{origin}, 'com.atproto.server.createSession', {
+    identifier => $server{$name}{secondary_handle},
+    password   => 'hunter22',
+  });
+  my $new_secondary_login = post_json($server{$name}{origin}, 'com.atproto.server.createSession', {
+    identifier => $server{$name}{secondary_handle},
+    password   => 'newhunter22',
+  });
+
+  my $info_json = $info->json || {};
+  my @infos = @{ $info_json->{infos} || [] };
+  my $disabled_json = $disabled_info->json || {};
+  my $enabled_json  = $enabled_info->json || {};
+
+  $server{$name}{admin_account_management} = {
+    get_infos => {
+      status           => $info->code // 0,
+      returned_count   => scalar @infos,
+      first_is_primary => (@infos && (($infos[0]{did} // q()) eq $server{$name}{did})) ? 1 : 0,
+    },
+    send_missing        => normalize_xrpc_error($send_missing),
+    disable_admin_codes => normalize_xrpc_error($disable_admin),
+    disable_account_invites => {
+      status           => $disable_invites->code // 0,
+      disabled_status  => $disabled_info->code // 0,
+      invites_disabled => $disabled_json->{invitesDisabled} ? 1 : 0,
+      invite_note      => $disabled_json->{inviteNote},
+    },
+    enable_account_invites => {
+      status           => $enable_invites->code // 0,
+      enabled_status   => $enabled_info->code // 0,
+      invites_disabled => $enabled_json->{invitesDisabled} ? 1 : 0,
+      invite_note      => $enabled_json->{inviteNote},
+    },
+    update_password_short => normalize_xrpc_error($short_password),
+    update_password_reset => {
+      status     => $reset_password->code // 0,
+      old_login  => normalize_xrpc_error($old_secondary_login),
+      new_login  => normalize_xrpc_error($new_secondary_login),
+    },
+  };
+}
+
+if (!same_hash($server{reference}{admin_account_management}, $server{perlsky}{admin_account_management})) {
+  note('reference admin account management: ' . encode_json($server{reference}{admin_account_management}));
+  note('perlsky admin account management: ' . encode_json($server{perlsky}{admin_account_management}));
+  fail_check('admin account-management semantics match the official reference PDS');
+} else {
+  pass('admin account-management semantics match the official reference PDS');
+}
 
 if ($failed) {
   print "\nReference PDS log:\n";

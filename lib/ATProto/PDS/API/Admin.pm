@@ -17,6 +17,7 @@ use ATProto::PDS::Identity qw(account_did_doc normalize_handle resolve_handle_to
 use ATProto::PDS::Moderation qw(current_record_subject current_subject_status parse_at_uri);
 
 our @EXPORT_OK = qw(register_admin_handlers);
+my $NEW_PASSWORD_MAX_LENGTH = 256;
 
 sub register_admin_handlers ($registry, $app) {
   $registry->register('com.atproto.admin.getAccountInfo', sub ($c, $endpoint) {
@@ -110,7 +111,7 @@ sub register_admin_handlers ($registry, $app) {
     require_admin($c);
     my $body = $c->req->json || {};
     my $account = $c->store->get_account_by_did($body->{recipientDid} // q());
-    xrpc_error(404, 'AccountNotFound', 'Recipient was not found') unless $account;
+    xrpc_error(400, 'InvalidRequest', 'Recipient not found') unless $account;
     xrpc_error(400, 'InvalidRequest', 'account does not have an email address')
       unless defined($account->{email}) && length($account->{email});
     my $subject = defined($body->{subject}) && length($body->{subject})
@@ -159,8 +160,8 @@ sub register_admin_handlers ($registry, $app) {
   $registry->register('com.atproto.admin.updateAccountPassword', sub ($c, $endpoint) {
     require_admin($c);
     my $body = $c->req->json || {};
-    xrpc_error(400, 'InvalidPassword', 'Passwords must be at least 8 characters long')
-      if length($body->{password} // q()) < 8;
+    xrpc_error(400, 'InvalidRequest', 'Invalid password length.')
+      if length($body->{password} // q()) > $NEW_PASSWORD_MAX_LENGTH;
     my $account = $c->store->get_account_by_did($body->{did} // q());
     xrpc_error(404, 'AccountNotFound', 'Account was not found') unless $account;
     my $password_record = hash_password($body->{password});
@@ -383,7 +384,7 @@ sub _set_account_invites ($c, $identifier, $disabled, $note) {
   $c->store->update_account(
     $account->{did},
     invites_disabled => $disabled ? 1 : 0,
-    invite_note      => $note,
+    invite_note      => undef,
   );
   return {};
 }

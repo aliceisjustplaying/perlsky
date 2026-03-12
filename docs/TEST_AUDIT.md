@@ -1,6 +1,6 @@
 # Test Audit Status
 
-As of 2026-03-12, the focused test-correctness and reference-audit pass is complete on rewritten history through the current post-`6f181ab` conformance sweep.
+As of 2026-03-12, the focused test-correctness and reference-audit pass is complete on rewritten history through the current overnight conformance sweep.
 
 That does not mean every test has been manually revalidated against every other PDS implementation line by line. It means:
 
@@ -13,7 +13,7 @@ That does not mean every test has been manually revalidated against every other 
 The current baseline for saying "the audited suite is green" is:
 
 - `prove -lr t`
-  - latest full green result in the realigned Meridian worktree: `Files=48, Tests=2943`
+  - latest full green result in the realigned Meridian worktree: `Files=48, Tests=2950`
 - `prove -lv t/server-auth.t`
 - `perl -c script/differential-validate`
 - `PERLSKY_RUN_REFERENCE_DIFF=1 prove -lv t/reference-differential.t`
@@ -54,6 +54,10 @@ When the official runtime and upstream comments disagree, the runtime behavior w
 - `com.atproto.server.createAccount` must not turn duplicate-email requests into a `500`; it now follows the official client-visible `400 InvalidRequest` / `Email already taken: ...` shape instead.
 - Local handle-conflict flows now use the reference runtime’s client-visible `400 InvalidRequest` / `Handle already taken: ...` shape on `createAccount`, `com.atproto.identity.updateHandle`, and `com.atproto.admin.updateAccountHandle`, instead of the older local `HandleNotAvailable` variant.
 - The executable differential harness now proves that handle-conflict shape directly for both user and admin handle-update flows, not just local regression tests.
+- `com.atproto.server.createSession` invalid-credential failures now use the reference runtime’s `401 AuthenticationRequired` shape instead of the older local `AuthRequired` variant.
+- `com.atproto.admin.sendEmail` now follows the reference runtime’s `400 InvalidRequest` / `Recipient not found` shape for a missing recipient instead of returning a local `404 AccountNotFound`.
+- `com.atproto.admin.updateAccountPassword` follows the reference runtime’s looser admin policy: it rejects overlong passwords with `400 InvalidRequest` / `Invalid password length.`, but does not impose the normal user-facing minimum-length gate.
+- `com.atproto.admin.disableAccountInvites` / `enableAccountInvites` now ignore the local `note` field so the visible account state matches the official runtime instead of carrying an extra stored `inviteNote`.
 - `app.bsky.actor.putPreferences` and `app.bsky.notification.putPreferencesV2` now have explicit shape validation plus focused regression coverage, turning an earlier hardening concern into a pinned contract.
 - `com.atproto.identity.resolveHandle` should reject malformed handles with `400 InvalidRequest`, not quietly treat them as misses or return a local `InvalidHandle` variant.
 - `com.atproto.identity.resolveHandle` should treat well-formed but unresolved handles as `400 InvalidRequest` with `Unable to resolve handle`, matching the official runtime instead of returning a local `404 HandleNotFound`.
@@ -78,6 +82,7 @@ These are not currently treated as audit failures:
 
 - Email confirmation remains testing-friendly only behind the explicit `testing_allow_unauthenticated_email_confirm` / `testing_auto_confirm_email` toggles because email sending is not configured in the current environment.
 - Admin auth still accepts a local bearer-token shortcut, while the official reference PDS expects Basic auth with `admin` credentials.
+- `com.atproto.admin.searchAccounts` remains locally implemented and regression-tested, but the current official runtime does not wire that endpoint at all, so it stays documented as a local extension instead of executable-reference-differenced.
 - Self-service invite creation exists only behind `self_service_invite_codes`; default behavior is admin-only invite minting.
 - Label RPC parity is covered locally, but there is no like-for-like official local-labeler surface to diff against in the same way as core PDS endpoints.
 

@@ -24,6 +24,7 @@ our @EXPORT_OK = qw(
   issue_account_action_token
   invite_code_view
   require_admin
+  supported_email
   subject_key
   update_account_email
   verify_account_password
@@ -98,6 +99,15 @@ sub issue_account_action_token ($c, $account, %args) {
     );
   }
   return $token;
+}
+
+sub supported_email ($email) {
+  return undef unless defined $email;
+  my $normalized = lc $email;
+  return undef unless length $normalized;
+  return undef if $normalized =~ /\s/;
+  return undef unless $normalized =~ /\A[^\s\@]+\@[A-Za-z0-9](?:[A-Za-z0-9\-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9\-]{0,61}[A-Za-z0-9])?)+\z/;
+  return $normalized;
 }
 
 sub update_account_email ($c, $did, $email) {
