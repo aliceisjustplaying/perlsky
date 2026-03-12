@@ -80,7 +80,7 @@ $t->post_ok('/xrpc/com.atproto.identity.updateHandle' => {
   } => json => {
     handle => 'alice.external',
   })->status_is(200)
-    ->json_is({});
+    ->content_is(q());
 
   $t->get_ok('/xrpc/com.atproto.identity.resolveHandle?handle=alice.external')
     ->status_is(200)

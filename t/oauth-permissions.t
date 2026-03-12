@@ -239,7 +239,7 @@ my $client_metadata = {
     'POST',
     $config->{base_url} . '/xrpc/com.atproto.identity.updateHandle',
   ) => json => { handle => 'alice-renamed' })->status_is(200)
-    ->json_is({});
+    ->content_is(q());
 
   $t->post_ok('/xrpc/com.atproto.identity.requestPlcOperationSignature' => _oauth_headers(
     $identity_handle->{access_token},
@@ -254,7 +254,7 @@ my $client_metadata = {
     'POST',
     $config->{base_url} . '/xrpc/com.atproto.identity.requestPlcOperationSignature',
   ) => json => {})->status_is(200)
-    ->json_is({});
+    ->content_is(q());
 
   my $plc_token = $app->store->latest_action_token(
     did     => $did,

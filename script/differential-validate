@@ -577,6 +577,7 @@ my %server = (
       confirm => 'confirm_email',
       update  => 'update_email',
       delete  => 'delete_account',
+      plc     => 'plc_operation',
     },
   },
   perlsky => {
@@ -591,6 +592,7 @@ my %server = (
       confirm => 'email_confirm',
       update  => 'email_update',
       delete  => 'account_delete',
+      plc     => 'plc_operation',
     },
   },
 );
@@ -1129,7 +1131,17 @@ if ($diff_account_did_method eq 'did:plc') {
       auth_header($server{$name}{access}),
     );
     check($res->is_success, "$name requestPlcOperationSignature succeeds");
+    next unless $res->is_success;
+    $server{$name}{plc_signature_request} = {
+      status     => $res->code // 0,
+      empty_body => (($res->body // q()) eq q()) ? 1 : 0,
+    };
   }
+
+  check(
+    same_hash($server{reference}{plc_signature_request}, $server{perlsky}{plc_signature_request}),
+    'requestPlcOperationSignature matches the official reference PDS empty-body semantics',
+  );
 
   note('Comparing PLC handle updates');
   for my $name (sort keys %server) {
@@ -1142,6 +1154,10 @@ if ($diff_account_did_method eq 'did:plc') {
     );
     check($res->is_success, "$name updateHandle succeeds for PLC accounts");
     next unless $res->is_success;
+    $server{$name}{plc_handle_update} = {
+      status     => $res->code // 0,
+      empty_body => (($res->body // q()) eq q()) ? 1 : 0,
+    };
     $server{$name}{renamed_handle} = $new_handle;
 
     my $handle_res = get_form(
@@ -1153,6 +1169,11 @@ if ($diff_account_did_method eq 'did:plc') {
     check(($handle_res->json->{did} // q()) eq $server{$name}{did}, "$name renamed PLC handle still resolves to the same DID")
       if $handle_res->is_success;
   }
+
+  check(
+    same_hash($server{reference}{plc_handle_update}, $server{perlsky}{plc_handle_update}),
+    'updateHandle matches the official reference PDS empty-body semantics',
+  );
 
   note('Comparing PLC token requirements');
   for my $name (sort keys %server) {
@@ -1169,6 +1190,41 @@ if ($diff_account_did_method eq 'did:plc') {
   check(
     same_hash($server{reference}{missing_plc_token_error}, $server{perlsky}{missing_plc_token_error}),
     'signPlcOperation matches the official reference PDS token requirement semantics',
+  );
+
+  note('Comparing successful PLC submit semantics');
+  for my $name (sort keys %server) {
+    my $plc_token = latest_email_token_record($server{$name}, 'plc', $server{$name}{did});
+    check($plc_token && length($plc_token->{token} // q()), "$name requestPlcOperationSignature issues a PLC token");
+    next unless $plc_token && length($plc_token->{token} // q());
+
+    my $sign_res = post_json(
+      $server{$name}{origin},
+      'com.atproto.identity.signPlcOperation',
+      { token => $plc_token->{token} },
+      auth_header($server{$name}{access}),
+    );
+    check($sign_res->is_success, "$name signPlcOperation succeeds with the issued PLC token");
+    next unless $sign_res->is_success;
+
+    my $submit_res = post_json(
+      $server{$name}{origin},
+      'com.atproto.identity.submitPlcOperation',
+      { operation => (($sign_res->json || {})->{operation} || {}) },
+      auth_header($server{$name}{access}),
+    );
+    check($submit_res->is_success, "$name submitPlcOperation succeeds with a signed PLC op");
+    next unless $submit_res->is_success;
+
+    $server{$name}{plc_submit_success} = {
+      status     => $submit_res->code // 0,
+      empty_body => (($submit_res->body // q()) eq q()) ? 1 : 0,
+    };
+  }
+
+  check(
+    same_hash($server{reference}{plc_submit_success}, $server{perlsky}{plc_submit_success}),
+    'submitPlcOperation matches the official reference PDS empty-body success semantics',
   );
 
   note('Comparing PLC submitPlcOperation validation');

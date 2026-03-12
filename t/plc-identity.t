@@ -168,7 +168,8 @@ $t->post_ok('/xrpc/com.atproto.identity.updateHandle' => {
   Authorization => "Bearer $access",
 } => json => {
   handle => 'alice-renamed.test',
-})->status_is(200);
+})->status_is(200)
+  ->content_is(q());
 
 $t->post_ok('/xrpc/com.atproto.identity.updateHandle' => {
   Authorization => "Bearer $app_password_access",
@@ -191,7 +192,8 @@ $t->get_ok('/xrpc/com.atproto.identity.resolveHandle' => form => {
 
 $t->post_ok('/xrpc/com.atproto.identity.requestPlcOperationSignature' => {
   Authorization => "Bearer $access",
-})->status_is(200);
+})->status_is(200)
+  ->content_is(q());
 
 my $token = $app->store->latest_action_token(
   did     => $did,
@@ -266,7 +268,8 @@ $t->post_ok('/xrpc/com.atproto.identity.submitPlcOperation' => {
   Authorization => "Bearer $access",
 } => json => {
   operation => $signed,
-})->status_is(200);
+})->status_is(200)
+  ->content_is(q());
 
 $t->get_ok('/xrpc/com.atproto.identity.resolveHandle' => form => {
   handle => 'alice-renamed.test',

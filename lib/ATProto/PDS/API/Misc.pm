@@ -81,7 +81,7 @@ sub register_misc_handlers ($registry, $app) {
       subject => 'PLC update requested',
       content => sub ($token) { "Use token $token->{token} to authorize your PLC operation." },
     );
-    return {};
+    return _render_empty_success($c);
   });
 
   $registry->register('com.atproto.identity.signPlcOperation', sub ($c, $endpoint) {
@@ -154,7 +154,7 @@ sub register_misc_handlers ($registry, $app) {
     my $did_doc = refresh_plc_did_doc($c->app->settings, $account->{did});
     $account = $c->store->update_account($account->{did}, did_doc => $did_doc);
     _append_identity_event($c, $account);
-    return {};
+    return _render_empty_success($c);
   });
 
   $registry->register('com.atproto.identity.updateHandle', sub ($c, $endpoint) {
@@ -192,7 +192,7 @@ sub register_misc_handlers ($registry, $app) {
     }
     my $updated = $c->store->update_account($account->{did}, %changes);
     _append_identity_event($c, $updated);
-    return {};
+    return _render_empty_success($c);
   });
 
   $registry->register('com.atproto.lexicon.resolveLexicon', sub ($c, $endpoint) {
@@ -362,6 +362,11 @@ sub _assert_full_non_oauth_access ($claims) {
   xrpc_error(400, 'InvalidToken', 'Bad token scope')
     unless (($claims->{scope} // TOKEN_AUD_ACCESS) eq TOKEN_AUD_ACCESS);
   return 1;
+}
+
+sub _render_empty_success ($c) {
+  $c->render(data => q());
+  return;
 }
 
 sub _valid_plc_operation ($operation) {
