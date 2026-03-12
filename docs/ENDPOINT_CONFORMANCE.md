@@ -14,7 +14,7 @@ As of 2026-03-12, `perlsky` has three broad classes of external surface:
 The current differential harness directly compares:
 
 - core account/session flows
-  `describeServer`, `createAccount`, `createSession`, `getSession`, `refreshSession`, `deleteSession`, app-password lifecycle, password-boundary behavior, and email/account-delete flows
+  `describeServer`, `createAccount`, `createSession`, `getSession`, `refreshSession`, `deleteSession`, `getAccountInviteCodes`, app-password lifecycle, password-boundary behavior, and email/account-delete flows
 - identity flows
   `resolveHandle`, `resolveDid`, `resolveIdentity`, PLC credential/signature/update flows, and handle-conflict semantics
 - repo and sync flows

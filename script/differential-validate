@@ -2750,6 +2750,7 @@ for my $name (sort keys %server) {
   check($invite_first->is_success, "$name first invite-code account creation succeeds");
   next unless $invite_first->is_success;
   my $invite_first_did = ($invite_first->json || {})->{did};
+  my $invite_first_access = ($invite_first->json || {})->{accessJwt};
 
   sleep 1.1;
 
@@ -2762,6 +2763,27 @@ for my $name (sort keys %server) {
   check($invite_second->is_success, "$name second invite-code account creation succeeds");
   next unless $invite_second->is_success;
   my $invite_second_did = ($invite_second->json || {})->{did};
+
+  my $account_batch = post_json(
+    $server{$name}{origin},
+    'com.atproto.server.createInviteCodes',
+    {
+      codeCount   => 2,
+      useCount    => 1,
+      forAccounts => [$invite_first_did],
+    },
+    admin_auth_header($server{$name}{admin_password}),
+  );
+  check($account_batch->is_success, "$name createInviteCodes succeeds for account-targeted batch");
+  my @account_codes = @{ (($account_batch->json || {})->{codes} || [])->[0]{codes} || [] };
+
+  my $account_invites = get_json(
+    $server{$name}{origin},
+    'com.atproto.server.getAccountInviteCodes',
+    undef,
+    auth_header($invite_first_access),
+  );
+  check($account_invites->is_success, "$name getAccountInviteCodes succeeds");
 
   my $recent = get_form(
     $server{$name}{origin},
@@ -2789,10 +2811,20 @@ for my $name (sort keys %server) {
   my %code_label = (
     ($used_code   // q()) => 'used',
     ($unused_code // q()) => 'unused',
+    ($account_codes[0] // q()) => 'account_first',
+    ($account_codes[1] // q()) => 'account_second',
   );
   my %did_label = (
     ($invite_first_did  // q()) => 'first',
     ($invite_second_did // q()) => 'second',
+  );
+  my %for_account_label = (
+    admin                => 'admin',
+    ($invite_first_did // q()) => 'first_account',
+  );
+  my %account_code_label = (
+    ($account_codes[0] // q()) => 'first',
+    ($account_codes[1] // q()) => 'second',
   );
   my $normalize_codes = sub ($rows) {
     return [
@@ -2801,10 +2833,27 @@ for my $name (sort keys %server) {
           label      => $code_label{$_->{code} // q()} // 'unknown',
           available  => $_->{available},
           disabled   => $_->{disabled} ? 1 : 0,
-          forAccount => $_->{forAccount},
+          forAccount => $for_account_label{$_->{forAccount} // q()} // 'unknown',
           createdBy  => $_->{createdBy},
           uses_count => scalar @{ $_->{uses} || [] },
           use_labels => [ map { $did_label{$_->{usedBy} // q()} // 'unknown' } @{ $_->{uses} || [] } ],
+        }
+      } @$rows
+    ];
+  };
+  my $normalize_account_codes = sub ($rows) {
+    return [ sort {
+        ($a->{label} cmp $b->{label})
+          || (($a->{forAccount} // q()) cmp ($b->{forAccount} // q()))
+          || (($a->{createdBy} // q()) cmp ($b->{createdBy} // q()))
+      } map {
+        +{
+          label      => $account_code_label{$_->{code} // q()} // 'unknown',
+          available  => $_->{available},
+          disabled   => $_->{disabled} ? 1 : 0,
+          forAccount => $for_account_label{$_->{forAccount} // q()} // 'unknown',
+          createdBy  => $_->{createdBy},
+          uses_count => scalar @{ $_->{uses} || [] },
         }
       } @$rows
     ];
@@ -2821,7 +2870,17 @@ for my $name (sort keys %server) {
     },
     usage => {
       cursor_present => defined(($usage->json || {})->{cursor}) ? 1 : 0,
-      codes          => $normalize_codes->(($usage->json || {})->{codes} || []),
+      codes          => [
+        sort {
+             ($b->{uses_count} <=> $a->{uses_count})
+          || ($a->{disabled} <=> $b->{disabled})
+          || (($a->{label} // q()) cmp ($b->{label} // q()))
+          || (($a->{forAccount} // q()) cmp ($b->{forAccount} // q()))
+        } @{ $normalize_codes->(($usage->json || {})->{codes} || []) }
+      ],
+    },
+    account => {
+      codes => $normalize_account_codes->(($account_invites->json || {})->{codes} || []),
     },
     bad_sort => normalize_xrpc_error($bad_sort),
   };
