@@ -334,6 +334,33 @@ $t->post_ok('/xrpc/app.bsky.notification.putPreferencesV2' => {
 })->status_is(400)
   ->json_is('/error' => 'InvalidRequest');
 
+$t->post_ok('/xrpc/app.bsky.notification.putPreferencesV2' => {
+  Authorization => "Bearer $access",
+} => json => {
+  like => {
+    unknown => JSON::PP::true,
+  },
+})->status_is(400)
+  ->json_is('/error' => 'InvalidRequest');
+
+$t->post_ok('/xrpc/app.bsky.notification.putPreferencesV2' => {
+  Authorization => "Bearer $access",
+} => json => {
+  like => {
+    include => ['follows'],
+  },
+})->status_is(400)
+  ->json_is('/error' => 'InvalidRequest');
+
+$t->post_ok('/xrpc/app.bsky.notification.putPreferencesV2' => {
+  Authorization => "Bearer $access",
+} => json => {
+  verified => {
+    push => 'false',
+  },
+})->status_is(400)
+  ->json_is('/error' => 'InvalidRequest');
+
 $t->get_ok('/xrpc/app.bsky.notification.getPreferences' => {
   Authorization => "Bearer $access",
 })->status_is(200)

@@ -69,6 +69,12 @@ my $context = OAuthIncludeTestContext->new;
           resource => 'identity',
           attr     => 'handle',
         },
+        {
+          type     => 'permission',
+          resource => 'account',
+          attr     => 'email',
+          action   => 'manage',
+        },
       ],
     } if $nsid eq 'app.bsky.authManageNotifications';
     return undef;
@@ -135,6 +141,15 @@ my $context = OAuthIncludeTestContext->new;
       attr => 'handle',
     ),
     'compiled scope ignores identity permissions from permission sets',
+  );
+  ok(
+    !oauth_scope_allows_permission(
+      $compiled,
+      type   => 'account',
+      attr   => 'email',
+      action => 'manage',
+    ),
+    'compiled scope ignores account permissions from permission sets',
   );
 }
 

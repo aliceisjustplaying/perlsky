@@ -130,6 +130,22 @@ my $created = $t->tx->res->json;
 my $did     = $created->{did};
 my $access  = $created->{accessJwt};
 
+$t->post_ok('/xrpc/com.atproto.server.createAppPassword' => {
+  Authorization => "Bearer $access",
+} => json => {
+  name => 'plc-helper',
+})->status_is(200)
+  ->json_like('/password' => qr/\w/);
+
+my $app_password = $t->tx->res->json->{password};
+
+$t->post_ok('/xrpc/com.atproto.server.createSession' => json => {
+  identifier => 'alice.test',
+  password   => $app_password,
+})->status_is(200);
+
+my $app_password_access = $t->tx->res->json->{accessJwt};
+
 like($did, qr/\Adid:plc:/, 'createAccount returns a did:plc identifier');
 is($created->{didDoc}{id}, $did, 'didDoc matches the created did');
 is($created->{didDoc}{alsoKnownAs}[0], 'at://alice.test', 'didDoc carries the handle');
@@ -155,6 +171,12 @@ $t->post_ok('/xrpc/com.atproto.identity.updateHandle' => {
   handle => 'alice-renamed.test',
 })->status_is(200);
 
+$t->post_ok('/xrpc/com.atproto.identity.requestPlcOperationSignature' => {
+  Authorization => "Bearer $app_password_access",
+})->status_is(400)
+  ->json_is('/error', 'InvalidToken')
+  ->json_is('/message', 'Bad token scope');
+
 $t->get_ok('/xrpc/com.atproto.identity.resolveHandle' => form => {
   handle => 'alice-renamed.test',
 })->status_is(200)
@@ -174,6 +196,14 @@ my $token = $app->store->latest_action_token(
   purpose => 'plc_operation',
 );
 ok($token && $token->{token}, 'requestPlcOperationSignature issues a PLC email token');
+
+$t->post_ok('/xrpc/com.atproto.identity.signPlcOperation' => {
+  Authorization => "Bearer $app_password_access",
+} => json => {
+  token => 'plc-token',
+})->status_is(400)
+  ->json_is('/error', 'InvalidToken')
+  ->json_is('/message', 'Bad token scope');
 
 $t->post_ok('/xrpc/com.atproto.identity.signPlcOperation' => {
   Authorization => "Bearer $access",
