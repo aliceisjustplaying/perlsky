@@ -38,7 +38,7 @@ These surfaces are covered locally but are not currently executable-differenced 
 - `com.atproto.sync.requestCrawl`
   The reference runtime still drives crawler notices internally, but the current official build does not expose the endpoint directly as a comparable external surface.
 - `com.atproto.sync.notifyOfUpdate`
-  Locally covered in `t/uncovered-endpoints.t`; not wired as a comparable public surface in the current official runtime.
+  Locally covered in `t/crawler-status-surfaces.t`; not wired as a comparable public surface in the current official runtime.
 - `com.atproto.admin.updateAccountSigningKey`
   Locally covered in `t/admin-account-surfaces.t` and aligned to lexicon-void response semantics; no matching official external endpoint wiring was found in the current reference build.
 - `com.atproto.admin.searchAccounts`

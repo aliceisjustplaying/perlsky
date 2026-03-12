@@ -13,7 +13,7 @@ That does not mean every test has been manually revalidated against every other 
 The current baseline for saying "the audited suite is green" is:
 
 - `prove -lr t`
-  - latest full green result in the realigned Meridian worktree: `Files=59, Tests=3057`
+  - latest full green result in the realigned Meridian worktree: `Files=60, Tests=3061`
 - `prove -lv t/server-auth.t`
 - `perl -c script/differential-validate`
 - `PERLSKY_RUN_REFERENCE_DIFF=1 prove -lv t/reference-differential.t`
@@ -116,7 +116,7 @@ The current suite splits into three broad buckets:
 Current suite counts by bucket:
 
 - `direct reference differential`: `5`
-- `audited local regression`: `41`
+- `audited local regression`: `42`
 - `local correctness/infrastructure`: `13`
 
 | Test file | Bucket | Current note |
@@ -135,9 +135,11 @@ Current suite counts by bucket:
 | `t/catalog.t` | local correctness/infrastructure | lexicon/catalog exposure smoke |
 | `t/cors.t` | local correctness/infrastructure | CORS and preflight behavior |
 | `t/crawlers.t` | audited local regression | outbound crawl notification semantics |
+| `t/crawler-status-surfaces.t` | audited local regression | isolated local crawler host notification/status endpoint coverage for `notifyOfUpdate` and `getHostStatus` |
 | `t/crypto-interop.t` | direct reference differential | pinned upstream crypto fixture coverage |
 | `t/delete-account.t` | audited local regression | reference-style account deletion flow using DID, password, and action token without a live bearer session |
 | `t/discovery-surfaces.t` | audited local regression | isolated local discovery-surface coverage for endpoint catalog wiring, lexicon lookup, handle availability, and `listReposByCollection` |
+| `t/describe-repo-surfaces.t` | audited local regression | isolated `describeRepo` correctness coverage for collection listing and DID-doc-derived `handleIsCorrect` semantics |
 | `t/email-confirmation.t` | audited local regression | intentionally testing-friendly email flow plus strict missing-email and invalid-email validation semantics |
 | `t/email-update-helper.t` | audited local regression | shared email-update helper normalization, token revocation, and duplicate-email error semantics |
 | `t/event-stream.t` | audited local regression | wire-format, malformed frame, and event decoding coverage |
@@ -179,18 +181,14 @@ Current suite counts by bucket:
 | `t/store-sqlite.t` | audited local regression | store-level session, invite, label, and repo persistence behavior |
 | `t/temp-endpoints.t` | audited local regression | isolated local coverage for `com.atproto.temp.*` semantics and admin credential revocation behavior |
 | `t/tid-repair.t` | local correctness/infrastructure | TID repair and recovery helpers |
-| `t/uncovered-endpoints.t` | audited local regression | now a very small pragmatic safety-net for `describeRepo` correctness and crawler host notification/status edges that still do not have a better thematic home |
-
 ### Broad Mixed Suites
 
-The broadest suites are green and audited, but they still mix several categories of behavior inside the same file:
+The broadest suites are green and audited, but a small number still mix several categories of behavior inside the same file:
 
 - `t/extended-api.t`
   Carries real conformance value for `applyWrites`, but it is now much narrower and mostly acts as a focused repo-write regression suite.
 - `t/external-surface.t`
   Carries strong external-surface coverage for repo/blob export and missing-blob listing. It is cleaner after moving discovery, label-RPC, and account-status checks into dedicated suites, but still remains broader than a single-endpoint conformance file.
-- `t/uncovered-endpoints.t`
-  Exists specifically to stop a few lesser-used local endpoints from falling out of coverage; it is much narrower now that the temp, invite, and admin-account blocks have moved into dedicated suites, but it should still be read as a pragmatic safety net, not as a pure reference-alignment suite.
 
 ## What This Audit Does Not Yet Claim
 
@@ -213,7 +211,7 @@ If the goal becomes "audit all tests" in the strongest possible sense, the next 
 4. decide whether to tighten admin auth to reference semantics or document the bearer shortcut as a permanent extension
 5. keep local testing-only toggles, like the email-confirmation bypass, pinned in focused suites instead of letting broad mixed suites depend on them implicitly
 6. keep narrowing the local `ServiceProxy` surface until every locally answered `app.bsky.*` field is either authoritative or explicitly documented as a local-only extension
-7. keep documenting broad suites like `t/extended-api.t`, `t/external-surface.t`, and `t/uncovered-endpoints.t` as mixed conformance-plus-product coverage rather than over-claiming that every assertion is a pure reference check
+7. keep documenting broad suites like `t/extended-api.t` and `t/external-surface.t` as mixed conformance-plus-product coverage rather than over-claiming that every assertion is a pure reference check
 
 ## Practical Reading Of The Current Status
 

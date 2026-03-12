@@ -5,7 +5,6 @@ use Config ();
 use File::Spec;
 use File::Temp qw(tempdir);
 use FindBin qw($Bin);
-use MIME::Base64 qw(encode_base64);
 use Test::More;
 
 BEGIN {
@@ -19,6 +18,7 @@ BEGIN {
 }
 
 use Test::Mojo;
+use JSON::PP ();
 use ATProto::PDS;
 
 my $root = File::Spec->rel2abs(File::Spec->catdir($Bin, '..'));
@@ -30,9 +30,8 @@ my $app = ATProto::PDS->new(
     base_url                   => 'http://127.0.0.1:7755',
     service_handle_domain      => 'example.test',
     service_did_method         => 'did:web',
-    jwt_secret                 => 'uncovered-endpoints-secret',
+    jwt_secret                 => 'describe-repo-secret',
     admin_password             => 'admin-secret',
-    self_service_invite_codes  => 1,
     testing_auto_confirm_email => 1,
     data_dir                   => $tmp,
     db_path                    => File::Spec->catfile($tmp, 'perlsky.sqlite'),
@@ -40,7 +39,6 @@ my $app = ATProto::PDS->new(
 );
 
 my $t = Test::Mojo->new($app);
-my $admin_auth = 'Basic ' . encode_base64('admin:admin-secret', q());
 
 $t->post_ok('/xrpc/com.atproto.server.createAccount' => json => {
   handle   => 'alice.example.test',
@@ -88,16 +86,5 @@ $t->get_ok("/xrpc/com.atproto.repo.describeRepo?repo=$did")
   ->status_is(200)
   ->json_is('/handleIsCorrect' => JSON::PP::false)
   ->json_is('/didDoc/alsoKnownAs/0' => 'at://wrong.example.test');
-
-$t->post_ok('/xrpc/com.atproto.sync.notifyOfUpdate' => json => {
-  hostname => 'crawler.example.test',
-})->status_is(200)
-  ->content_is(q());
-
-$t->get_ok('/xrpc/com.atproto.sync.getHostStatus' => form => {
-  hostname => 'crawler.example.test',
-})->status_is(200)
-  ->json_is('/hostname' => 'crawler.example.test')
-  ->json_is('/status' => 'active');
 
 done_testing;
