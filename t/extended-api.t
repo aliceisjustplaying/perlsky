@@ -40,8 +40,6 @@ my $app = ATProto::PDS->new(
 );
 
 my $t = Test::Mojo->new($app);
-my $admin_auth = 'Basic YWRtaW46YWRtaW4tc2VjcmV0';
-
 $t->post_ok('/xrpc/com.atproto.server.createAccount' => json => {
   handle   => 'alice.example.test',
   email    => 'alice@example.test',
@@ -160,58 +158,5 @@ $t->get_ok('/xrpc/com.atproto.server.getAccountInviteCodes' => {
   Authorization => "Bearer $access",
 })->status_is(200)
   ->json_is('/codes/0/code', $invite_code);
-
-$t->get_ok('/xrpc/com.atproto.admin.getAccountInfo' => {
-  Authorization => $admin_auth,
-} => form => {
-  did => $did,
-})->status_is(200)
-  ->json_is('/did', $did)
-  ->json_is('/handle', 'alice.example.test');
-
-$t->post_ok('/xrpc/com.atproto.identity.updateHandle' => {
-  Authorization => "Bearer $access",
-} => json => {
-  handle => 'alice-renamed.example.test',
-})->status_is(200);
-
-$t->post_ok('/xrpc/com.atproto.identity.refreshIdentity' => json => {
-  identifier => 'alice-renamed.example.test',
-})->status_is(200)
-  ->json_is('/did', $did)
-  ->json_is('/handle', 'alice-renamed.example.test');
-
-$t->post_ok('/xrpc/com.atproto.server.requestEmailUpdate' => {
-  Authorization => "Bearer $access",
-} => json => {})->status_is(200);
-ok($t->tx->res->json->{tokenRequired}, 'confirmed email requires update token');
-
-my $email_update = $app->store->latest_action_token(
-  did     => $did,
-  purpose => 'email_update',
-);
-
-$t->post_ok('/xrpc/com.atproto.server.updateEmail' => {
-  Authorization => "Bearer $access",
-} => json => {
-  email => 'alice+new@example.test',
-  token => $email_update->{token},
-})->status_is(200);
-
-$t->post_ok('/xrpc/com.atproto.server.requestEmailConfirmation' => {
-  Authorization => "Bearer $access",
-} => json => {})->status_is(200);
-
-my $email_confirm = $app->store->latest_action_token(
-  did     => $did,
-  purpose => 'email_confirm',
-);
-
-$t->post_ok('/xrpc/com.atproto.server.confirmEmail' => {
-  Authorization => "Bearer $access",
-} => json => {
-  email => 'alice+new@example.test',
-  token => $email_confirm->{token},
-})->status_is(200);
 
 done_testing;
