@@ -45,6 +45,20 @@ $appview_app->routes->get('/ready')->to(cb => sub {
   my ($c) = @_;
   $c->render(text => 'ok');
 });
+$appview_app->routes->get('/actor/did.json')->to(cb => sub {
+  my ($c) = @_;
+  my $host = $c->req->url->to_abs->host_port;
+  my $did = 'did:web:' . ($host =~ s/:/%3A/gr) . ':actor';
+  $c->render(json => {
+    '@context' => ['https://www.w3.org/ns/did/v1'],
+    id         => $did,
+    service    => [{
+      id              => "$did#atproto_pds",
+      type            => 'AtprotoPersonalDataServer',
+      serviceEndpoint => 'https://actor.example.test',
+    }],
+  });
+});
 $appview_app->routes->get('/xrpc/com.atproto.identity.resolveHandle')->to(cb => sub {
   my ($c) = @_;
   my $handle = lc($c->param('handle') // '');
@@ -56,6 +70,10 @@ $appview_app->routes->get('/xrpc/com.atproto.identity.resolveHandle')->to(cb => 
 });
 
 my $appview_url = _start_mock_server($appview_app);
+my $remote_did_web = do {
+  my $url = Mojo::URL->new($appview_url);
+  'did:web:' . (($url->host_port // q()) =~ s/:/%3A/gr) . ':actor';
+};
 
 my $app = ATProto::PDS->new(
   project_root => $root,
@@ -74,6 +92,11 @@ my $t = Test::Mojo->new($app);
 $t->get_ok("/xrpc/com.atproto.identity.resolveHandle?handle=$remote_handle")
   ->status_is(200)
   ->json_is('/did' => $remote_did);
+
+$t->get_ok("/xrpc/com.atproto.identity.resolveDid?did=$remote_did_web")
+  ->status_is(200)
+  ->json_is('/didDoc/id' => $remote_did_web)
+  ->json_is('/didDoc/service/0/serviceEndpoint' => 'https://actor.example.test');
 
 $t->get_ok('/xrpc/com.atproto.identity.resolveHandle?handle=missing.example.test')
   ->status_is(404)

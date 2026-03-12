@@ -11,6 +11,7 @@ use Mojo::URL;
 use Mojo::UserAgent;
 
 use ATProto::PDS::Identity qw(account_did_doc normalize_handle service_did service_did_doc);
+use ATProto::PDS::PLC qw(is_plc_did refresh_plc_did_doc);
 
 our @EXPORT_OK = qw(register_builtin_handlers);
 
@@ -34,14 +35,22 @@ sub register_builtin_handlers ($registry, $app) {
     }
 
     my $account = $c->store->get_account_by_did(_canonical_did($did));
+    if ($account) {
+      return {
+        didDoc => $account->{did_doc} || account_did_doc($c->app->settings, $account),
+      };
+    }
+
+    if (my $did_doc = _resolve_remote_did_doc($c, $did)) {
+      return {
+        didDoc => $did_doc,
+      };
+    }
+
     die {
       status  => 404,
       error   => 'DidNotFound',
       message => "No DID document found for $did",
-    } unless $account;
-
-    return {
-      didDoc => $account->{did_doc} || account_did_doc($c->app->settings, $account),
     };
   });
 
@@ -152,11 +161,64 @@ sub _resolve_remote_handle_via_appview ($c, $handle) {
   my $tx = eval { $ua->get($url) };
   return undef if $@ || !$tx;
 
-  my $res = $tx->result;
+  my $res = eval { $tx->result };
+  return undef if $@ || !$res;
   return undef unless ($res->code // 0) == 200;
   my $json = $res->json;
   return undef unless ref($json) eq 'HASH' && defined($json->{did}) && length($json->{did});
   return $json->{did};
+}
+
+sub _resolve_remote_did_doc ($c, $did) {
+  if (is_plc_did($did) && defined($c->app->settings->{plc_url}) && length($c->app->settings->{plc_url})) {
+    my $did_doc = eval { refresh_plc_did_doc($c->app->settings, $did) };
+    return $did_doc unless $@;
+    return undef;
+  }
+
+  return undef unless $did =~ /\Adid:web:/i;
+
+  state %ua_for_origin;
+  my $origin = lc(_relaxed_did($did));
+  my $ua = $ua_for_origin{$origin} //= do {
+    my $client = Mojo::UserAgent->new(max_redirects => 0);
+    $client->request_timeout(15);
+    $client->inactivity_timeout(15);
+    $client;
+  };
+
+  my ($host, $path) = _web_did_origin_and_path($did);
+  return undef unless defined $host && defined $path;
+  my $scheme = $host =~ /\A(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?\z/i ? 'http' : 'https';
+  my $url = Mojo::URL->new("$scheme://$host");
+  $url->path($path);
+
+  my $tx = eval { $ua->get($url) };
+  return undef if $@ || !$tx;
+
+  my $res = eval { $tx->result };
+  return undef if $@ || !$res;
+  return undef unless ($res->code // 0) == 200;
+  my $json = $res->json;
+  return undef unless ref($json) eq 'HASH' && defined($json->{id}) && _same_did($json->{id}, $did);
+  return $json;
+}
+
+sub _web_did_origin_and_path ($did) {
+  return unless defined $did && $did =~ s/\Adid:web://i;
+  my @parts = split /:/, $did;
+  return unless @parts;
+
+  my $host = shift @parts;
+  $host =~ s/%3a/:/ig;
+  if (@parts && $parts[0] =~ /\A\d+\z/ && $host !~ /:/) {
+    $host .= ':' . shift @parts;
+  }
+
+  my $path = @parts
+    ? '/' . join('/', map { s/%3A/:/igr } @parts) . '/did.json'
+    : '/.well-known/did.json';
+  return ($host, $path);
 }
 
 sub _same_did ($left, $right) {
