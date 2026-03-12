@@ -782,6 +782,24 @@ for my $name (sort keys %server) {
     { identifier => $server{$name}{handle} },
   );
 
+  my $missing_did = get_form(
+    $server{$name}{origin},
+    'com.atproto.identity.resolveDid',
+    { did => 'did:web:missing.test' },
+  );
+
+  my $missing_identity_by_did = get_form(
+    $server{$name}{origin},
+    'com.atproto.identity.resolveIdentity',
+    { identifier => 'did:web:missing.test' },
+  );
+
+  my $missing_identity_by_handle = get_form(
+    $server{$name}{origin},
+    'com.atproto.identity.resolveIdentity',
+    { identifier => 'missing.test' },
+  );
+
   my $invalid_handle = get_form(
     $server{$name}{origin},
     'com.atproto.identity.resolveHandle',
@@ -826,6 +844,9 @@ for my $name (sort keys %server) {
           ),
         }
       : normalize_xrpc_error($identity_by_handle),
+    missing_did => normalize_xrpc_error($missing_did),
+    missing_identity_by_did => normalize_xrpc_error($missing_identity_by_did),
+    missing_identity_by_handle => normalize_xrpc_error($missing_identity_by_handle),
     invalid_handle => normalize_xrpc_error($invalid_handle),
   };
 }
@@ -2822,10 +2843,7 @@ for my $name (sort keys %server) {
     admin                => 'admin',
     ($invite_first_did // q()) => 'first_account',
   );
-  my %account_code_label = (
-    ($account_codes[0] // q()) => 'first',
-    ($account_codes[1] // q()) => 'second',
-  );
+  my %account_code_label = map { $_ => 'account' } grep { defined($_) && length($_) } @account_codes;
   my $normalize_codes = sub ($rows) {
     return [
       map {

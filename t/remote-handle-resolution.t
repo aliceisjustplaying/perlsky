@@ -139,6 +139,11 @@ $t->get_ok("/xrpc/com.atproto.identity.resolveDid?did=$remote_did_web")
   ->json_is('/didDoc/id' => $remote_did_web)
   ->json_is('/didDoc/service/0/serviceEndpoint' => 'https://actor.example.test');
 
+$t->get_ok('/xrpc/com.atproto.identity.resolveDid?did=did:web:missing.test')
+  ->status_is(400)
+  ->json_is('/error' => 'InvalidRequest')
+  ->json_is('/message' => 'Unable to resolve DID');
+
 $t->get_ok("/xrpc/com.atproto.identity.resolveDid?did=$remote_plc_did")
   ->status_is(200)
   ->json_is('/didDoc/id' => $remote_plc_did)
@@ -177,6 +182,16 @@ $t->get_ok("/xrpc/com.atproto.identity.resolveDid?did=$remote_plc_did")
     ->json_is('/did' => $remote_plc_did)
     ->json_is('/handle' => $remote_plc_handle)
     ->json_is('/didDoc/id' => $remote_plc_did);
+
+  $t->get_ok('/xrpc/com.atproto.identity.resolveIdentity?identifier=did:web:missing.test')
+    ->status_is(400)
+    ->json_is('/error' => 'InvalidRequest')
+    ->json_is('/message' => 'Unable to resolve identity');
+
+  $t->get_ok('/xrpc/com.atproto.identity.resolveIdentity?identifier=missing.test')
+    ->status_is(400)
+    ->json_is('/error' => 'InvalidRequest')
+    ->json_is('/message' => 'Unable to resolve identity');
 }
 
 {

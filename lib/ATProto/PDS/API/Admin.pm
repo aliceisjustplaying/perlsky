@@ -227,18 +227,28 @@ sub register_admin_handlers ($registry, $app) {
   $registry->register('com.atproto.admin.getInviteCodes', sub ($c, $endpoint) {
     require_admin($c);
     my $sort = $c->param('sort') // 'recent';
+    my $cursor = $c->param('cursor');
     xrpc_error(400, 'InvalidRequest', "unknown sort method: $sort")
       unless $sort eq 'recent' || $sort eq 'usage';
+    if (defined $cursor && length $cursor) {
+      my $ok = eval {
+        $sort eq 'usage'
+          ? ATProto::PDS::Store::SQLite::_parse_usage_cursor($cursor)
+          : ATProto::PDS::Store::SQLite::_parse_recent_cursor($cursor);
+        1;
+      };
+      xrpc_error(400, 'InvalidRequest', 'Malformed cursor') unless $ok;
+    }
     my $page = eval {
       $c->store->list_invite_codes(
         sort   => $sort,
-        cursor => $c->param('cursor'),
+        cursor => $cursor,
         limit  => $c->param('limit') // 100,
       );
     };
     if (my $err = $@) {
       xrpc_error(400, 'InvalidRequest', 'Malformed cursor')
-        if !ref($err) && ($err // q()) =~ /invalid usage cursor/;
+        if !ref($err) && ($err // q()) =~ /invalid (?:usage|recent) cursor/;
       die $err;
     }
     return {

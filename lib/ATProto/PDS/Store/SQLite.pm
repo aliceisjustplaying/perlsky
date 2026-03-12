@@ -1910,12 +1910,24 @@ sub _usage_cursor ($use_count, $code) {
   return join("\t", $use_count // 0, $code // q());
 }
 
+sub _recent_cursor ($created_at, $code) {
+  return join("\t", $created_at // 0, $code // q());
+}
+
 sub _parse_usage_cursor ($cursor) {
   die 'invalid usage cursor' unless defined $cursor;
   my ($use_count, $code) = split(/\t/, $cursor, 2);
   die 'invalid usage cursor'
     unless defined $use_count && $use_count =~ /\A\d+\z/ && defined $code;
   return (0 + $use_count, $code);
+}
+
+sub _parse_recent_cursor ($cursor) {
+  die 'invalid recent cursor' unless defined $cursor;
+  my ($created_at, $code) = split(/\t/, $cursor, 2);
+  die 'invalid recent cursor'
+    unless defined $created_at && $created_at =~ /\A\d+\z/ && defined $code;
+  return (0 + $created_at, $code);
 }
 
 sub _maybe_json ($value) {

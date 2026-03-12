@@ -85,6 +85,20 @@ $app->store->create_invite_code(
   use_count   => 1,
   created_at  => 4_102_444_800,
 );
+$app->store->create_invite_code(
+  code        => 'perlsky-audit-tie-b',
+  for_account => 'admin',
+  created_by  => 'admin',
+  use_count   => 1,
+  created_at  => 4_102_444_850,
+);
+$app->store->create_invite_code(
+  code        => 'perlsky-audit-tie-a',
+  for_account => 'admin',
+  created_by  => 'admin',
+  use_count   => 1,
+  created_at  => 4_102_444_850,
+);
 $app->store->record_invite_code_use(
   code    => 'perlsky-audit-used',
   used_by => $did,
@@ -97,6 +111,14 @@ $app->store->record_invite_code_use(
 );
 
 $t->get_ok('/xrpc/com.atproto.admin.getInviteCodes?sort=recent&limit=2' => {
+  Authorization => $admin_auth,
+})->status_is(200)
+  ->json_is('/codes/0/code' => 'perlsky-audit-tie-a')
+  ->json_is('/codes/1/code' => 'perlsky-audit-tie-b')
+  ->json_has('/cursor');
+
+my $recent_cursor = $t->tx->res->json->{cursor};
+$t->get_ok("/xrpc/com.atproto.admin.getInviteCodes?sort=recent&limit=2&cursor=$recent_cursor" => {
   Authorization => $admin_auth,
 })->status_is(200)
   ->json_is('/codes/0/code' => 'perlsky-audit-unused')
@@ -124,6 +146,12 @@ $t->get_ok('/xrpc/com.atproto.admin.getInviteCodes?sort=bogus&limit=2' => {
   ->json_is('/error' => 'InvalidRequest')
   ->json_is('/message' => 'unknown sort method: bogus');
 
+$t->get_ok('/xrpc/com.atproto.admin.getInviteCodes?sort=recent&limit=2&cursor=bogus' => {
+  Authorization => $admin_auth,
+})->status_is(400)
+  ->json_is('/error' => 'InvalidRequest')
+  ->json_is('/message' => 'Malformed cursor');
+
 $t->post_ok('/xrpc/com.atproto.admin.disableInviteCodes' => {
   Authorization => $admin_auth,
 } => json => {
@@ -139,6 +167,21 @@ $t->post_ok('/xrpc/com.atproto.admin.disableInviteCodes' => {
   ->content_is(q());
 
 ok($app->store->get_invite_code($admin_codes[0])->{disabled}, 'disableInviteCodes marks the requested code disabled');
+
+$t->post_ok('/xrpc/com.atproto.server.createInviteCodes' => {
+  Authorization => $admin_auth,
+} => json => {
+  codeCount => 2,
+  useCount  => 1,
+})->status_is(200)
+  ->json_is('/codes/0/account' => 'admin');
+
+my @recent_batch_codes = @{ $t->tx->res->json->{codes}[0]{codes} || [] };
+is(
+  $app->store->get_invite_code($recent_batch_codes[0])->{created_at},
+  $app->store->get_invite_code($recent_batch_codes[1])->{created_at},
+  'createInviteCodes assigns one created_at across a batch',
+);
 
 $t->post_ok('/xrpc/com.atproto.server.createInviteCodes' => {
   Authorization => "Bearer $access",

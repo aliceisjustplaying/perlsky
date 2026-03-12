@@ -80,11 +80,12 @@ sub list_invite_codes ($self, %args) {
     $sql .= q{ ORDER BY invite_codes.use_count_consumed DESC, invite_codes.code ASC};
   } else {
     if (defined $cursor && length $cursor) {
-      push @where, q{invite_codes.code > ?};
-      push @bind, $cursor;
+      my ($cursor_created_at, $cursor_code) = ATProto::PDS::Store::SQLite::_parse_recent_cursor($cursor);
+      push @where, q{(invite_codes.created_at < ? OR (invite_codes.created_at = ? AND invite_codes.code > ?))};
+      push @bind, $cursor_created_at, $cursor_created_at, $cursor_code;
     }
     $sql .= q{ WHERE } . join(q{ AND }, @where) if @where;
-    $sql .= q{ ORDER BY invite_codes.created_at DESC, invite_codes.code DESC};
+    $sql .= q{ ORDER BY invite_codes.created_at DESC, invite_codes.code ASC};
   }
   $sql .= q{ LIMIT ?};
   push @bind, $limit + 1;
@@ -94,13 +95,13 @@ sub list_invite_codes ($self, %args) {
     $limit,
     $sort eq 'usage'
       ? sub ($row) { ATProto::PDS::Store::SQLite::_usage_cursor($row->{use_count_consumed}, $row->{code}) }
-      : 'code',
+      : sub ($row) { ATProto::PDS::Store::SQLite::_recent_cursor($row->{created_at}, $row->{code}) },
   );
   if (!defined($page->{cursor}) && @{ $page->{items} || [] }) {
     my $last = $page->{items}[-1];
     $page->{cursor} = $sort eq 'usage'
       ? ATProto::PDS::Store::SQLite::_usage_cursor($last->{use_count_consumed}, $last->{code})
-      : $last->{code};
+      : ATProto::PDS::Store::SQLite::_recent_cursor($last->{created_at}, $last->{code});
   }
   return $page;
 }

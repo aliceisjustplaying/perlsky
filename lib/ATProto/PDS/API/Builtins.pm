@@ -53,9 +53,9 @@ sub register_builtin_handlers ($registry, $app) {
     }
 
     die {
-      status  => 404,
-      error   => 'DidNotFound',
-      message => "No DID document found for $did",
+      status  => 400,
+      error   => 'InvalidRequest',
+      message => 'Unable to resolve DID',
     };
   });
 
@@ -106,9 +106,9 @@ sub register_builtin_handlers ($registry, $app) {
     }
 
     die {
-      status  => 404,
-      error   => ($identifier =~ /^did:/ ? 'DidNotFound' : 'HandleNotFound'),
-      message => "No identity found for $identifier",
+      status  => 400,
+      error   => 'InvalidRequest',
+      message => 'Unable to resolve identity',
     } unless _same_did($identifier, $service_did) || $identifier eq $service_handle;
 
     return {

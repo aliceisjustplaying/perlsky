@@ -13,7 +13,7 @@ That does not mean every test has been manually revalidated against every other 
 The current baseline for saying "the audited suite is green" is:
 
 - `prove -lr t`
-  - latest full green result in the realigned Meridian worktree: `Files=61, Tests=3069`
+  - latest full green result in the realigned Meridian worktree: `Files=61, Tests=3094`
 - `prove -lv t/server-auth.t`
 - `perl -c script/differential-validate`
 - `PERLSKY_RUN_REFERENCE_DIFF=1 prove -lv t/reference-differential.t`
@@ -63,6 +63,8 @@ When the official runtime and upstream comments disagree, the runtime behavior w
 - `com.atproto.admin.deleteAccount` is now reference-style idempotent for missing DIDs: it succeeds and emits the same deleted account event shape instead of failing locally with `404 AccountNotFound`.
 - `com.atproto.admin.getSubjectStatus` now follows the reference runtime more closely for repo subjects: existing repos return a synthesized active subject status even without a stored moderation row, missing repos use `400 NotFound` / `Subject not found`, blob requests without a DID use `400 InvalidRequest` / `Must provide a did to request blob state`, and entirely missing subject references use `400 InvalidRequest` / `No provided subject`.
 - `com.atproto.admin.updateAccountPassword` and `com.atproto.admin.disableAccountInvites` / `enableAccountInvites` now follow the reference runtime’s missing-account behavior: they are empty-body `200` no-ops instead of returning local `404 AccountNotFound` or JSON `{}` success bodies.
+- Missing `com.atproto.identity.resolveDid` and `com.atproto.identity.resolveIdentity` lookups now follow the official runtime’s `400 InvalidRequest` shape instead of returning local `404 DidNotFound` / `HandleNotFound` errors.
+- Admin `getInviteCodes?sort=recent` now uses stable recent cursors and single-timestamp batch invite creation, which removed a lingering reference mismatch around account-targeted invite batches.
 - `com.atproto.admin.updateSubjectStatus` now follows the reference runtime’s narrower response contract: it echoes the normalized `subject`, includes `takedown` only when that field was part of the request, and no longer synthesizes `deactivated` into the response body from stored state.
 - Record and blob moderation now have direct coverage for `com.atproto.admin.getSubjectStatus`, so taken-down record/blob subjects are pinned as first-class admin-surface behavior instead of only being inferred from repo and sync visibility.
 - The executable differential harness now also pins blob-subject moderation directly, covering `com.atproto.admin.updateSubjectStatus` and `getSubjectStatus` for `repoBlobRef` subjects instead of leaving blob moderation as local-only coverage.
@@ -151,7 +153,7 @@ Current suite counts by bucket:
 | `t/import-repo.t` | audited local regression | focused `importRepo` snapshot-restore and rollback behavior, now cleaner after splitting the disabled-import policy gate into its own suite |
 | `t/import-repo-policy.t` | audited local regression | local service-policy coverage for the `accepting_imports` gate on `importRepo` |
 | `t/invite-gating.t` | audited local regression | self-service invite flag behavior |
-| `t/invite-admin.t` | audited local regression | isolated invite-management coverage for admin listing/disabling and self-service invite-account gating |
+| `t/invite-admin.t` | audited local regression | isolated invite-management coverage for admin listing/disabling, malformed recent cursors, batch timestamp stability, and self-service invite-account gating |
 | `t/ipld-canonical.t` | local correctness/infrastructure | canonical IPLD encoding invariants |
 | `t/ipld-codecs.t` | local correctness/infrastructure | DAG-CBOR and codec coverage |
 | `t/label-rpc-surfaces.t` | audited local regression | isolated local label-RPC coverage for `queryLabels` and `temp.fetchLabels` account/record takedown visibility |
@@ -169,7 +171,7 @@ Current suite counts by bucket:
 | `t/plc-identity.t` | direct reference differential | PLC mock driven by official library semantics |
 | `t/reference-differential-plc.t` | direct reference differential | official runtime comparison in PLC mode |
 | `t/reference-differential.t` | direct reference differential | official runtime comparison in baseline mode |
-| `t/remote-handle-resolution.t` | audited local regression | remote `did:web` DID docs, conservative remote identity handling, external-handle adoption, and invalid-handle rejection, with some upstream-failure branches still worth expanding |
+| `t/remote-handle-resolution.t` | audited local regression | remote `did:web` DID docs, conservative remote identity handling, external-handle adoption, invalid-handle rejection, and missing remote DID/identity error semantics |
 | `t/repo-api.t` | audited local regression | record mutation and read semantics, but still lighter than ideal on some negative/reference edge cases |
 | `t/repo-firehose-car.t` | audited local regression | repo commit CAR shape and firehose interactions |
 | `t/repo_formats.t` | audited local regression | direct repo wire-format and CAR expectations |

@@ -729,6 +729,7 @@ sub register_server_handlers ($registry, $app) {
     my $count = $body->{codeCount} // 1;
     my @result;
     for my $target (@$accounts) {
+      my $created_at = time;
       my @codes;
       for (1 .. $count) {
         my $code = _new_invite_code();
@@ -737,6 +738,7 @@ sub register_server_handlers ($registry, $app) {
           for_account => $target,
           created_by  => $created_by,
           use_count   => $body->{useCount} // 1,
+          created_at  => $created_at,
         );
         push @codes, $code;
       }
