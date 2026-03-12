@@ -13,7 +13,7 @@ That does not mean every test has been manually revalidated against every other 
 The current baseline for saying "the audited suite is green" is:
 
 - `prove -lr t`
-  - latest full green result in the realigned Meridian worktree: `Files=48, Tests=2898`
+  - latest full green result in the realigned Meridian worktree: `Files=48, Tests=2918`
 - `prove -lv t/server-auth.t`
 - `perl -c script/differential-validate`
 - `PERLSKY_RUN_REFERENCE_DIFF=1 prove -lv t/reference-differential.t`
@@ -59,6 +59,7 @@ When the official runtime and upstream comments disagree, the runtime behavior w
 - `com.atproto.repo.createRecord` follows the reference runtime by ignoring a stray `swapRecord` field, and direct reference coverage now pins `putRecord` / `deleteRecord` `swapCommit` and `swapRecord` mismatch semantics explicitly.
 - App-password sessions follow the official runtime more closely than the older local assumptions did: access-token scopes use the `com.atproto.appPass` / `com.atproto.appPassPrivileged` names, standard app-password sessions may list app passwords, privileged-only `getServiceAuth` failures report `InvalidRequest`, and revoked refresh tokens on `refreshSession` fail with `400 ExpiredToken`.
 - `com.atproto.server.requestPasswordReset` and `com.atproto.server.deleteAccount` now follow the reference form-token flow, with focused regression coverage for missing-account and bearerless deletion semantics.
+- Password-bearing account endpoints need the same bounded-length behavior as the official runtime: `createAccount` rejects passwords longer than 256 characters, `createSession` rejects passwords longer than 512 characters with the reset hint, and `resetPassword` / `deleteAccount` reject overlong password inputs with `Invalid password length.`
 - `com.atproto.server.createAccount` with an explicit `did` must behave like an authenticated migration flow: require auth from that same DID, keep the existing DID document, and start the new account deactivated until activation catches the DID document up to the new PDS.
 - `com.atproto.server.checkAccountStatus` must validate the stored DID document against the PDS service endpoint and signing key, and `com.atproto.repo.describeRepo` must derive `didDoc` / `handleIsCorrect` from that document instead of hardcoding success.
 - `com.atproto.sync.getBlob` should ship the same download-hardening headers as the reference PDS (`X-Content-Type-Options`, `Content-Disposition`, `Content-Security-Policy`).
@@ -116,7 +117,7 @@ The current suite splits into three broad buckets:
 | `t/oauth-permissions.t` | audited local regression | granular OAuth permission enforcement across account/email, identity, repo, blob, and rpc scope families |
 | `t/oauth-scopes.t` | audited local regression | OAuth scope parsing, normalization, and token-grant shaping |
 | `t/oauth.t` | audited local regression | OAuth provider metadata, PAR, PKCE, DPoP, and token lifecycle coverage |
-| `t/password-reset.t` | audited local regression | password reset token issuance and missing-email rejection semantics |
+| `t/password-reset.t` | audited local regression | password reset token issuance, case-insensitive email lookup, and overlong-password rejection semantics |
 | `t/pds_smoke.t` | local correctness/infrastructure | broad local PDS smoke; still intentionally optimistic and should only carry a small number of negative assertions |
 | `t/plc-identity.t` | direct reference differential | PLC mock driven by official library semantics |
 | `t/reference-differential-plc.t` | direct reference differential | official runtime comparison in PLC mode |
@@ -125,7 +126,7 @@ The current suite splits into three broad buckets:
 | `t/repo-api.t` | audited local regression | record mutation and read semantics, but still lighter than ideal on some negative/reference edge cases |
 | `t/repo-firehose-car.t` | audited local regression | repo commit CAR shape and firehose interactions |
 | `t/repo_formats.t` | audited local regression | direct repo wire-format and CAR expectations |
-| `t/server-auth.t` | direct reference differential | auth/session/service-auth behavior repeatedly compared to official runtime |
+| `t/server-auth.t` | direct reference differential | auth/session/service-auth behavior repeatedly compared to official runtime, including bounded create-session password semantics |
 | `t/service-proxy-local.t` | audited local regression | local appview fallback behavior |
 | `t/service-proxy.t` | audited local regression | upstream proxy behavior plus conservative local appview fallback and preference semantics |
 | `t/sqlite-binary.t` | local correctness/infrastructure | SQLite binary round-trip correctness |

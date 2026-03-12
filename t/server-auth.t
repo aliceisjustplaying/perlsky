@@ -73,6 +73,13 @@ $t->post_ok('/xrpc/com.atproto.server.createSession' => json => {
   ->json_is('/did' => $did)
   ->json_is('/email' => 'alice@example.com');
 
+$t->post_ok('/xrpc/com.atproto.server.createSession' => json => {
+  identifier => 'alice@example.com',
+  password   => ('x' x 513),
+})->status_is(401)
+  ->json_is('/error' => 'AuthRequired')
+  ->json_is('/message' => 'Password too long. Consider resetting your password.');
+
 $t->get_ok('/xrpc/com.atproto.admin.getInviteCodes' => {
   Authorization => 'Bearer admin-secret',
 })->status_is(403)

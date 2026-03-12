@@ -82,6 +82,14 @@ $fresh->post_ok('/xrpc/com.atproto.server.createAccount' => json => {
 
 my $user_did = $fresh->tx->res->json->{did};
 
+$fresh->post_ok('/xrpc/com.atproto.server.createAccount' => json => {
+  handle   => 'toolong.localhost',
+  email    => 'toolong@example.test',
+  password => ('x' x 257),
+})->status_is(400)
+  ->json_is('/error' => 'InvalidRequest')
+  ->json_is('/message' => 'Password too long. Maximum length is 256 characters.');
+
 $fresh->get_ok("/xrpc/com.atproto.identity.resolveHandle?handle=alice.localhost")
   ->status_is(200)
   ->json_is('/did' => $user_did);

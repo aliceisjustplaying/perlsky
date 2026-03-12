@@ -40,6 +40,9 @@ use ATProto::PDS::Util::BaseX qw(base64url_decode decode_base58btc);
 
 our @EXPORT_OK = qw(register_server_handlers require_auth require_access_or_service_auth session_view);
 
+my $OLD_PASSWORD_MAX_LENGTH = 512;
+my $NEW_PASSWORD_MAX_LENGTH = 256;
+
 my %PROTECTED_SERVICE_AUTH_METHOD = map { lc($_) => 1 } qw(
   com.atproto.identity.requestPlcOperationSignature
   com.atproto.identity.signPlcOperation
@@ -72,6 +75,8 @@ sub register_server_handlers ($registry, $app) {
     my $password = $body->{password} // q();
     xrpc_error(400, 'InvalidPassword', 'Passwords must be at least 8 characters long')
       if length($password) < 8;
+    xrpc_error(400, 'InvalidRequest', "Password too long. Maximum length is $NEW_PASSWORD_MAX_LENGTH characters.")
+      if length($password) > $NEW_PASSWORD_MAX_LENGTH;
 
     my $invite;
     if (defined($body->{inviteCode}) && length($body->{inviteCode})) {
@@ -205,6 +210,8 @@ sub register_server_handlers ($registry, $app) {
 
   $registry->register('com.atproto.server.createSession', sub ($c, $endpoint) {
     my $body = $c->req->json || {};
+    xrpc_error(401, 'AuthRequired', 'Password too long. Consider resetting your password.')
+      if length($body->{password} // q()) > $OLD_PASSWORD_MAX_LENGTH;
     my $account = find_account($c, $body->{identifier} // q());
     xrpc_error(401, 'AuthRequired', 'Invalid identifier or password') unless $account;
     xrpc_error(401, 'AuthRequired', 'Invalid identifier or password')
@@ -442,6 +449,8 @@ sub register_server_handlers ($registry, $app) {
     my $body = $c->req->json || {};
     xrpc_error(400, 'InvalidPassword', 'Passwords must be at least 8 characters long')
       if length($body->{password} // q()) < 8;
+    xrpc_error(400, 'InvalidRequest', 'Invalid password length.')
+      if length($body->{password} // q()) > $NEW_PASSWORD_MAX_LENGTH;
     my $token = _require_action_token($c,
       token   => $body->{token},
       purpose => ACTION_TOKEN_PASSWORD_RESET,
@@ -596,7 +605,9 @@ sub register_server_handlers ($registry, $app) {
     my $account = $c->store->get_account_by_did($did);
     xrpc_error(400, 'InvalidRequest', 'account not found')
       unless $account && !defined($account->{deleted_at});
-    xrpc_error(401, 'AuthRequired', 'Invalid identifier or password')
+    xrpc_error(400, 'InvalidRequest', 'Invalid password length.')
+      if length($body->{password} // q()) > $OLD_PASSWORD_MAX_LENGTH;
+    xrpc_error(401, 'AuthRequired', 'Invalid did or password')
       unless verify_account_password($c, $account, $body->{password} // q());
     my $token = _require_action_token($c,
       token   => $body->{token},

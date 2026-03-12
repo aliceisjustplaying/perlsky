@@ -64,7 +64,16 @@ $t->post_ok('/xrpc/com.atproto.server.deleteAccount' => json => {
   password => 'wrong-password',
   token    => $token->{token},
 })->status_is(401)
-  ->json_is('/error' => 'AuthRequired');
+  ->json_is('/error' => 'AuthRequired')
+  ->json_is('/message' => 'Invalid did or password');
+
+$t->post_ok('/xrpc/com.atproto.server.deleteAccount' => json => {
+  did      => $did,
+  password => ('x' x 513),
+  token    => $token->{token},
+})->status_is(400)
+  ->json_is('/error' => 'InvalidRequest')
+  ->json_is('/message' => 'Invalid password length.');
 
 $t->post_ok('/xrpc/com.atproto.server.deleteAccount' => json => {
   did      => 'did:web:example.test:users:missing',

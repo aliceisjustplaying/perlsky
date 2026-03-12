@@ -66,6 +66,18 @@ $t->post_ok('/xrpc/com.atproto.server.resetPassword' => json => {
 })->status_is(200)
   ->json_is({});
 
+$t->post_ok('/xrpc/com.atproto.server.requestPasswordReset' => json => {
+  email => 'ALICE@example.test',
+})->status_is(200)
+  ->json_is({});
+
+$t->post_ok('/xrpc/com.atproto.server.resetPassword' => json => {
+  token    => $token->{token},
+  password => ('x' x 257),
+})->status_is(400)
+  ->json_is('/error' => 'InvalidRequest')
+  ->json_is('/message' => 'Invalid password length.');
+
 $t->post_ok('/xrpc/com.atproto.server.createSession' => json => {
   identifier => 'alice.example.test',
   password   => 'hunter22',
