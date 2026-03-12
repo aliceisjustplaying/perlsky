@@ -113,8 +113,8 @@ $app->store->record_invite_code_use(
 $t->get_ok('/xrpc/com.atproto.admin.getInviteCodes?sort=recent&limit=2' => {
   Authorization => $admin_auth,
 })->status_is(200)
-  ->json_is('/codes/0/code' => 'perlsky-audit-tie-a')
-  ->json_is('/codes/1/code' => 'perlsky-audit-tie-b')
+  ->json_is('/codes/0/code' => 'perlsky-audit-tie-b')
+  ->json_is('/codes/1/code' => 'perlsky-audit-tie-a')
   ->json_has('/cursor');
 
 my $recent_cursor = $t->tx->res->json->{cursor};

@@ -27,7 +27,11 @@ our @EXPORT_OK = qw(register_repo_handlers);
 
 sub register_repo_handlers ($registry, $app) {
   $registry->register('com.atproto.repo.describeRepo', sub ($c, $endpoint) {
-    my $account = _readable_repo($c, $c->param('repo'));
+    my $account = _readable_repo(
+      $c,
+      $c->param('repo'),
+      missing_status => 400,
+    );
     my $did_doc = _describe_repo_did_doc($c, $account);
 
     return {
@@ -227,8 +231,18 @@ sub _require_repo_owner ($c, $repo) {
 
 sub _readable_repo ($c, $repo, %args) {
   my $account = resolve_repo($c, $repo);
-  xrpc_error(404, 'RepoNotFound', 'Repository was not found') unless $account;
-  assert_repo_readable($c, $account, %args);
+  xrpc_error(
+    $args{missing_status} // $args{status} // 404,
+    $args{missing_error} // $args{error} // 'RepoNotFound',
+    $args{missing_message} // $args{message} // 'Repository was not found',
+  ) unless $account;
+  assert_repo_readable(
+    $c,
+    $account,
+    (defined($args{readable_status} // $args{status}) ? (status => ($args{readable_status} // $args{status})) : ()),
+    (defined($args{readable_error} // $args{error}) ? (error => ($args{readable_error} // $args{error})) : ()),
+    (defined($args{readable_message} // $args{message}) ? (message => ($args{readable_message} // $args{message})) : ()),
+  );
   return $account;
 }
 

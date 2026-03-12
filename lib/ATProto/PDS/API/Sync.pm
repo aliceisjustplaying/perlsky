@@ -27,7 +27,7 @@ our @EXPORT_OK = qw(register_sync_handlers);
 
 sub register_sync_handlers ($registry, $app) {
   $registry->register('com.atproto.sync.getLatestCommit', sub ($c, $endpoint) {
-    my $account = _readable_repo_by_did($c);
+    my $account = _readable_repo_by_did($c, missing_status => 400);
     my $head = _repo_head_or_error($c, $account->{did});
     return {
       cid => $head->{commit_cid},
@@ -38,8 +38,7 @@ sub register_sync_handlers ($registry, $app) {
   $registry->register('com.atproto.sync.getHead', sub ($c, $endpoint) {
     my $account = _readable_repo_by_did(
       $c,
-      missing_error    => 'HeadNotFound',
-      missing_message  => 'Repository head was not found',
+      missing_status   => 400,
       readable_error   => 'HeadNotFound',
       readable_message => 'Repository head was not found',
     );
@@ -55,7 +54,7 @@ sub register_sync_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.sync.getRepoStatus', sub ($c, $endpoint) {
-    my $account = _repo_by_did_or_error($c);
+    my $account = _repo_by_did_or_error($c, missing_status => 400);
     my $active = (!defined($account->{deleted_at}) && !defined($account->{deactivated_at}) && !is_repo_takedown($c, $account->{did}))
       ? JSON::PP::true
       : JSON::PP::false;

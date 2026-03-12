@@ -91,6 +91,10 @@ $t->get_ok("/xrpc/com.atproto.repo.describeRepo?repo=$did")
   ->json_is('/didDoc/id' => $did)
   ->json_is('/handleIsCorrect' => JSON::PP::true);
 
+$t->get_ok('/xrpc/com.atproto.repo.describeRepo?repo=did:web:missing.test')
+  ->status_is(400)
+  ->json_is('/error' => 'RepoNotFound');
+
 my $account = $t->app->store->get_account_by_did($did);
 my $original_did_doc = $account->{did_doc};
 my %stale_did_doc = %{$original_did_doc};
@@ -324,11 +328,20 @@ $t->get_ok('/xrpc/com.atproto.repo.listRecords?repo=Repo-Owner.Localhost&collect
   ->json_is('/records/0/value/text' => 'put created this record')
   ->json_is('/records/1/value/text' => 'hello from swapped perl');
 
+$t->get_ok('/xrpc/com.atproto.repo.listRecords?repo=did:web:missing.test&collection=app.bsky.feed.post')
+  ->status_is(400)
+  ->json_is('/error' => 'InvalidRequest')
+  ->json_is('/message' => 'Could not find repo: did:web:missing.test');
+
 $t->get_ok("/xrpc/com.atproto.sync.getLatestCommit?did=$did")
   ->status_is(200)
   ->json_like('/cid' => qr/\Ab/)
   ->json_has('/rev');
 my $latest_commit_cid = $t->tx->res->json->{cid};
+
+$t->get_ok('/xrpc/com.atproto.sync.getLatestCommit?did=did:web:missing.test')
+  ->status_is(400)
+  ->json_is('/error' => 'RepoNotFound');
 
 $t->get_ok('/xrpc/com.atproto.server.getServiceAuth?aud=' . $service_did . '&lxm=com.atproto.repo.uploadBlob' => {
   Authorization => "Bearer $access",
@@ -371,6 +384,10 @@ $t->get_ok("/xrpc/com.atproto.sync.getRepoStatus?did=$did")
   ->json_has('/rev')
   ->json_hasnt('/status');
 
+$t->get_ok('/xrpc/com.atproto.sync.getRepoStatus?did=did:web:missing.test')
+  ->status_is(400)
+  ->json_is('/error' => 'RepoNotFound');
+
 $t->get_ok('/xrpc/com.atproto.sync.listRepos')
   ->status_is(200)
   ->json_is('/repos/0/did' => $did);
@@ -388,6 +405,10 @@ $t->get_ok("/xrpc/com.atproto.sync.getCheckout?did=$did")
 $t->get_ok("/xrpc/com.atproto.sync.getHead?did=$did")
   ->status_is(200)
   ->json_like('/root' => qr/\Ab/);
+
+$t->get_ok('/xrpc/com.atproto.sync.getHead?did=did:web:missing.test')
+  ->status_is(400)
+  ->json_is('/error' => 'RepoNotFound');
 
 $t->post_ok('/xrpc/com.atproto.repo.deleteRecord' => { Authorization => "Bearer $access" } => json => {
   repo       => $did,
