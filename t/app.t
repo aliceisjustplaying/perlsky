@@ -90,6 +90,14 @@ $fresh->post_ok('/xrpc/com.atproto.server.createAccount' => json => {
   ->json_is('/error' => 'InvalidRequest')
   ->json_is('/message' => 'Password too long. Maximum length is 256 characters.');
 
+$fresh->post_ok('/xrpc/com.atproto.server.createAccount' => json => {
+  handle   => 'bademail.localhost',
+  email    => 'not-an-email',
+  password => 'hunter22',
+})->status_is(400)
+  ->json_is('/error' => 'InvalidRequest')
+  ->json_is('/message' => 'This email address is not supported, please use a different email.');
+
 $fresh->get_ok("/xrpc/com.atproto.identity.resolveHandle?handle=alice.localhost")
   ->status_is(200)
   ->json_is('/did' => $user_did);

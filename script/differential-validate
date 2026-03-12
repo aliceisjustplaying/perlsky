@@ -567,6 +567,11 @@ for my $name (sort keys %server) {
     email    => "toolong-$name-" . substr(random_hex(3), 0, 6) . '@test.com',
     password => ('x' x 257),
   });
+  my $invalid_email_create = post_json($server{$name}{origin}, 'com.atproto.server.createAccount', {
+    handle   => "bademail-$name-" . substr(random_hex(3), 0, 6),
+    email    => 'not-an-email',
+    password => 'hunter22',
+  });
   my $too_long_session = post_json($server{$name}{origin}, 'com.atproto.server.createSession', {
     identifier => $server{$name}{handle},
     password   => ('x' x 513),
@@ -577,6 +582,7 @@ for my $name (sort keys %server) {
 
   $server{$name}{password_boundaries} = {
     create_too_long  => normalize_xrpc_error($too_long_create),
+    create_bad_email => normalize_xrpc_error($invalid_email_create),
     session_too_long => normalize_xrpc_error($too_long_session),
     reset_uppercase  => {
       status     => $password_reset_upper->code // 0,

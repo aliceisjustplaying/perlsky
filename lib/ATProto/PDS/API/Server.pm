@@ -77,6 +77,12 @@ sub register_server_handlers ($registry, $app) {
       if length($password) < 8;
     xrpc_error(400, 'InvalidRequest', "Password too long. Maximum length is $NEW_PASSWORD_MAX_LENGTH characters.")
       if length($password) > $NEW_PASSWORD_MAX_LENGTH;
+    my $email = undef;
+    if (defined($body->{email}) && length($body->{email})) {
+      $email = _supported_email($body->{email});
+      xrpc_error(400, 'InvalidRequest', 'This email address is not supported, please use a different email.')
+        unless defined $email;
+    }
 
     my $invite;
     if (defined($body->{inviteCode}) && length($body->{inviteCode})) {
@@ -135,8 +141,8 @@ sub register_server_handlers ($registry, $app) {
       account_id            => $account_id,
       did                   => $did,
       handle                => $handle,
-      email                 => $body->{email},
-      email_confirmed_at    => _initial_email_confirmed_at($c, $body->{email}),
+      email                 => $email,
+      email_confirmed_at    => _initial_email_confirmed_at($c, $email),
       password_hash         => $password_record->{hash},
       password_salt         => $password_record->{salt},
       deactivated_at        => $deactivated_at,
