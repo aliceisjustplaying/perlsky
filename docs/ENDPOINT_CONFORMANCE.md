@@ -40,13 +40,13 @@ These surfaces are covered locally but are not currently executable-differenced 
 - `com.atproto.sync.notifyOfUpdate`
   Locally covered in `t/uncovered-endpoints.t`; not wired as a comparable public surface in the current official runtime.
 - `com.atproto.admin.updateAccountSigningKey`
-  Locally covered and aligned to lexicon-void response semantics; no matching official external endpoint wiring was found in the current reference build.
+  Locally covered in `t/admin-account-surfaces.t` and aligned to lexicon-void response semantics; no matching official external endpoint wiring was found in the current reference build.
 - `com.atproto.admin.searchAccounts`
-  Implemented and tested locally; not exposed by the current official runtime.
+  Implemented and tested locally in `t/admin-account-surfaces.t`; not exposed by the current official runtime.
 - `com.atproto.sync.listReposByCollection`
-  Present in the published lexicon and covered locally, but not exposed by the current official runtime.
+  Present in the published lexicon and covered locally in `t/discovery-surfaces.t`, but not exposed by the current official runtime.
 - `com.atproto.temp.*`
-  `requestPhoneVerification`, `revokeAccountCredentials`, `checkSignupQueue`, `dereferenceScope`, and `fetchLabels` are locally covered but do not have a like-for-like official public comparison surface.
+  `requestPhoneVerification`, `revokeAccountCredentials`, `checkSignupQueue`, `dereferenceScope`, and `fetchLabels` are locally covered in `t/temp-endpoints.t`, `t/extended-api.t`, and `t/external-surface.t`, but do not have a like-for-like official public comparison surface.
 - local label RPCs
   `com.atproto.label.queryLabels`, `subscribeLabels`, and `com.atproto.temp.fetchLabels` are verified locally; the official runtime does not provide a directly comparable local-labeler implementation.
 - local appview emulation
