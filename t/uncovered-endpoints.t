@@ -374,6 +374,26 @@ $t->post_ok('/xrpc/com.atproto.server.createAppPassword' => {
 
 my $app_password = $t->tx->res->json->{password};
 
+$t->get_ok('/xrpc/com.atproto.temp.checkSignupQueue')
+  ->status_is(200)
+  ->json_is('/activated' => JSON::PP::true);
+
+$t->get_ok('/xrpc/com.atproto.temp.dereferenceScope?scope=ref:app.bsky.feed.post')
+  ->status_is(200)
+  ->json_is('/scope' => 'app.bsky.feed.post');
+
+$t->get_ok('/xrpc/com.atproto.temp.dereferenceScope?scope=app.bsky.feed.post')
+  ->status_is(400)
+  ->json_is('/error' => 'InvalidScopeReference');
+
+$t->get_ok('/xrpc/com.atproto.temp.dereferenceScope?scope=ref:')
+  ->status_is(400)
+  ->json_is('/error' => 'InvalidScopeReference');
+
+$t->post_ok('/xrpc/com.atproto.temp.requestPhoneVerification' => json => {})
+  ->status_is(200)
+  ->json_is({});
+
 $t->post_ok('/xrpc/com.atproto.temp.revokeAccountCredentials' => json => {
   account => $did,
 })->status_is(401)
