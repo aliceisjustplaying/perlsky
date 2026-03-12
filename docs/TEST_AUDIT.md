@@ -116,7 +116,7 @@ The current suite splits into three broad buckets:
 Current suite counts by bucket:
 
 - `direct reference differential`: `5`
-- `audited local regression`: `30`
+- `audited local regression`: `31`
 - `local correctness/infrastructure`: `13`
 
 | Test file | Bucket | Current note |
@@ -141,7 +141,8 @@ Current suite counts by bucket:
 | `t/external-surface.t` | audited local regression | mixes reference-aligned repo/sync/blob/account-status behavior with local-only surfaces such as `resolveLexicon`, `checkHandleAvailability`, and `listReposByCollection`; intentionally broad, with order-insensitive label assertions rather than brittle ordering |
 | `t/firehose.t` | audited local regression | repo subscription lifecycle, cursor, and CAR behavior |
 | `t/identity.t` | local correctness/infrastructure | lower-level handle and DID helper coverage, including DNS-over-well-known preference and malformed-handle rejection |
-| `t/import-repo.t` | audited local regression | mostly reference-aligned `importRepo` snapshot-restore and rollback behavior, plus one local policy assertion for the disabled-import service gate |
+| `t/import-repo.t` | audited local regression | focused `importRepo` snapshot-restore and rollback behavior, now cleaner after splitting the disabled-import policy gate into its own suite |
+| `t/import-repo-policy.t` | audited local regression | local service-policy coverage for the `accepting_imports` gate on `importRepo` |
 | `t/invite-gating.t` | audited local regression | self-service invite flag behavior |
 | `t/ipld-canonical.t` | local correctness/infrastructure | canonical IPLD encoding invariants |
 | `t/ipld-codecs.t` | local correctness/infrastructure | DAG-CBOR and codec coverage |
