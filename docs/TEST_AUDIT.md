@@ -113,6 +113,12 @@ The current suite splits into three broad buckets:
 - `local correctness/infrastructure`
   - important tests that are mostly implementation-facing or fixture-facing and were kept green, but not all were manually cross-checked against Pegasus and RSKY yet
 
+Current suite counts by bucket:
+
+- `direct reference differential`: `5`
+- `audited local regression`: `30`
+- `local correctness/infrastructure`: `13`
+
 | Test file | Bucket | Current note |
 | --- | --- | --- |
 | `t/admin-account-info-helper.t` | local correctness/infrastructure | focused helper coverage for admin account-view shaping, invite metadata, and entryway-mode omissions |
