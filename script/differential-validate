@@ -1339,6 +1339,64 @@ check(
   'putRecord create-or-update semantics match the official reference PDS',
 );
 
+note('Comparing sync.getRecord deleted-record proof semantics');
+for my $name (sort keys %server) {
+  my $create_res = post_json($server{$name}{origin}, 'com.atproto.repo.createRecord', {
+    repo       => $server{$name}{did},
+    collection => 'app.bsky.feed.post',
+    rkey       => 'sync-delete-proof',
+    record     => {
+      %{$record},
+      text => "sync delete proof validation for $name",
+    },
+  }, auth_header($server{$name}{access}));
+  check($create_res->is_success, "$name createRecord succeeds for deleted sync proof comparison");
+  next unless $create_res->is_success;
+
+  my $deleted_record_cid = ($create_res->json || {})->{cid};
+  my $delete_res = post_json($server{$name}{origin}, 'com.atproto.repo.deleteRecord', {
+    repo       => $server{$name}{did},
+    collection => 'app.bsky.feed.post',
+    rkey       => 'sync-delete-proof',
+  }, auth_header($server{$name}{access}));
+  check($delete_res->is_success, "$name deleteRecord succeeds for deleted sync proof comparison");
+  next unless $delete_res->is_success;
+
+  my $latest_commit = get_form(
+    $server{$name}{origin},
+    'com.atproto.sync.getLatestCommit',
+    { did => $server{$name}{did} },
+  );
+  check($latest_commit->is_success, "$name getLatestCommit succeeds after deleted sync proof setup");
+
+  my $sync_record = get_form($server{$name}{origin}, 'com.atproto.sync.getRecord', {
+    did        => $server{$name}{did},
+    collection => 'app.bsky.feed.post',
+    rkey       => 'sync-delete-proof',
+  });
+  my $sync_car = $sync_record->is_success ? read_car($sync_record->body // q()) : undef;
+  my $latest_commit_json = $latest_commit->json || {};
+  $server{$name}{deleted_sync_record_proof} = {
+    proof_ok                => $sync_record->is_success ? 1 : 0,
+    proof_is_car            => (($sync_record->headers->content_type // q()) =~ m{application/vnd\.ipld\.car}) ? 1 : 0,
+    proof_root_matches_head => (
+      $sync_car
+      && $sync_car->{roots}[0]
+      && (($sync_car->{roots}[0]->to_string // q()) eq (($latest_commit_json->{cid} // q())))
+    ) ? 1 : 0,
+    proof_omits_record      => (
+      !$sync_car
+      || !scalar(grep { $_->{cid}->to_string eq $deleted_record_cid } @{ $sync_car->{blocks} || [] })
+    ) ? 1 : 0,
+    proof_has_tree          => ($sync_car && @{ $sync_car->{blocks} || [] } >= 2) ? 1 : 0,
+  };
+}
+
+check(
+  same_hash($server{reference}{deleted_sync_record_proof}, $server{perlsky}{deleted_sync_record_proof}),
+  'sync.getRecord deleted-record proof semantics match the official reference PDS',
+);
+
 note('Comparing repo stale-cid and missing-delete semantics');
 for my $name (sort keys %server) {
   my $stale_get = get_form($server{$name}{origin}, 'com.atproto.repo.getRecord', {
