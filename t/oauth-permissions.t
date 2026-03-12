@@ -36,6 +36,7 @@ my $config = {
   service_did_method    => 'did:web',
   service_handle_domain => 'localhost',
   jwt_secret            => 'test-secret',
+  testing_auto_confirm_email => 1,
   data_dir              => $tmp,
   db_path               => File::Spec->catfile($tmp, 'perlsky.sqlite'),
 };

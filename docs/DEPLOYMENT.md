@@ -291,7 +291,7 @@ Passwords must be at least 8 characters long.
 
 If you are running without outbound email during smoke/dev work, the safer testing knobs are:
 
-- `testing_auto_confirm_email`: mark new-account emails as confirmed immediately.
+- `testing_auto_confirm_email`: explicitly opt into marking new-account emails as confirmed immediately.
 - `testing_allow_unauthenticated_email_confirm`: allow `com.atproto.server.confirmEmail` without a bearer token for local testing only.
 
 Both are intended for testing environments. Leave them off in normal deployments.

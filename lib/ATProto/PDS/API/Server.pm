@@ -531,7 +531,7 @@ sub register_server_handlers ($registry, $app) {
     my $account = $c->store->get_account_by_did($token->{did});
     xrpc_error(404, 'AccountNotFound', 'Account was not found') unless $account;
     my $email = _normalize_email($body->{email}) // q();
-    xrpc_error(400, 'InvalidEmail', 'Token was not issued for that email')
+    xrpc_error(400, 'InvalidEmail', 'invalid email')
       unless length($email)
       && ($token->{email} // q()) eq $email
       && ($account->{email} // q()) eq $email;
@@ -582,7 +582,7 @@ sub register_server_handlers ($registry, $app) {
     xrpc_error(400, 'InvalidRequest', 'This email address is not supported, please use a different email.')
       unless defined $email;
     if (defined $account->{email_confirmed_at}) {
-      xrpc_error(400, 'TokenRequired', 'A confirmation token is required to update email')
+      xrpc_error(400, 'TokenRequired', 'confirmation token required')
         unless defined($body->{token}) && length($body->{token});
       my $token = _require_action_token($c,
         token   => $body->{token},
@@ -1177,7 +1177,7 @@ sub _uses_admin_authorization ($c) {
 
 sub _initial_email_confirmed_at ($c, $email) {
   return undef unless defined $email && length $email;
-  return undef unless $c->config_value('testing_auto_confirm_email', 1);
+  return undef unless $c->config_value('testing_auto_confirm_email', 0);
   return time;
 }
 
@@ -1194,7 +1194,7 @@ sub _require_action_token ($c, %args) {
   xrpc_error(400, 'InvalidToken', 'Token purpose did not match')
     unless ($token->{purpose} // q()) eq ($args{purpose} // q());
   xrpc_error(400, 'InvalidToken', 'Token has already been used') if defined $token->{consumed_at};
-  xrpc_error(400, 'ExpiredToken', 'Token has expired')
+  xrpc_error(400, 'ExpiredToken', 'Token is expired')
     if defined($token->{expires_at}) && $token->{expires_at} < time;
   return $token;
 }

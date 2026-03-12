@@ -5,6 +5,7 @@ use feature 'signatures';
 no warnings 'experimental::signatures';
 
 use Config ();
+use DBI ();
 use File::Basename qw(dirname);
 use File::Path qw(make_path);
 use File::Spec;
@@ -367,6 +368,71 @@ sub wait_for_crawler_requests ($name, $origin, $minimum = 1, $timeout = 10) {
   die "timed out waiting for $name crawler requests at $origin\n";
 }
 
+sub sqlite_dbh ($path) {
+  return DBI->connect(
+    "dbi:SQLite:dbname=$path",
+    q(),
+    q(),
+    {
+      RaiseError => 1,
+      PrintError => 0,
+      AutoCommit => 1,
+    },
+  );
+}
+
+sub latest_email_token_record ($server, $purpose_key, $did) {
+  my $purpose = $server->{token_purpose}{$purpose_key} // die "unknown token purpose $purpose_key\n";
+  my $dbh = sqlite_dbh($server->{db_path});
+  my ($sql, @bind);
+  if (($server->{token_backend} // q()) eq 'reference') {
+    $sql = q{
+      SELECT did, purpose, token, requestedAt
+      FROM email_token
+      WHERE did = ? AND purpose = ?
+      ORDER BY requestedAt DESC
+      LIMIT 1
+    };
+    @bind = ($did, $purpose);
+  } else {
+    $sql = q{
+      SELECT did, purpose, token, email, created_at, expires_at, consumed_at
+      FROM action_tokens
+      WHERE did = ? AND purpose = ?
+      ORDER BY rowid DESC
+      LIMIT 1
+    };
+    @bind = ($did, $purpose);
+  }
+  my $row = $dbh->selectrow_hashref($sql, undef, @bind);
+  $dbh->disconnect;
+  return $row;
+}
+
+sub expire_email_token_record ($server, $purpose_key, $did) {
+  my $purpose = $server->{token_purpose}{$purpose_key} // die "unknown token purpose $purpose_key\n";
+  my $dbh = sqlite_dbh($server->{db_path});
+  if (($server->{token_backend} // q()) eq 'reference') {
+    $dbh->do(
+      q{UPDATE email_token SET requestedAt = ? WHERE did = ? AND purpose = ?},
+      undef,
+      '2000-01-01T00:00:00.000Z',
+      $did,
+      $purpose,
+    );
+  } else {
+    $dbh->do(
+      q{UPDATE action_tokens SET expires_at = ? WHERE did = ? AND purpose = ? AND consumed_at IS NULL},
+      undef,
+      1,
+      $did,
+      $purpose,
+    );
+  }
+  $dbh->disconnect;
+  return;
+}
+
 note('Preparing official reference runtime');
 setup_reference_runtime();
 
@@ -505,6 +571,13 @@ my %server = (
     email          => 'alice-ref@test.com',
     admin_password => 'reference-admin-secret',
     crawler_origin => $reference_crawler_info->{origin},
+    db_path        => File::Spec->catfile($reference_data, 'data', 'account.sqlite'),
+    token_backend  => 'reference',
+    token_purpose  => {
+      confirm => 'confirm_email',
+      update  => 'update_email',
+      delete  => 'delete_account',
+    },
   },
   perlsky => {
     origin         => "http://127.0.0.1:$perl_port",
@@ -512,6 +585,13 @@ my %server = (
     email          => 'alice-perl@test.com',
     admin_password => 'perlsky-admin-secret',
     crawler_origin => $perlsky_crawler_info->{origin},
+    db_path        => File::Spec->catfile($tmp, 'perlsky.sqlite'),
+    token_backend  => 'perlsky',
+    token_purpose  => {
+      confirm => 'email_confirm',
+      update  => 'email_update',
+      delete  => 'account_delete',
+    },
   },
 );
 
@@ -2335,6 +2415,209 @@ if (!same_hash($server{reference}{admin_account_management}, $server{perlsky}{ad
   fail_check('admin account-management semantics match the official reference PDS');
 } else {
   pass('admin account-management semantics match the official reference PDS');
+}
+
+note('Comparing email and account-delete semantics');
+for my $name (sort keys %server) {
+  my $flow_handle    = $name eq 'reference' ? 'ef-ref.test'  : 'ef-perl.test';
+  my $flow_email     = "emailflow-$name\@test.com";
+  my $updated_email  = "updated-$name\@test.com";
+
+  my $flow_create = post_json($server{$name}{origin}, 'com.atproto.server.createAccount', {
+    handle   => $flow_handle,
+    email    => $flow_email,
+    password => 'hunter22',
+  });
+  check($flow_create->is_success, "$name createAccount succeeds for email lifecycle audit");
+  next unless $flow_create->is_success;
+
+  my $flow_json = $flow_create->json || {};
+  my $flow_did = $flow_json->{did};
+  my $flow_access = $flow_json->{accessJwt};
+
+  my $initial_update = post_empty(
+    $server{$name}{origin},
+    'com.atproto.server.requestEmailUpdate',
+    auth_header($flow_access),
+  );
+  my $request_confirm = post_empty(
+    $server{$name}{origin},
+    'com.atproto.server.requestEmailConfirmation',
+    auth_header($flow_access),
+  );
+  my $confirm_token = latest_email_token_record($server{$name}, 'confirm', $flow_did);
+
+  my $wrong_confirm = post_json(
+    $server{$name}{origin},
+    'com.atproto.server.confirmEmail',
+    {
+      email => "wrong-$name\@test.com",
+      token => $confirm_token->{token},
+    },
+    auth_header($flow_access),
+  );
+  my $confirm_ok = post_json(
+    $server{$name}{origin},
+    'com.atproto.server.confirmEmail',
+    {
+      email => uc $flow_email,
+      token => $confirm_token->{token},
+    },
+    auth_header($flow_access),
+  );
+  my $session_after_confirm = get_json(
+    $server{$name}{origin},
+    'com.atproto.server.getSession',
+    undef,
+    auth_header($flow_access),
+  );
+
+  my $confirmed_update = post_empty(
+    $server{$name}{origin},
+    'com.atproto.server.requestEmailUpdate',
+    auth_header($flow_access),
+  );
+  my $update_token = latest_email_token_record($server{$name}, 'update', $flow_did);
+  my $missing_update_token = post_json(
+    $server{$name}{origin},
+    'com.atproto.server.updateEmail',
+    { email => $updated_email },
+    auth_header($flow_access),
+  );
+
+  expire_email_token_record($server{$name}, 'update', $flow_did);
+  my $expired_update = post_json(
+    $server{$name}{origin},
+    'com.atproto.server.updateEmail',
+    {
+      email => $updated_email,
+      token => $update_token->{token},
+    },
+    auth_header($flow_access),
+  );
+
+  my $renew_update = post_empty(
+    $server{$name}{origin},
+    'com.atproto.server.requestEmailUpdate',
+    auth_header($flow_access),
+  );
+  my $fresh_update_token = latest_email_token_record($server{$name}, 'update', $flow_did);
+  my $update_ok = post_json(
+    $server{$name}{origin},
+    'com.atproto.server.updateEmail',
+    {
+      email => $updated_email,
+      token => $fresh_update_token->{token},
+    },
+    auth_header($flow_access),
+  );
+  my $session_after_update = get_json(
+    $server{$name}{origin},
+    'com.atproto.server.getSession',
+    undef,
+    auth_header($flow_access),
+  );
+
+  my $request_delete = post_empty(
+    $server{$name}{origin},
+    'com.atproto.server.requestAccountDelete',
+    auth_header($flow_access),
+  );
+  my $delete_token = latest_email_token_record($server{$name}, 'delete', $flow_did);
+
+  expire_email_token_record($server{$name}, 'delete', $flow_did);
+  my $expired_delete = post_json(
+    $server{$name}{origin},
+    'com.atproto.server.deleteAccount',
+    {
+      did      => $flow_did,
+      password => 'hunter22',
+      token    => $delete_token->{token},
+    },
+  );
+
+  my $renew_delete = post_empty(
+    $server{$name}{origin},
+    'com.atproto.server.requestAccountDelete',
+    auth_header($flow_access),
+  );
+  my $fresh_delete_token = latest_email_token_record($server{$name}, 'delete', $flow_did);
+  my $delete_ok = post_json(
+    $server{$name}{origin},
+    'com.atproto.server.deleteAccount',
+    {
+      did      => $flow_did,
+      password => 'hunter22',
+      token    => $fresh_delete_token->{token},
+    },
+  );
+  my $post_delete_login = post_json($server{$name}{origin}, 'com.atproto.server.createSession', {
+    identifier => $flow_handle,
+    password   => 'hunter22',
+  });
+
+  $server{$name}{email_account_management} = {
+    confirm => {
+      initial_update => {
+        status         => $initial_update->code // 0,
+        token_required => (($initial_update->json || {})->{tokenRequired} ? 1 : 0),
+      },
+      request_status      => $request_confirm->code // 0,
+      token_present       => $confirm_token && length($confirm_token->{token} // q()) ? 1 : 0,
+      wrong_email_error   => {
+        status  => $wrong_confirm->code // 0,
+        error   => ($wrong_confirm->json || {})->{error},
+        message => ($wrong_confirm->json || {})->{message},
+      },
+      confirm_status      => $confirm_ok->code // 0,
+      session_confirmed   => ($session_after_confirm->json || {})->{emailConfirmed} ? 1 : 0,
+    },
+    update => {
+      request_status      => $confirmed_update->code // 0,
+      token_required      => (($confirmed_update->json || {})->{tokenRequired} ? 1 : 0),
+      token_present       => $update_token && length($update_token->{token} // q()) ? 1 : 0,
+      missing_token_error => {
+        status  => $missing_update_token->code // 0,
+        error   => ($missing_update_token->json || {})->{error},
+        message => ($missing_update_token->json || {})->{message},
+      },
+      expired_token_error => {
+        status  => $expired_update->code // 0,
+        error   => ($expired_update->json || {})->{error},
+        message => ($expired_update->json || {})->{message},
+      },
+      renew_status        => $renew_update->code // 0,
+      fresh_token_present => $fresh_update_token && length($fresh_update_token->{token} // q()) ? 1 : 0,
+      update_status       => $update_ok->code // 0,
+      session_email_matches => (($session_after_update->json || {})->{email} // q()) eq $updated_email ? 1 : 0,
+      session_confirmed   => ($session_after_update->json || {})->{emailConfirmed} ? 1 : 0,
+    },
+    delete => {
+      request_status      => $request_delete->code // 0,
+      token_present       => $delete_token && length($delete_token->{token} // q()) ? 1 : 0,
+      expired_token_error => {
+        status  => $expired_delete->code // 0,
+        error   => ($expired_delete->json || {})->{error},
+        message => ($expired_delete->json || {})->{message},
+      },
+      renew_status        => $renew_delete->code // 0,
+      fresh_token_present => $fresh_delete_token && length($fresh_delete_token->{token} // q()) ? 1 : 0,
+      delete_result       => {
+        status  => $delete_ok->code // 0,
+        error   => ($delete_ok->json || {})->{error},
+        message => ($delete_ok->json || {})->{message},
+      },
+      post_delete_login   => normalize_xrpc_error($post_delete_login),
+    },
+  };
+}
+
+if (!same_hash($server{reference}{email_account_management}, $server{perlsky}{email_account_management})) {
+  note('reference email account management: ' . encode_json($server{reference}{email_account_management}));
+  note('perlsky email account management: ' . encode_json($server{perlsky}{email_account_management}));
+  fail_check('email and account-delete semantics match the official reference PDS');
+} else {
+  pass('email and account-delete semantics match the official reference PDS');
 }
 
 if ($failed) {
