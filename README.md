@@ -8,9 +8,6 @@ An AT Protocol Personal Data Server written in Perl 5 that has been extensively 
 
 Look, it started as a joke and then quickly got out of hand.
 
-## What
-
-
 ## Quick start
 
 ```sh
