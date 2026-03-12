@@ -2731,6 +2731,15 @@ for my $name (sort keys %server) {
   check($unused_batch->is_success, "$name createInviteCodes succeeds for unused-code batch");
   next unless $unused_batch->is_success;
   my $unused_code = (($unused_batch->json || {})->{codes} || [])->[0]{codes}[0];
+  my $disable_unused = post_json(
+    $server{$name}{origin},
+    'com.atproto.admin.disableInviteCodes',
+    {
+      codes => [$unused_code],
+    },
+    admin_auth_header($server{$name}{admin_password}),
+  );
+  check($disable_unused->is_success, "$name disableInviteCodes succeeds");
 
   my $invite_first = post_json($server{$name}{origin}, 'com.atproto.server.createAccount', {
     handle     => $name eq 'reference' ? 'invite-a-ref.test'  : 'invite-a-perl.test',
@@ -2802,6 +2811,10 @@ for my $name (sort keys %server) {
   };
 
   $server{$name}{admin_invite_code_listing} = {
+    disable_unused => {
+      status => $disable_unused->code // 0,
+      body   => $disable_unused->body,
+    },
     recent => {
       cursor_present => defined(($recent->json || {})->{cursor}) ? 1 : 0,
       codes          => $normalize_codes->(($recent->json || {})->{codes} || []),
