@@ -8,7 +8,6 @@ no warnings 'experimental::signatures';
 use Exporter 'import';
 use Mojo::URL;
 use Mojo::UserAgent;
-use Net::DNS::Resolver;
 
 use ATProto::PDS::PLC qw(account_did_method format_plc_did_doc is_plc_did recommended_did_credentials);
 
@@ -169,7 +168,11 @@ sub _coerce_config ($config_or_url) {
 }
 
 sub _resolve_handle_dns ($handle) {
-  state $resolver = Net::DNS::Resolver->new;
+  state $resolver = do {
+    return undef unless eval { require Net::DNS::Resolver; 1 };
+    Net::DNS::Resolver->new;
+  };
+  return undef unless $resolver;
   my $packet = eval { $resolver->search('_atproto.' . $handle, 'TXT') };
   return undef if $@ || !$packet;
 
