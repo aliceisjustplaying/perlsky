@@ -12,6 +12,7 @@ Current direction:
 The immediate goal is a PDS that is pleasant to hack on and interoperable enough to be exercised with real AT Protocol clients and repo sync tooling.
 
 Developer-oriented notes about the current facade/module split live in `docs/CODE_STRUCTURE.md`.
+Endpoint-by-endpoint conformance status lives in `docs/ENDPOINT_CONFORMANCE.md`.
 
 Reference differential validation:
 
