@@ -382,7 +382,15 @@ $t->post_ok('/xrpc/com.atproto.admin.disableAccountInvites' => {
   account => $did,
   note    => 'paused for audit',
 })->status_is(200)
-  ->json_is({});
+  ->content_is(q());
+
+$t->post_ok('/xrpc/com.atproto.admin.disableAccountInvites' => {
+  Authorization => $admin_auth,
+} => json => {
+  account => 'did:web:missing.test',
+  note    => 'ignored',
+})->status_is(200)
+  ->content_is(q());
 
 $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.admin.getAccountInfo')->query(
   did => $did,
@@ -404,7 +412,15 @@ $t->post_ok('/xrpc/com.atproto.admin.enableAccountInvites' => {
 } => json => {
   account => $did,
 })->status_is(200)
-  ->json_is({});
+  ->content_is(q());
+
+$t->post_ok('/xrpc/com.atproto.admin.enableAccountInvites' => {
+  Authorization => $admin_auth,
+} => json => {
+  account => 'did:web:missing.test',
+  note    => 'ignored',
+})->status_is(200)
+  ->content_is(q());
 
 $t->post_ok('/xrpc/com.atproto.server.createInviteCode' => {
   Authorization => "Bearer $access",
@@ -484,7 +500,7 @@ $t->post_ok('/xrpc/com.atproto.admin.updateAccountPassword' => {
   did      => $did,
   password => 'short',
 })->status_is(200)
-  ->json_is({});
+  ->content_is(q());
 
 $t->post_ok('/xrpc/com.atproto.server.createSession' => json => {
   identifier => 'alice.external.test',
@@ -498,7 +514,15 @@ $t->post_ok('/xrpc/com.atproto.admin.updateAccountPassword' => {
   did      => $did,
   password => 'new-hunter22',
 })->status_is(200)
-  ->json_is({});
+  ->content_is(q());
+
+$t->post_ok('/xrpc/com.atproto.admin.updateAccountPassword' => {
+  Authorization => $admin_auth,
+} => json => {
+  did      => 'did:web:missing.test',
+  password => 'new-hunter22',
+})->status_is(200)
+  ->content_is(q());
 
 $t->get_ok('/xrpc/com.atproto.server.getSession' => {
   Authorization => "Bearer $access",

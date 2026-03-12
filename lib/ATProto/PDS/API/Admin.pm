@@ -162,18 +162,18 @@ sub register_admin_handlers ($registry, $app) {
     my $body = $c->req->json || {};
     xrpc_error(400, 'InvalidRequest', 'Invalid password length.')
       if length($body->{password} // q()) > $NEW_PASSWORD_MAX_LENGTH;
-    my $account = $c->store->get_account_by_did($body->{did} // q());
-    xrpc_error(404, 'AccountNotFound', 'Account was not found') unless $account;
     my $password_record = hash_password($body->{password});
     $c->store->txn(sub ($dbh) {
+      my $did = $body->{did} // q();
       $c->store->update_account(
-        $account->{did},
+        $did,
         password_hash => $password_record->{hash},
         password_salt => $password_record->{salt},
       );
-      $c->store->revoke_sessions_by_did($account->{did});
+      $c->store->revoke_sessions_by_did($did);
     });
-    return {};
+    $c->render(data => q());
+    return;
   });
 
   $registry->register('com.atproto.admin.updateAccountEmail', sub ($c, $endpoint) {
@@ -401,14 +401,13 @@ sub _label_uri_and_cid ($subject) {
 }
 
 sub _set_account_invites ($c, $identifier, $disabled, $note) {
-  my $account = $c->store->get_account_by_did($identifier // q());
-  xrpc_error(404, 'AccountNotFound', 'Account was not found') unless $account;
   $c->store->update_account(
-    $account->{did},
+    $identifier // q(),
     invites_disabled => $disabled ? 1 : 0,
     invite_note      => undef,
   );
-  return {};
+  $c->render(data => q());
+  return;
 }
 
 sub _append_account_event ($c, $did, $account, $payload) {

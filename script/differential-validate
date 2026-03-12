@@ -2374,6 +2374,15 @@ for my $name (sort keys %server) {
     },
     admin_auth_header($server{$name}{admin_password}),
   );
+  my $disable_invites_missing = post_json(
+    $server{$name}{origin},
+    'com.atproto.admin.disableAccountInvites',
+    {
+      account => 'did:web:missing.test',
+      note    => 'diff disable missing',
+    },
+    admin_auth_header($server{$name}{admin_password}),
+  );
   my $disabled_info = get_form(
     $server{$name}{origin},
     'com.atproto.admin.getAccountInfo',
@@ -2386,6 +2395,15 @@ for my $name (sort keys %server) {
     {
       account => $server{$name}{did},
       note    => 'diff enable',
+    },
+    admin_auth_header($server{$name}{admin_password}),
+  );
+  my $enable_invites_missing = post_json(
+    $server{$name}{origin},
+    'com.atproto.admin.enableAccountInvites',
+    {
+      account => 'did:web:missing.test',
+      note    => 'diff enable missing',
     },
     admin_auth_header($server{$name}{admin_password}),
   );
@@ -2409,6 +2427,15 @@ for my $name (sort keys %server) {
     'com.atproto.admin.updateAccountPassword',
     {
       did      => $server{$name}{secondary_did},
+      password => 'newhunter22',
+    },
+    admin_auth_header($server{$name}{admin_password}),
+  );
+  my $reset_password_missing = post_json(
+    $server{$name}{origin},
+    'com.atproto.admin.updateAccountPassword',
+    {
+      did      => 'did:web:missing.test',
       password => 'newhunter22',
     },
     admin_auth_header($server{$name}{admin_password}),
@@ -2458,17 +2485,29 @@ for my $name (sort keys %server) {
       invites_disabled => $disabled_json->{invitesDisabled} ? 1 : 0,
       invite_note      => $disabled_json->{inviteNote},
     },
+    disable_account_invites_missing => {
+      status => $disable_invites_missing->code // 0,
+      body   => $disable_invites_missing->body,
+    },
     enable_account_invites => {
       status           => $enable_invites->code // 0,
       enabled_status   => $enabled_info->code // 0,
       invites_disabled => $enabled_json->{invitesDisabled} ? 1 : 0,
       invite_note      => $enabled_json->{inviteNote},
     },
+    enable_account_invites_missing => {
+      status => $enable_invites_missing->code // 0,
+      body   => $enable_invites_missing->body,
+    },
     update_password_short => normalize_xrpc_error($short_password),
     update_password_reset => {
       status     => $reset_password->code // 0,
       old_login  => normalize_xrpc_error($old_secondary_login),
       new_login  => normalize_xrpc_error($new_secondary_login),
+    },
+    update_password_missing => {
+      status => $reset_password_missing->code // 0,
+      body   => $reset_password_missing->body,
     },
   };
 }
