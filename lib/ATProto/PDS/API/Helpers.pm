@@ -170,13 +170,9 @@ sub admin_account_view ($store, $account, %args) {
 
 sub invite_code_view ($store, $row) {
   my $uses = $store->list_invite_code_uses($row->{code});
-  my $consumed = scalar @$uses;
-  my $available = ($row->{use_count} // 0) - $consumed;
-  $available = 0 if $available < 0;
-
   return {
     code       => $row->{code},
-    available  => $row->{disabled} ? 0 : $available,
+    available  => 0 + ($row->{use_count} // 0),
     disabled   => $row->{disabled} ? JSON::PP::true : JSON::PP::false,
     forAccount => $row->{for_account} // q(),
     createdBy  => $row->{created_by} // q(),

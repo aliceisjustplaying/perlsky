@@ -2417,6 +2417,126 @@ if (!same_hash($server{reference}{admin_account_management}, $server{perlsky}{ad
   pass('admin account-management semantics match the official reference PDS');
 }
 
+note('Comparing admin invite-code listing semantics');
+for my $name (sort keys %server) {
+  my $used_batch = post_json(
+    $server{$name}{origin},
+    'com.atproto.server.createInviteCodes',
+    {
+      codeCount => 1,
+      useCount  => 2,
+    },
+    admin_auth_header($server{$name}{admin_password}),
+  );
+  check($used_batch->is_success, "$name createInviteCodes succeeds for used-code batch");
+  next unless $used_batch->is_success;
+  my $used_code = (($used_batch->json || {})->{codes} || [])->[0]{codes}[0];
+
+  sleep 1.1;
+
+  my $unused_batch = post_json(
+    $server{$name}{origin},
+    'com.atproto.server.createInviteCodes',
+    {
+      codeCount => 1,
+      useCount  => 1,
+    },
+    admin_auth_header($server{$name}{admin_password}),
+  );
+  check($unused_batch->is_success, "$name createInviteCodes succeeds for unused-code batch");
+  next unless $unused_batch->is_success;
+  my $unused_code = (($unused_batch->json || {})->{codes} || [])->[0]{codes}[0];
+
+  my $invite_first = post_json($server{$name}{origin}, 'com.atproto.server.createAccount', {
+    handle     => $name eq 'reference' ? 'invite-a-ref.test'  : 'invite-a-perl.test',
+    email      => "invite-a-$name\@test.com",
+    password   => 'hunter22',
+    inviteCode => $used_code,
+  });
+  check($invite_first->is_success, "$name first invite-code account creation succeeds");
+  next unless $invite_first->is_success;
+  my $invite_first_did = ($invite_first->json || {})->{did};
+
+  sleep 1.1;
+
+  my $invite_second = post_json($server{$name}{origin}, 'com.atproto.server.createAccount', {
+    handle     => $name eq 'reference' ? 'invite-b-ref.test'  : 'invite-b-perl.test',
+    email      => "invite-b-$name\@test.com",
+    password   => 'hunter22',
+    inviteCode => $used_code,
+  });
+  check($invite_second->is_success, "$name second invite-code account creation succeeds");
+  next unless $invite_second->is_success;
+  my $invite_second_did = ($invite_second->json || {})->{did};
+
+  my $recent = get_form(
+    $server{$name}{origin},
+    'com.atproto.admin.getInviteCodes',
+    { sort => 'recent', limit => 10 },
+    admin_auth_header($server{$name}{admin_password}),
+  );
+  check($recent->is_success, "$name getInviteCodes recent succeeds");
+
+  my $usage = get_form(
+    $server{$name}{origin},
+    'com.atproto.admin.getInviteCodes',
+    { sort => 'usage', limit => 10 },
+    admin_auth_header($server{$name}{admin_password}),
+  );
+  check($usage->is_success, "$name getInviteCodes usage succeeds");
+
+  my $bad_sort = get_form(
+    $server{$name}{origin},
+    'com.atproto.admin.getInviteCodes',
+    { sort => 'bogus', limit => 10 },
+    admin_auth_header($server{$name}{admin_password}),
+  );
+
+  my %code_label = (
+    ($used_code   // q()) => 'used',
+    ($unused_code // q()) => 'unused',
+  );
+  my %did_label = (
+    ($invite_first_did  // q()) => 'first',
+    ($invite_second_did // q()) => 'second',
+  );
+  my $normalize_codes = sub ($rows) {
+    return [
+      map {
+        +{
+          label      => $code_label{$_->{code} // q()} // 'unknown',
+          available  => $_->{available},
+          disabled   => $_->{disabled} ? 1 : 0,
+          forAccount => $_->{forAccount},
+          createdBy  => $_->{createdBy},
+          uses_count => scalar @{ $_->{uses} || [] },
+          use_labels => [ map { $did_label{$_->{usedBy} // q()} // 'unknown' } @{ $_->{uses} || [] } ],
+        }
+      } @$rows
+    ];
+  };
+
+  $server{$name}{admin_invite_code_listing} = {
+    recent => {
+      cursor_present => defined(($recent->json || {})->{cursor}) ? 1 : 0,
+      codes          => $normalize_codes->(($recent->json || {})->{codes} || []),
+    },
+    usage => {
+      cursor_present => defined(($usage->json || {})->{cursor}) ? 1 : 0,
+      codes          => $normalize_codes->(($usage->json || {})->{codes} || []),
+    },
+    bad_sort => normalize_xrpc_error($bad_sort),
+  };
+}
+
+if (!same_hash($server{reference}{admin_invite_code_listing}, $server{perlsky}{admin_invite_code_listing})) {
+  note('reference admin invite code listing: ' . encode_json($server{reference}{admin_invite_code_listing}));
+  note('perlsky admin invite code listing: ' . encode_json($server{perlsky}{admin_invite_code_listing}));
+  fail_check('admin invite-code listing semantics match the official reference PDS');
+} else {
+  pass('admin invite-code listing semantics match the official reference PDS');
+}
+
 note('Comparing email and account-delete semantics');
 for my $name (sort keys %server) {
   my $flow_handle    = $name eq 'reference' ? 'ef-ref.test'  : 'ef-perl.test';

@@ -226,6 +226,59 @@ $t->post_ok('/xrpc/com.atproto.server.createInviteCodes' => {
 my @admin_codes = @{ $t->tx->res->json->{codes}[0]{codes} || [] };
 is(scalar @admin_codes, 2, 'admin createInviteCodes returns the requested number of codes');
 
+$app->store->create_invite_code(
+  code       => 'perlsky-audit-used',
+  for_account => 'admin',
+  created_by => 'admin',
+  use_count  => 2,
+  created_at => 4_102_444_700,
+);
+$app->store->create_invite_code(
+  code       => 'perlsky-audit-unused',
+  for_account => 'admin',
+  created_by => 'admin',
+  use_count  => 1,
+  created_at => 4_102_444_800,
+);
+$app->store->record_invite_code_use(
+  code    => 'perlsky-audit-used',
+  used_by => $did,
+  used_at => 4_102_444_900,
+);
+$app->store->record_invite_code_use(
+  code    => 'perlsky-audit-used',
+  used_by => $bob->{did},
+  used_at => 4_102_445_000,
+);
+
+$t->get_ok('/xrpc/com.atproto.admin.getInviteCodes?sort=recent&limit=2' => {
+  Authorization => $admin_auth,
+})->status_is(200)
+  ->json_is('/codes/0/code' => 'perlsky-audit-unused')
+  ->json_is('/codes/1/code' => 'perlsky-audit-used')
+  ->json_has('/cursor');
+
+$t->get_ok('/xrpc/com.atproto.admin.getInviteCodes?sort=usage&limit=20' => {
+  Authorization => $admin_auth,
+})->status_is(200)
+  ->json_is('/codes/0/code' => 'perlsky-audit-used')
+  ->json_is('/codes/0/available' => 2)
+  ->json_is('/codes/0/uses/0/usedBy' => $bob->{did})
+  ->json_is('/codes/0/uses/1/usedBy' => $did)
+  ->json_has('/cursor');
+
+my $usage_codes = $t->tx->res->json->{codes} || [];
+ok(
+  scalar(grep { ($_->{code} // q()) eq 'perlsky-audit-unused' } @$usage_codes),
+  'usage invite-code listing includes the unused seeded code',
+);
+
+$t->get_ok('/xrpc/com.atproto.admin.getInviteCodes?sort=bogus&limit=2' => {
+  Authorization => $admin_auth,
+})->status_is(400)
+  ->json_is('/error' => 'InvalidRequest')
+  ->json_is('/message' => 'unknown sort method: bogus');
+
 $t->post_ok('/xrpc/com.atproto.admin.disableInviteCodes' => {
   Authorization => $admin_auth,
 } => json => {

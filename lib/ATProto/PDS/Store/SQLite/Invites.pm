@@ -60,39 +60,49 @@ sub list_invite_codes ($self, %args) {
   $limit = 500 if $limit > 500;
   my $cursor = $args{cursor};
   my $sort = $args{sort} // 'recent';
+  die 'unknown sort method' unless $sort eq 'recent' || $sort eq 'usage';
   my @bind;
   my @where;
-  my $sql = q{
+  my $inner_sql = q{
     SELECT invite_codes.*, COUNT(invite_code_uses.code) AS use_count_consumed
     FROM invite_codes
     LEFT JOIN invite_code_uses ON invite_code_uses.code = invite_codes.code
+    GROUP BY invite_codes.code
   };
+  my $sql = "SELECT * FROM ($inner_sql) AS invite_codes";
   if ($sort eq 'usage') {
     if (defined $cursor && length $cursor) {
       my ($cursor_use_count, $cursor_code) = ATProto::PDS::Store::SQLite::_parse_usage_cursor($cursor);
-      push @where, q{(invite_codes.use_count < ? OR (invite_codes.use_count = ? AND invite_codes.code > ?))};
+      push @where, q{(invite_codes.use_count_consumed < ? OR (invite_codes.use_count_consumed = ? AND invite_codes.code > ?))};
       push @bind, $cursor_use_count, $cursor_use_count, $cursor_code;
     }
     $sql .= q{ WHERE } . join(q{ AND }, @where) if @where;
-    $sql .= q{ GROUP BY invite_codes.code ORDER BY invite_codes.use_count DESC, invite_codes.code ASC};
+    $sql .= q{ ORDER BY invite_codes.use_count_consumed DESC, invite_codes.code ASC};
   } else {
     if (defined $cursor && length $cursor) {
       push @where, q{invite_codes.code > ?};
       push @bind, $cursor;
     }
     $sql .= q{ WHERE } . join(q{ AND }, @where) if @where;
-    $sql .= q{ GROUP BY invite_codes.code ORDER BY invite_codes.created_at DESC, invite_codes.code DESC};
+    $sql .= q{ ORDER BY invite_codes.created_at DESC, invite_codes.code DESC};
   }
   $sql .= q{ LIMIT ?};
   push @bind, $limit + 1;
   my $rows = $self->dbh->selectall_arrayref($sql, { Slice => {} }, @bind);
-  return ATProto::PDS::Store::SQLite::_paginate(
+  my $page = ATProto::PDS::Store::SQLite::_paginate(
     $rows,
     $limit,
     $sort eq 'usage'
-      ? sub ($row) { ATProto::PDS::Store::SQLite::_usage_cursor($row->{use_count}, $row->{code}) }
+      ? sub ($row) { ATProto::PDS::Store::SQLite::_usage_cursor($row->{use_count_consumed}, $row->{code}) }
       : 'code',
   );
+  if (!defined($page->{cursor}) && @{ $page->{items} || [] }) {
+    my $last = $page->{items}[-1];
+    $page->{cursor} = $sort eq 'usage'
+      ? ATProto::PDS::Store::SQLite::_usage_cursor($last->{use_count_consumed}, $last->{code})
+      : $last->{code};
+  }
+  return $page;
 }
 
 sub list_invite_codes_for_account ($self, $did) {
@@ -150,7 +160,7 @@ sub record_invite_code_use ($self, %args) {
 
 sub list_invite_code_uses ($self, $code) {
   return $self->dbh->selectall_arrayref(
-    q{SELECT * FROM invite_code_uses WHERE code = ? ORDER BY used_at ASC, used_by ASC},
+    q{SELECT * FROM invite_code_uses WHERE code = ? ORDER BY used_at DESC, used_by ASC},
     { Slice => {} },
     $code,
   );

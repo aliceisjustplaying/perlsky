@@ -217,11 +217,21 @@ sub register_admin_handlers ($registry, $app) {
 
   $registry->register('com.atproto.admin.getInviteCodes', sub ($c, $endpoint) {
     require_admin($c);
-    my $page = $c->store->list_invite_codes(
-      sort   => $c->param('sort') // 'recent',
-      cursor => $c->param('cursor'),
-      limit  => $c->param('limit') // 100,
-    );
+    my $sort = $c->param('sort') // 'recent';
+    xrpc_error(400, 'InvalidRequest', "unknown sort method: $sort")
+      unless $sort eq 'recent' || $sort eq 'usage';
+    my $page = eval {
+      $c->store->list_invite_codes(
+        sort   => $sort,
+        cursor => $c->param('cursor'),
+        limit  => $c->param('limit') // 100,
+      );
+    };
+    if (my $err = $@) {
+      xrpc_error(400, 'InvalidRequest', 'Malformed cursor')
+        if !ref($err) && ($err // q()) =~ /invalid usage cursor/;
+      die $err;
+    }
     return {
       (defined $page->{cursor} ? (cursor => $page->{cursor}) : ()),
       codes => [ map { invite_code_view($c->store, $_) } @{ $page->{items} } ],

@@ -13,7 +13,7 @@ That does not mean every test has been manually revalidated against every other 
 The current baseline for saying "the audited suite is green" is:
 
 - `prove -lr t`
-  - latest full green result in the realigned Meridian worktree: `Files=48, Tests=2950`
+  - latest full green result in the realigned Meridian worktree: `Files=48, Tests=2967`
 - `prove -lv t/server-auth.t`
 - `perl -c script/differential-validate`
 - `PERLSKY_RUN_REFERENCE_DIFF=1 prove -lv t/reference-differential.t`
@@ -60,6 +60,7 @@ When the official runtime and upstream comments disagree, the runtime behavior w
 - `com.atproto.admin.sendEmail` now follows the reference runtime’s `400 InvalidRequest` / `Recipient not found` shape for a missing recipient instead of returning a local `404 AccountNotFound`.
 - `com.atproto.admin.updateAccountPassword` follows the reference runtime’s looser admin policy: it rejects overlong passwords with `400 InvalidRequest` / `Invalid password length.`, but does not impose the normal user-facing minimum-length gate.
 - `com.atproto.admin.disableAccountInvites` / `enableAccountInvites` now ignore the local `note` field so the visible account state matches the official runtime instead of carrying an extra stored `inviteNote`.
+- `com.atproto.admin.getInviteCodes` now matches the official runtime on sort validation, always-emitted cursor behavior, total `available` counts, and newest-first `uses` ordering.
 - `app.bsky.actor.putPreferences` and `app.bsky.notification.putPreferencesV2` now have explicit shape validation plus focused regression coverage, turning an earlier hardening concern into a pinned contract.
 - `com.atproto.identity.resolveHandle` should reject malformed handles with `400 InvalidRequest`, not quietly treat them as misses or return a local `InvalidHandle` variant.
 - `com.atproto.identity.resolveHandle` should treat well-formed but unresolved handles as `400 InvalidRequest` with `Unable to resolve handle`, matching the official runtime instead of returning a local `404 HandleNotFound`.
