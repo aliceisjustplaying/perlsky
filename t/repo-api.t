@@ -338,7 +338,9 @@ ok(
 $t->get_ok("/xrpc/com.atproto.sync.getRepoStatus?did=$did")
   ->status_is(200)
   ->json_is('/did' => $did)
-  ->json_has('/active');
+  ->json_is('/active' => JSON::PP::true)
+  ->json_has('/rev')
+  ->json_hasnt('/status');
 
 $t->get_ok('/xrpc/com.atproto.sync.listRepos')
   ->status_is(200)

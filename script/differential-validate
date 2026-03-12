@@ -986,6 +986,106 @@ check(
   'record takedown sync proof semantics match the official reference PDS',
 );
 
+note('Comparing sync.getRepoStatus status semantics');
+for my $name (sort keys %server) {
+  my $active = get_form($server{$name}{origin}, 'com.atproto.sync.getRepoStatus', {
+    did => $server{$name}{did},
+  });
+  check($active->is_success, "$name active getRepoStatus succeeds");
+
+  my $deactivate = post_json(
+    $server{$name}{origin},
+    'com.atproto.server.deactivateAccount',
+    {},
+    auth_header($server{$name}{access}),
+  );
+  check($deactivate->is_success, "$name deactivateAccount succeeds for repo status comparison");
+
+  my $deactivated = get_form($server{$name}{origin}, 'com.atproto.sync.getRepoStatus', {
+    did => $server{$name}{did},
+  });
+  check($deactivated->is_success, "$name deactivated getRepoStatus succeeds");
+
+  my $deactivated_session = post_json($server{$name}{origin}, 'com.atproto.server.createSession', {
+    identifier => $server{$name}{renamed_handle} || $server{$name}{handle},
+    password   => 'hunter22',
+  });
+  check($deactivated_session->is_success, "$name deactivated createSession succeeds for repo status comparison");
+
+  my $reactivate = post_json(
+    $server{$name}{origin},
+    'com.atproto.admin.updateSubjectStatus',
+    {
+      subject     => {
+        '$type' => 'com.atproto.admin.defs#repoRef',
+        did     => $server{$name}{did},
+      },
+      deactivated => { applied => false },
+    },
+    admin_auth_header($server{$name}{admin_password}),
+  );
+  check($reactivate->is_success, "$name repo reactivation succeeds for repo status comparison");
+
+  my $takedown = post_json(
+    $server{$name}{origin},
+    'com.atproto.admin.updateSubjectStatus',
+    {
+      subject  => {
+        '$type' => 'com.atproto.admin.defs#repoRef',
+        did     => $server{$name}{did},
+      },
+      takedown => { applied => true },
+    },
+    admin_auth_header($server{$name}{admin_password}),
+  );
+  check($takedown->is_success, "$name repo takedown succeeds for repo status comparison");
+
+  my $takendown = get_form($server{$name}{origin}, 'com.atproto.sync.getRepoStatus', {
+    did => $server{$name}{did},
+  });
+  check($takendown->is_success, "$name takendown getRepoStatus succeeds");
+
+  my $restore = post_json(
+    $server{$name}{origin},
+    'com.atproto.admin.updateSubjectStatus',
+    {
+      subject  => {
+        '$type' => 'com.atproto.admin.defs#repoRef',
+        did     => $server{$name}{did},
+      },
+      takedown => { applied => false },
+    },
+    admin_auth_header($server{$name}{admin_password}),
+  );
+  check($restore->is_success, "$name repo takedown restore succeeds for repo status comparison");
+
+  $server{$name}{repo_status_surface} = {
+    active => {
+      ok     => $active->is_success ? 1 : 0,
+      active => ($active->json || {})->{active} ? 1 : 0,
+      status => ($active->json || {})->{status},
+      has_rev => defined(($active->json || {})->{rev}) ? 1 : 0,
+    },
+    deactivated => {
+      ok     => $deactivated->is_success ? 1 : 0,
+      active => ($deactivated->json || {})->{active} ? 1 : 0,
+      status => ($deactivated->json || {})->{status},
+      has_rev => defined(($deactivated->json || {})->{rev}) ? 1 : 0,
+    },
+    takendown => {
+      ok     => $takendown->is_success ? 1 : 0,
+      active => ($takendown->json || {})->{active} ? 1 : 0,
+      status => ($takendown->json || {})->{status},
+      has_rev => defined(($takendown->json || {})->{rev}) ? 1 : 0,
+    },
+  };
+}
+
+check(
+  same_hash($server{reference}{repo_status_surface}, $server{perlsky}{repo_status_surface}),
+  'sync.getRepoStatus active, deactivated, and takendown semantics match the official reference PDS',
+);
+
 note('Comparing describeRepo');
 for my $name (sort keys %server) {
   my $res = get_form($server{$name}{origin}, 'com.atproto.repo.describeRepo', {

@@ -324,6 +324,13 @@ $t->post_ok('/xrpc/com.atproto.server.deactivateAccount' => {
   Authorization => "Bearer $replacement_access",
 } => json => {})->status_is(200);
 
+$t->get_ok("/xrpc/com.atproto.sync.getRepoStatus?did=$did")
+  ->status_is(200)
+  ->json_is('/did' => $did)
+  ->json_is('/active' => JSON::PP::false)
+  ->json_is('/status' => 'deactivated')
+  ->json_hasnt('/rev');
+
 $t->post_ok('/xrpc/com.atproto.server.createSession' => json => {
   identifier => 'alice.localhost',
   password   => 'password123',

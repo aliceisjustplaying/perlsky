@@ -105,6 +105,13 @@ $t->post_ok('/xrpc/com.atproto.admin.updateSubjectStatus' => {
   takedown => { applied => JSON::PP::true },
 })->status_is(200);
 
+$t->get_ok("/xrpc/com.atproto.sync.getRepoStatus?did=$did")
+  ->status_is(200)
+  ->json_is('/did' => $did)
+  ->json_is('/active' => JSON::PP::false)
+  ->json_is('/status' => 'takendown')
+  ->json_hasnt('/rev');
+
 $t->post_ok('/xrpc/com.atproto.server.createSession' => json => {
   identifier => 'alice.example.test',
   password   => 'hunter22',

@@ -17,7 +17,7 @@ use ATProto::PDS::Constants qw(
   EVENT_TYPE_SYNC
 );
 use ATProto::PDS::Identity qw(service_host);
-use ATProto::PDS::Moderation qw(assert_blob_readable assert_repo_readable);
+use ATProto::PDS::Moderation qw(assert_blob_readable assert_repo_readable is_repo_takedown);
 use ATProto::PDS::Repo::CAR qw(write_car);
 use ATProto::PDS::Repo::CID;
 use ATProto::PDS::Repo::Bytes;
@@ -55,13 +55,19 @@ sub register_sync_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.sync.getRepoStatus', sub ($c, $endpoint) {
-    my $account = _readable_repo_by_did($c);
+    my $account = _repo_by_did_or_error($c);
+    my $active = (!defined($account->{deleted_at}) && !defined($account->{deactivated_at}) && !is_repo_takedown($c, $account->{did}))
+      ? JSON::PP::true
+      : JSON::PP::false;
+    my $status = defined($account->{deleted_at})     ? 'deleted'
+      : is_repo_takedown($c, $account->{did})       ? 'takendown'
+      : defined($account->{deactivated_at})          ? 'deactivated'
+      : undef;
     return {
       did    => $account->{did},
-      active => defined($account->{deactivated_at}) ? JSON::PP::false : JSON::PP::true,
-      (defined($account->{repo_rev}) ? (rev => $account->{repo_rev}) : ()),
-      (defined($account->{deactivated_at}) ? (status => 'deactivated') : ()),
-      (defined($account->{deleted_at}) ? (status => 'deleted') : ()),
+      active => $active,
+      ($active ? (defined($account->{repo_rev}) ? (rev => $account->{repo_rev}) : ()) : ()),
+      (defined($status) ? (status => $status) : ()),
     };
   });
 
