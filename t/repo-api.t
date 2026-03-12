@@ -377,6 +377,10 @@ ok(
   'sync.getRecord proof includes the current record block',
 );
 
+$t->get_ok('/xrpc/com.atproto.sync.getRecord?did=did:web:missing.test&collection=app.bsky.feed.post&rkey=first-post')
+  ->status_is(400)
+  ->json_is('/error' => 'RepoNotFound');
+
 $t->get_ok("/xrpc/com.atproto.sync.getRepoStatus?did=$did")
   ->status_is(200)
   ->json_is('/did' => $did)
@@ -397,10 +401,18 @@ $t->get_ok("/xrpc/com.atproto.sync.getRepo?did=$did")
   ->content_type_like(qr{application/vnd\.ipld\.car})
   ->content_like(qr/.+/s);
 
+$t->get_ok('/xrpc/com.atproto.sync.getRepo?did=did:web:missing.test')
+  ->status_is(400)
+  ->json_is('/error' => 'RepoNotFound');
+
 $t->get_ok("/xrpc/com.atproto.sync.getCheckout?did=$did")
   ->status_is(200)
   ->content_type_like(qr{application/vnd\.ipld\.car})
   ->content_like(qr/.+/s);
+
+$t->get_ok('/xrpc/com.atproto.sync.getCheckout?did=did:web:missing.test')
+  ->status_is(400)
+  ->json_is('/error' => 'RepoNotFound');
 
 $t->get_ok("/xrpc/com.atproto.sync.getHead?did=$did")
   ->status_is(200)

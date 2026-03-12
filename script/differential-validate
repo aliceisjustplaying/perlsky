@@ -1887,6 +1887,17 @@ for my $name (sort keys %server) {
     latest_commit   => normalize_xrpc_error(get_form($server{$name}{origin}, 'com.atproto.sync.getLatestCommit', {
       did => $missing_did,
     })),
+    sync_record     => normalize_xrpc_error(get_form($server{$name}{origin}, 'com.atproto.sync.getRecord', {
+      did        => $missing_did,
+      collection => 'app.bsky.feed.post',
+      rkey       => 'diffpost',
+    })),
+    repo_export     => normalize_xrpc_error(get_form($server{$name}{origin}, 'com.atproto.sync.getRepo', {
+      did => $missing_did,
+    })),
+    checkout_export => normalize_xrpc_error(get_form($server{$name}{origin}, 'com.atproto.sync.getCheckout', {
+      did => $missing_did,
+    })),
     head            => normalize_xrpc_error(get_form($server{$name}{origin}, 'com.atproto.sync.getHead', {
       did => $missing_did,
     })),

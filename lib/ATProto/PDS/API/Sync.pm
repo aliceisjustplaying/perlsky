@@ -71,17 +71,17 @@ sub register_sync_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.sync.getRepo', sub ($c, $endpoint) {
-    my $account = _readable_repo_by_did($c);
+    my $account = _readable_repo_by_did($c, missing_status => 400);
     return _render_repo_car($c, $account->{did});
   });
 
   $registry->register('com.atproto.sync.getCheckout', sub ($c, $endpoint) {
-    my $account = _readable_repo_by_did($c);
+    my $account = _readable_repo_by_did($c, missing_status => 400);
     return _render_repo_car($c, $account->{did});
   });
 
   $registry->register('com.atproto.sync.getRecord', sub ($c, $endpoint) {
-    my $account = _readable_repo_by_did($c);
+    my $account = _readable_repo_by_did($c, missing_status => 400);
     return _render_car(
       $c,
       _record_proof_car(

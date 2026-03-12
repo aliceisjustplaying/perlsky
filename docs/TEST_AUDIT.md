@@ -13,7 +13,7 @@ That does not mean every test has been manually revalidated against every other 
 The current baseline for saying "the audited suite is green" is:
 
 - `prove -lr t`
-  - latest full green result in the realigned Meridian worktree: `Files=61, Tests=3110`
+  - latest full green result in the realigned Meridian worktree: `Files=61, Tests=3119`
 - `prove -lv t/server-auth.t`
 - `perl -c script/differential-validate`
 - `PERLSKY_RUN_REFERENCE_DIFF=1 prove -lv t/reference-differential.t`
@@ -76,7 +76,7 @@ When the official runtime and upstream comments disagree, the runtime behavior w
 - `com.atproto.identity.resolveHandle` should treat well-formed but unresolved handles as `400 InvalidRequest` with `Unable to resolve handle`, matching the official runtime instead of returning a local `404 HandleNotFound`.
 - Remote `did:web` DID docs, conservative `resolveIdentity` handle validation, and external handle adoption all need explicit coverage because small resolver-policy drifts turn into visible interop bugs quickly.
 - Remote `did:plc` DID docs should resolve through the PLC directory defaults even when `plc_url` is not explicitly configured; gating that path on local config silently breaks federated identity lookups.
-- Missing-repo read paths now match the official runtime more closely: `describeRepo`, `sync.getLatestCommit`, `sync.getHead`, and `sync.getRepoStatus` report `400 RepoNotFound`, while `listRecords` reports `400 InvalidRequest` / `Could not find repo: ...`.
+- Missing-repo read paths now match the official runtime more closely: `describeRepo`, `sync.getLatestCommit`, `sync.getRecord`, `sync.getRepo`, `sync.getCheckout`, `sync.getHead`, and `sync.getRepoStatus` report `400 RepoNotFound`, while `listRecords` reports `400 InvalidRequest` / `Could not find repo: ...`.
 - `com.atproto.repo.getRecord` must honor `cid` when present, and `putRecord` / `deleteRecord` must actually enforce `swapRecord`; those negative edges are now covered directly.
 - `com.atproto.repo.createRecord` follows the reference runtime by ignoring a stray `swapRecord` field, and direct reference coverage now pins `putRecord` / `deleteRecord` `swapCommit` and `swapRecord` mismatch semantics explicitly.
 - App-password sessions follow the official runtime more closely than the older local assumptions did: access-token scopes use the `com.atproto.appPass` / `com.atproto.appPassPrivileged` names, standard app-password sessions may list app passwords, privileged-only `getServiceAuth` failures report `InvalidRequest`, and revoked refresh tokens on `refreshSession` fail with `400 ExpiredToken`.
