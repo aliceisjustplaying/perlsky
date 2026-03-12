@@ -21,6 +21,7 @@ use Test::Mojo;
 use JSON::PP ();
 use Mojo::URL;
 use ATProto::PDS;
+use ATProto::PDS::Repo::CAR qw(read_car);
 
 my $root = File::Spec->rel2abs(File::Spec->catdir($Bin, '..'));
 my $tmp  = tempdir(CLEANUP => 1);
@@ -105,6 +106,12 @@ $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.getBlocks')->query(
 ))->status_is(200)
   ->content_type_like(qr{application/vnd\.ipld\.car})
   ->content_like(qr/.+/s);
+my $blocks_car = read_car($t->tx->res->body);
+is_deeply($blocks_car->{roots}, [], 'sync.getBlocks returns a rootless CAR');
+ok(
+  scalar(grep { $_->{cid}->to_string eq $latest->{cid} } @{ $blocks_car->{blocks} || [] }),
+  'sync.getBlocks returns the requested repo-scoped block',
+);
 
 $t->post_ok('/xrpc/com.atproto.repo.uploadBlob' => {
   Authorization => "Bearer $access",
@@ -163,6 +170,13 @@ $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.listBlobs')->query(
   did => $second_did,
 ))->status_is(200)
   ->json_is('/cids/0' => $blob_cid);
+
+$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.getBlocks')->query(
+  did  => $second_did,
+  cids => $latest->{cid},
+))->status_is(400)
+  ->json_is('/error' => 'InvalidRequest')
+  ->json_like('/message' => qr/\Q$latest->{cid}\E/);
 
 $t->post_ok('/xrpc/com.atproto.repo.uploadBlob' => {
   Authorization => "Bearer $access",

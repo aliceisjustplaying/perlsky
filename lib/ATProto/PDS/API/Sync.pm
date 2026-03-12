@@ -18,7 +18,7 @@ use ATProto::PDS::Constants qw(
 );
 use ATProto::PDS::Identity qw(service_host);
 use ATProto::PDS::Moderation qw(assert_blob_readable assert_repo_readable is_repo_takedown);
-use ATProto::PDS::Repo::CAR qw(write_car);
+use ATProto::PDS::Repo::CAR qw(read_car write_car);
 use ATProto::PDS::Repo::CID;
 use ATProto::PDS::Repo::Bytes;
 use ATProto::PDS::Repo::MST qw(build_mst);
@@ -98,18 +98,18 @@ sub register_sync_handlers ($registry, $app) {
     my $account = _readable_repo_by_did($c);
     my @cids = flatten_params($c->every_param('cids'));
     xrpc_error(400, 'InvalidRequest', 'At least one CID is required') unless @cids;
-    my $rows = $c->store->get_blocks(\@cids);
-    my %found = map { $_->{cid} => $_ } @$rows;
-    for my $cid (@cids) {
-      xrpc_error(404, 'BlockNotFound', "Block $cid was not found") unless $found{$cid};
-    }
+    my $repo_car = $c->store->repo_car($account->{did});
+    xrpc_error(404, 'RepoNotFound', 'Repository was not found') unless defined $repo_car;
+    my %found = map { $_->{cid}->to_string => $_ } @{ read_car($repo_car)->{blocks} || [] };
+    my @missing = grep { !$found{$_} } @cids;
+    xrpc_error(400, 'InvalidRequest', 'Could not find cids: ' . join(', ', @missing)) if @missing;
     my @blocks = map {
       +{
         cid   => ATProto::PDS::Repo::CID->from_string($_),
         bytes => $found{$_}{bytes},
       }
     } @cids;
-    return _render_car($c, write_car($blocks[0]{cid}, \@blocks));
+    return _render_car($c, write_car(undef, \@blocks));
   });
 
   $registry->register('com.atproto.sync.getBlob', sub ($c, $endpoint) {

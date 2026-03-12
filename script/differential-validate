@@ -1201,6 +1201,36 @@ check(
   'getHead matches the official reference PDS semantics',
 );
 
+note('Comparing getBlocks');
+for my $name (sort keys %server) {
+  my $requested_cid = $server{$name}{latest_commit_raw}{cid};
+  my $res = get_form($server{$name}{origin}, 'com.atproto.sync.getBlocks', {
+    did  => $server{$name}{did},
+    cids => $requested_cid,
+  });
+  check($res->is_success, "$name getBlocks succeeds");
+  my $car = $res->is_success ? read_car($res->body // q()) : undef;
+
+  my $missing = get_form($server{$name}{origin}, 'com.atproto.sync.getBlocks', {
+    did  => $server{$name}{did},
+    cids => 'bafyreifakecidmismatch',
+  });
+
+  $server{$name}{get_blocks} = {
+    ok                 => $res->is_success ? 1 : 0,
+    car_type           => (($res->headers->content_type // q()) =~ m{application/vnd\.ipld\.car}) ? 1 : 0,
+    roots_empty        => ($car && !@{ $car->{roots} || [] }) ? 1 : 0,
+    has_requested_cid  => ($car && scalar(grep { $_->{cid}->to_string eq $requested_cid } @{ $car->{blocks} || [] })) ? 1 : 0,
+    missing_status     => $missing->code,
+    missing_error      => ($missing->json || {})->{error},
+  };
+}
+
+check(
+  same_hash($server{reference}{get_blocks}, $server{perlsky}{get_blocks}),
+  'getBlocks repo scoping and missing-CID semantics match the official reference PDS',
+);
+
 note('Comparing getRepo CAR exports');
 for my $name (sort keys %server) {
   my $res = get_form($server{$name}{origin}, 'com.atproto.sync.getRepo', { did => $server{$name}{did} });
