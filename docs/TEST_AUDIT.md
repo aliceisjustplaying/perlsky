@@ -13,7 +13,7 @@ That does not mean every test has been manually revalidated against every other 
 The current baseline for saying "the audited suite is green" is:
 
 - `prove -lr t`
-  - latest full green result in the realigned Meridian worktree: `Files=57, Tests=3051`
+  - latest full green result in the realigned Meridian worktree: `Files=58, Tests=3053`
 - `prove -lv t/server-auth.t`
 - `perl -c script/differential-validate`
 - `PERLSKY_RUN_REFERENCE_DIFF=1 prove -lv t/reference-differential.t`
@@ -116,7 +116,7 @@ The current suite splits into three broad buckets:
 Current suite counts by bucket:
 
 - `direct reference differential`: `5`
-- `audited local regression`: `39`
+- `audited local regression`: `40`
 - `local correctness/infrastructure`: `13`
 
 | Test file | Bucket | Current note |
@@ -140,7 +140,7 @@ Current suite counts by bucket:
 | `t/email-confirmation.t` | audited local regression | intentionally testing-friendly email flow plus strict missing-email and invalid-email validation semantics |
 | `t/email-update-helper.t` | audited local regression | shared email-update helper normalization, token revocation, and duplicate-email error semantics |
 | `t/event-stream.t` | audited local regression | wire-format, malformed frame, and event decoding coverage |
-| `t/extended-api.t` | audited local regression | focused mixed coverage for self-service invite issuance and `applyWrites` after the identity/email, label, and blob/sync happy paths were split out |
+| `t/extended-api.t` | audited local regression | focused `applyWrites` happy-path and missing-delete behavior after the self-service invite, identity/email, label, and blob/sync happy paths were split out |
 | `t/external-handle-update.t` | audited local regression | external-handle update semantics, including DID-resolution checks and empty-body success for external handle adoption |
 | `t/external-surface.t` | audited local regression | focused external-surface coverage for repo/blob/account-status and missing-blob behavior after splitting discovery and label RPC checks into dedicated suites |
 | `t/firehose.t` | audited local regression | repo subscription lifecycle, cursor, and CAR behavior |
@@ -169,6 +169,7 @@ Current suite counts by bucket:
 | `t/repo-api.t` | audited local regression | record mutation and read semantics, but still lighter than ideal on some negative/reference edge cases |
 | `t/repo-firehose-car.t` | audited local regression | repo commit CAR shape and firehose interactions |
 | `t/repo_formats.t` | audited local regression | direct repo wire-format and CAR expectations |
+| `t/self-service-invite-surfaces.t` | audited local regression | isolated self-service invite issuance coverage for invite minting, account scoping, and account invite-code listing |
 | `t/sentry.t` | local correctness/infrastructure | Sentry event shaping, stacktrace capture, and dispatcher exception-reporting smoke |
 | `t/server-auth.t` | direct reference differential | auth/session/service-auth behavior repeatedly compared to official runtime, including bounded create-session password semantics |
 | `t/service-proxy-local.t` | audited local regression | local appview fallback behavior |
@@ -184,7 +185,7 @@ Current suite counts by bucket:
 The broadest suites are green and audited, but they still mix several categories of behavior inside the same file:
 
 - `t/extended-api.t`
-  Carries real conformance value for `applyWrites`, but it still mixes those with local product behavior such as self-service invite flows.
+  Carries real conformance value for `applyWrites`, but it is now much narrower and mostly acts as a focused repo-write regression suite.
 - `t/external-surface.t`
   Carries strong external-surface coverage for repo export, blob access, account-status behavior, and missing-blob listing. It is cleaner after moving discovery and label-RPC checks into dedicated suites, but still remains broader than a single-endpoint conformance file.
 - `t/uncovered-endpoints.t`

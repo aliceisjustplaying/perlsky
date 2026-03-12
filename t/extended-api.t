@@ -50,22 +50,6 @@ my $created = $t->tx->res->json;
 my $access  = $created->{accessJwt};
 my $did     = $created->{did};
 
-$t->post_ok('/xrpc/com.atproto.server.createInviteCode' => {
-  Authorization => "Bearer $access",
-} => json => {
-  useCount => 2,
-})->status_is(200)
-  ->json_has('/code');
-
-my $invite_code = $t->tx->res->json->{code};
-
-$t->post_ok('/xrpc/com.atproto.server.createInviteCode' => {
-  Authorization => "Bearer $access",
-} => json => {
-  forAccount => 'did:web:example.test:users:someone-else',
-})->status_is(400)
-  ->json_is('/error' => 'InvalidRequest');
-
 $t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
   Authorization => "Bearer $access",
 } => json => {
@@ -153,10 +137,5 @@ $t->post_ok('/xrpc/com.atproto.repo.applyWrites' => {
   ],
 })->status_is(400)
   ->json_is('/error' => 'InvalidRequest');
-
-$t->get_ok('/xrpc/com.atproto.server.getAccountInviteCodes' => {
-  Authorization => "Bearer $access",
-})->status_is(200)
-  ->json_is('/codes/0/code', $invite_code);
 
 done_testing;
