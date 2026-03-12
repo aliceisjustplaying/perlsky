@@ -200,7 +200,21 @@ https:// {
 }
 ```
 
-`com.atproto.sync.getBlob` responses should stay uncompressed end-to-end. `perlsky` now bypasses Mojolicious dynamic gzip for blob bytes because some downstream image proxy routes will auto-decompress the body and accidentally forward a stale `Content-Encoding` header, which shows up in clients as broken image loads (`ERR_CONTENT_DECODING_FAILED`).
+`com.atproto.sync.getBlob` responses should stay uncompressed end-to-end. `perlsky` now bypasses Mojolicious dynamic gzip for blob bytes because some downstream image proxy routes will auto-decompress the body and accidentally forward a stale `Content-Encoding` header, which shows up in clients as broken image loads (`ERR_CONTENT_DECODING_FAILED`). If your reverse proxy also does response compression, exempt `/xrpc/com.atproto.sync.getBlob` from it as well.
+
+For Caddy that means putting the blob path on a plain proxy path before any `encode` handler, for example:
+
+```caddy
+@blob_download path /xrpc/com.atproto.sync.getBlob
+handle @blob_download {
+  reverse_proxy 127.0.0.1:7755
+}
+
+handle {
+  encode gzip
+  reverse_proxy 127.0.0.1:7755
+}
+```
 
 This still requires wildcard DNS or per-handle DNS records so public ACME validation can reach the server.
 
