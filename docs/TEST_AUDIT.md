@@ -13,7 +13,7 @@ That does not mean every test has been manually revalidated against every other 
 The current baseline for saying "the audited suite is green" is:
 
 - `prove -lr t`
-  - latest full green result in the realigned Meridian worktree: `Files=60, Tests=3061`
+  - latest full green result in the realigned Meridian worktree: `Files=61, Tests=3069`
 - `prove -lv t/server-auth.t`
 - `perl -c script/differential-validate`
 - `PERLSKY_RUN_REFERENCE_DIFF=1 prove -lv t/reference-differential.t`
@@ -116,7 +116,7 @@ The current suite splits into three broad buckets:
 Current suite counts by bucket:
 
 - `direct reference differential`: `5`
-- `audited local regression`: `42`
+- `audited local regression`: `43`
 - `local correctness/infrastructure`: `13`
 
 | Test file | Bucket | Current note |
@@ -145,7 +145,7 @@ Current suite counts by bucket:
 | `t/event-stream.t` | audited local regression | wire-format, malformed frame, and event decoding coverage |
 | `t/applywrites-surfaces.t` | audited local regression | focused `applyWrites` happy-path and missing-delete behavior after the self-service invite, identity/email, label, and blob/sync happy paths were split out |
 | `t/external-handle-update.t` | audited local regression | external-handle update semantics, including DID-resolution checks and empty-body success for external handle adoption |
-| `t/external-surface.t` | audited local regression | focused external-surface coverage for repo/blob export and missing-blob behavior after splitting discovery, label RPC, and account-status checks into dedicated suites |
+| `t/external-surface.t` | audited local regression | focused external-surface coverage for repo/blob export after splitting discovery, label RPC, account-status, and missing-blob checks into dedicated suites |
 | `t/firehose.t` | audited local regression | repo subscription lifecycle, cursor, and CAR behavior |
 | `t/identity.t` | local correctness/infrastructure | lower-level handle and DID helper coverage, including DNS-over-well-known preference and malformed-handle rejection |
 | `t/import-repo.t` | audited local regression | focused `importRepo` snapshot-restore and rollback behavior, now cleaner after splitting the disabled-import policy gate into its own suite |
@@ -158,6 +158,7 @@ Current suite counts by bucket:
 | `t/labels.t` | audited local regression | label persistence, replay, negation, and cursor behavior |
 | `t/local-service-surfaces.t` | audited local regression | isolated local-only coverage for reserved handles and crawler host tracking surfaces |
 | `t/metrics.t` | audited local regression | metrics endpoint, token-gating smoke, and instrumentation contract for local appview behavior |
+| `t/missing-blob-surfaces.t` | audited local regression | isolated `listMissingBlobs` pagination and record-ownership coverage for direct and nested blob references |
 | `t/moderation.t` | audited local regression | takedown visibility and moderation behavior |
 | `t/oauth-include.t` | audited local regression | permission-set scope expansion and least-privilege enforcement from `include:<nsid>` scopes |
 | `t/oauth-permissions.t` | audited local regression | granular OAuth permission enforcement across account/email, identity, repo, blob, and rpc scope families |
@@ -188,7 +189,7 @@ The broadest suites are green and audited, but a small number still mix several 
 - `t/applywrites-surfaces.t`
   Carries real conformance value for `applyWrites`, but it is now much narrower and mostly acts as a focused repo-write regression suite.
 - `t/external-surface.t`
-  Carries strong external-surface coverage for repo/blob export and missing-blob listing. It is cleaner after moving discovery, label-RPC, and account-status checks into dedicated suites, but still remains broader than a single-endpoint conformance file.
+  Carries strong external-surface coverage for repo/blob export. It is much cleaner after moving discovery, label-RPC, account-status, and missing-blob checks into dedicated suites, but still remains broader than a single-endpoint conformance file.
 
 ## What This Audit Does Not Yet Claim
 

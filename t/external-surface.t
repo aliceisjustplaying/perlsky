@@ -112,7 +112,7 @@ $t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
   rkey       => 'missing-blob-ref',
   record     => {
     '$type' => 'com.example.record',
-    note    => 'blob reference for missing-blob listing',
+    note    => 'blob reference for sync/blob surface listing',
     image   => $blob,
   },
 })->status_is(200);
@@ -156,7 +156,25 @@ $t->post_ok('/xrpc/com.atproto.repo.uploadBlob' => {
 } => 'blob-two')->status_is(200);
 
 my $blob_two_cid = $t->tx->res->json->{blob}{ref}{'$link'};
-my @sorted_blob_cids = sort ($blob_cid);
+my @sorted_blob_cids = sort ($blob_cid, $blob_two_cid);
+
+$t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
+  Authorization => "Bearer $access",
+} => json => {
+  repo       => $did,
+  collection => 'com.example.record',
+  rkey       => 'second-sync-blob-ref',
+  record     => {
+    '$type' => 'com.example.record',
+    note    => 'second blob reference for sync/blob surface listing',
+    image   => {
+      '$type'    => 'blob',
+      ref        => { '$link' => $blob_two_cid },
+      mimeType   => 'text/plain',
+      size       => length('blob-two'),
+    },
+  },
+})->status_is(200);
 
 $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.listBlobs')->query(
   did   => $did,
@@ -170,7 +188,7 @@ $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.listBlobs')->query(
   limit  => 1,
   cursor => $sorted_blob_cids[0],
 ))->status_is(200)
-  ->json_is('/cids' => []);
+  ->json_is('/cids/0' => $sorted_blob_cids[1]);
 
 $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.getBlob')->query(
   did => $second_did,
@@ -182,32 +200,7 @@ $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.getBlob')->query(
   ->content_type_is('text/plain')
   ->content_is('blob-bytes');
 
-$t->post_ok('/xrpc/com.atproto.repo.uploadBlob' => {
-  Authorization => "Bearer $access",
-  'Content-Type' => 'text/plain',
-} => 'nested-blob-bytes')->status_is(200);
-
-my $nested_blob = $t->tx->res->json->{blob};
-my $nested_blob_cid = $nested_blob->{ref}{'$link'};
-
-$t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
-  Authorization => "Bearer $access",
-} => json => {
-  repo       => $did,
-  collection => 'com.example.record',
-  rkey       => 'nested-missing-blob-ref',
-  record     => {
-    '$type'      => 'com.example.record',
-    note         => 'nested blob reference for missing-blob listing',
-    attachments  => [{
-      kind  => 'image',
-      image => $nested_blob,
-    }],
-  },
-})->status_is(200);
-
-my $nested_record_uri = $t->tx->res->json->{uri};
-my @since_sorted_blob_cids = sort ($blob_cid, $nested_blob_cid);
+my @since_sorted_blob_cids = sort ($blob_cid, $blob_two_cid);
 
 $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.listBlobs')->query(
   did   => $did,
@@ -215,43 +208,5 @@ $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.listBlobs')->query(
 ))->status_is(200)
   ->json_is('/cids/0' => $since_sorted_blob_cids[0])
   ->json_is('/cids/1' => $since_sorted_blob_cids[1]);
-
-for my $cid ($blob_cid, $nested_blob_cid) {
-  $app->store->dbh->do(
-    q{DELETE FROM blob_owners WHERE cid = ?},
-    undef,
-    $cid,
-  );
-  $app->store->dbh->do(
-    q{DELETE FROM blobs WHERE cid = ?},
-    undef,
-    $cid,
-  );
-}
-
-my %expected_missing = (
-  $blob_cid        => "at://$did/com.example.record/missing-blob-ref",
-  $nested_blob_cid => $nested_record_uri,
-);
-my @missing_cids = sort keys %expected_missing;
-
-$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.repo.listMissingBlobs')->query(
-  limit => 1,
-), {
-  Authorization => "Bearer $access",
-})->status_is(200)
-  ->json_is('/blobs/0/cid' => $missing_cids[0])
-  ->json_is('/blobs/0/recordUri' => $expected_missing{$missing_cids[0]})
-  ->json_is('/cursor' => $missing_cids[0]);
-
-$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.repo.listMissingBlobs')->query(
-  limit  => 1,
-  cursor => $missing_cids[0],
-), {
-  Authorization => "Bearer $access",
-})->status_is(200)
-  ->json_is('/blobs/0/cid' => $missing_cids[1])
-  ->json_is('/blobs/0/recordUri' => $expected_missing{$missing_cids[1]})
-  ->json_is('/cursor' => $missing_cids[1]);
 
 done_testing;
