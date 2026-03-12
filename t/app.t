@@ -106,6 +106,14 @@ $fresh->post_ok('/xrpc/com.atproto.server.createAccount' => json => {
   ->json_is('/error' => 'InvalidRequest')
   ->json_is('/message' => 'Email already taken: ALICE@example.test');
 
+$fresh->post_ok('/xrpc/com.atproto.server.createAccount' => json => {
+  handle   => 'ALICE.localhost',
+  email    => 'another@example.test',
+  password => 'hunter22',
+})->status_is(400)
+  ->json_is('/error' => 'InvalidRequest')
+  ->json_is('/message' => 'Handle already taken: alice.localhost');
+
 $fresh->get_ok("/xrpc/com.atproto.identity.resolveHandle?handle=alice.localhost")
   ->status_is(200)
   ->json_is('/did' => $user_did);

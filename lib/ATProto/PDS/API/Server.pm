@@ -67,7 +67,7 @@ sub register_server_handlers ($registry, $app) {
     my $domain = $c->config_value('service_handle_domain', 'localhost');
     my $handle = normalize_handle($body->{handle}, $domain);
     xrpc_error(400, 'InvalidHandle', 'Requested handle is invalid') unless defined $handle;
-    xrpc_error(400, 'HandleNotAvailable', 'That handle is already registered')
+    xrpc_error(400, 'InvalidRequest', "Handle already taken: $handle")
       if $c->store->get_account_by_handle($handle);
     xrpc_error(400, 'HandleNotAvailable', 'That handle is reserved')
       if $c->store->get_reserved_handle($handle);

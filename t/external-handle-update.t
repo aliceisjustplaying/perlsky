@@ -47,6 +47,21 @@ my $session = $t->tx->res->json;
 my $did     = $session->{did};
 my $access  = $session->{accessJwt};
 
+$t->post_ok('/xrpc/com.atproto.server.createAccount' => json => {
+  handle   => 'bob',
+  email    => 'bob@example.com',
+  password => 'password123',
+})->status_is(200)
+  ->json_is('/handle' => 'bob.localhost');
+
+$t->post_ok('/xrpc/com.atproto.identity.updateHandle' => {
+  Authorization => "Bearer $access",
+} => json => {
+  handle => 'bob.localhost',
+})->status_is(400)
+  ->json_is('/error' => 'InvalidRequest')
+  ->json_is('/message' => 'Handle already taken: bob.localhost');
+
 {
   no warnings 'redefine';
   local *ATProto::PDS::Identity::_resolve_handle_dns = sub {

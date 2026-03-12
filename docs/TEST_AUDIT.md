@@ -13,7 +13,7 @@ That does not mean every test has been manually revalidated against every other 
 The current baseline for saying "the audited suite is green" is:
 
 - `prove -lr t`
-  - latest full green result in the realigned Meridian worktree: `Files=48, Tests=2926`
+  - latest full green result in the realigned Meridian worktree: `Files=48, Tests=2943`
 - `prove -lv t/server-auth.t`
 - `perl -c script/differential-validate`
 - `PERLSKY_RUN_REFERENCE_DIFF=1 prove -lv t/reference-differential.t`
@@ -52,6 +52,7 @@ When the official runtime and upstream comments disagree, the runtime behavior w
 - `com.atproto.server.requestEmailConfirmation`, `requestEmailUpdate`, and `requestAccountDelete` should reject accounts with no stored email using the official `400 InvalidRequest` / `account does not have an email address` shape, and `updateEmail` should reject unsupported syntax with the official `This email address is not supported, please use a different email.` message.
 - perlsky intentionally still allows test-friendly no-email local accounts, but once an email is supplied `com.atproto.server.createAccount` now follows the same unsupported-syntax rejection shape as `updateEmail` and the official runtime.
 - `com.atproto.server.createAccount` must not turn duplicate-email requests into a `500`; it now follows the official client-visible `400 InvalidRequest` / `Email already taken: ...` shape instead.
+- Local handle-conflict flows now use the reference runtime’s client-visible `400 InvalidRequest` / `Handle already taken: ...` shape on `createAccount`, `com.atproto.identity.updateHandle`, and `com.atproto.admin.updateAccountHandle`, instead of the older local `HandleNotAvailable` variant.
 - `app.bsky.actor.putPreferences` and `app.bsky.notification.putPreferencesV2` now have explicit shape validation plus focused regression coverage, turning an earlier hardening concern into a pinned contract.
 - `com.atproto.identity.resolveHandle` should reject malformed handles with `400 InvalidRequest`, not quietly treat them as misses or return a local `InvalidHandle` variant.
 - `com.atproto.identity.resolveHandle` should treat well-formed but unresolved handles as `400 InvalidRequest` with `Unable to resolve handle`, matching the official runtime instead of returning a local `404 HandleNotFound`.

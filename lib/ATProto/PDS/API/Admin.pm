@@ -145,7 +145,7 @@ sub register_admin_handlers ($registry, $app) {
         unless defined $resolved_did && lc($resolved_did) eq lc($account->{did});
     }
     my $existing = $c->store->get_account_by_handle($handle);
-    xrpc_error(400, 'HandleNotAvailable', 'That handle is already registered')
+    xrpc_error(400, 'InvalidRequest', "Handle already taken: $handle")
       if $existing && ($existing->{did} // q()) ne $account->{did};
     my $updated = $c->store->update_account(
       $account->{did},

@@ -52,6 +52,13 @@ my $created = $t->tx->res->json;
 my $did     = $created->{did};
 my $access  = $created->{accessJwt};
 
+$t->post_ok('/xrpc/com.atproto.server.createAccount' => json => {
+  handle   => 'bob.example.test',
+  email    => 'bob@example.test',
+  password => 'hunter22',
+})->status_is(200);
+my $bob = $t->tx->res->json;
+
 $t->post_ok('/xrpc/com.atproto.server.reserveSigningKey' => json => {})
   ->status_is(200)
   ->json_like('/signingKey' => qr/\Adid:key:/);
@@ -111,6 +118,15 @@ my $before_admin_handle_seq = $app->store->latest_event_seq;
     my ($config, $handle) = @_;
     return $handle eq 'alice.external.test' ? $did : undef;
   };
+
+  $t->post_ok('/xrpc/com.atproto.admin.updateAccountHandle' => {
+    Authorization => $admin_auth,
+  } => json => {
+    did    => $did,
+    handle => $bob->{handle},
+  })->status_is(400)
+    ->json_is('/error' => 'InvalidRequest')
+    ->json_is('/message' => 'Handle already taken: bob.example.test');
 
   $t->post_ok('/xrpc/com.atproto.admin.updateAccountHandle' => {
     Authorization => $admin_auth,

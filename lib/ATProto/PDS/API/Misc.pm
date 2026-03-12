@@ -180,7 +180,7 @@ sub register_misc_handlers ($registry, $app) {
         unless defined $resolved_did && lc($resolved_did) eq lc($account->{did});
     }
     my $existing = $c->store->get_account_by_handle($handle);
-    xrpc_error(400, 'HandleNotAvailable', 'That handle is already registered')
+    xrpc_error(400, 'InvalidRequest', "Handle already taken: $handle")
       if $existing && ($existing->{did} // q()) ne $account->{did};
     xrpc_error(400, 'HandleNotAvailable', 'That handle is reserved')
       if $c->store->get_reserved_handle($handle);
