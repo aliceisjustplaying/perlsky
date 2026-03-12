@@ -150,6 +150,15 @@ my $client_metadata = {
     ->json_is('/did' => $did)
     ->json_is('/handle' => 'alice.localhost');
 
+  $t->get_ok('/xrpc/com.atproto.server.getSession' => {
+    Authorization => "DPoP $access_token",
+    DPoP          => _dpop_jwt($client_jwk, $client_private, 'GET', $session_url . '?mismatch=1', ath => $access_token),
+  })->status_is(401)
+    ->json_is('/error' => 'InvalidToken')
+    ->json_like('/message' => qr/DPoP proof htu did not match request/)
+    ->content_unlike(qr/\Q$root\E/)
+    ->content_unlike(qr/line \d+/);
+
   $t->get_ok('/xrpc/com.atproto.server.getAccountInviteCodes' => {
     Authorization => "DPoP $access_token",
     DPoP          => _dpop_jwt($client_jwk, $client_private, 'GET', $config->{base_url} . '/xrpc/com.atproto.server.getAccountInviteCodes', ath => $access_token),
