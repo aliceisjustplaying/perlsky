@@ -2168,15 +2168,15 @@ for my $name (sort keys %server) {
   check($res->is_success, "$name creates an extra record before importRepo");
   next unless $res->is_success;
 
-  $res = post_bytes(
+  my $import = post_bytes(
     $server{$name}{origin},
     'com.atproto.repo.importRepo',
     $server{$name}{repo_snapshot_car},
     'application/vnd.ipld.car',
     auth_header($server{$name}{access}),
   );
-  check($res->is_success, "$name importRepo succeeds");
-  next unless $res->is_success;
+  check($import->is_success, "$name importRepo succeeds");
+  next unless $import->is_success;
 
   $res = get_form($server{$name}{origin}, 'com.atproto.repo.listRecords', {
     repo       => $server{$name}{did},
@@ -2190,6 +2190,8 @@ for my $name (sort keys %server) {
     $rkey // q();
   } @$records;
   $server{$name}{import_repo_state} = {
+    import_status    => $import->code // 0,
+    import_body      => $import->body,
     record_count     => 0 + @$records,
     rkeys            => \@rkeys,
     restored_diffpost => scalar(grep { $_ eq 'diffpost' } @rkeys) ? 1 : 0,
@@ -2591,12 +2593,39 @@ for my $name (sort keys %server) {
     identifier => $server{$name}{secondary_handle},
     password   => 'newhunter22',
   });
+  my $updated_secondary_email = $name eq 'reference' ? 'bob-updated-ref@test.com' : 'bob-updated-perl@test.com';
+  my $update_email_success = post_json(
+    $server{$name}{origin},
+    'com.atproto.admin.updateAccountEmail',
+    {
+      account => $server{$name}{secondary_did},
+      email   => $updated_secondary_email,
+    },
+    admin_auth_header($server{$name}{admin_password}),
+  );
+  my $updated_secondary_handle = $name eq 'reference' ? 'bob-updated-ref.test' : 'bob-updated-perl.test';
+  my $update_handle_success = post_json(
+    $server{$name}{origin},
+    'com.atproto.admin.updateAccountHandle',
+    {
+      did    => $server{$name}{secondary_did},
+      handle => $updated_secondary_handle,
+    },
+    admin_auth_header($server{$name}{admin_password}),
+  );
+  my $updated_secondary_info = get_form(
+    $server{$name}{origin},
+    'com.atproto.admin.getAccountInfo',
+    { did => $server{$name}{secondary_did} },
+    admin_auth_header($server{$name}{admin_password}),
+  );
 
   my $info_json = $info->json || {};
   my @infos = @{ $info_json->{infos} || [] };
   my $subject_active_json = $subject_active->json || {};
   my $disabled_json = $disabled_info->json || {};
   my $enabled_json  = $enabled_info->json || {};
+  my $updated_secondary_json = $updated_secondary_info->json || {};
 
   $server{$name}{admin_account_management} = {
     get_infos => {
@@ -2651,6 +2680,16 @@ for my $name (sort keys %server) {
     update_password_missing => {
       status => $reset_password_missing->code // 0,
       body   => $reset_password_missing->body,
+    },
+    update_email_success => {
+      status        => $update_email_success->code // 0,
+      body          => $update_email_success->body,
+      updated_email => (($updated_secondary_json->{email} // q()) eq $updated_secondary_email) ? 1 : 0,
+    },
+    update_handle_success => {
+      status         => $update_handle_success->code // 0,
+      body           => $update_handle_success->body,
+      updated_handle => (($updated_secondary_json->{handle} // q()) eq $updated_secondary_handle) ? 1 : 0,
     },
   };
 }
