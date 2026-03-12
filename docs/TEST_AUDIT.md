@@ -1,6 +1,6 @@
 # Test Audit Status
 
-As of 2026-03-12, the focused test-correctness and reference-audit pass is complete on rewritten history through `812a63f`.
+As of 2026-03-12, the focused test-correctness and reference-audit pass is complete on rewritten history through `16c510b`.
 
 That does not mean every test has been manually revalidated against every other PDS implementation line by line. It means:
 
@@ -13,7 +13,7 @@ That does not mean every test has been manually revalidated against every other 
 The current baseline for saying "the audited suite is green" is:
 
 - `prove -lr t`
-  - last green result in the realigned Meridian worktree: `Files=41, Tests=2318`
+  - last full green result in the realigned Meridian worktree: `Files=44, Tests=2507`
 - `prove -lv t/server-auth.t`
 - `perl -c script/differential-validate`
 - `PERLSKY_RUN_REFERENCE_DIFF=1 prove -lv t/reference-differential.t`
@@ -45,12 +45,15 @@ When the official runtime and upstream comments disagree, the runtime behavior w
 - Firehose tests must not assume the smallest possible CAR diff. The reference runtime guarantees normalized behavior, not a minimal encoding.
 - Label replay and cursor handling need exclusive replay semantics, proper future-cursor rejection, and forward progress across unhandled backlog events.
 - `com.atproto.repo.listMissingBlobs` needed a real implementation rather than an always-empty placeholder.
-- ATProto OAuth `include:<nsid>` permission-set scopes are now compiled into concrete repo/RPC permissions before token issuance; local regression coverage pins that least-privilege behavior for supported and unsupported permissions.
+- ATProto OAuth `include:<nsid>` permission-set scopes are now compiled into concrete repo/RPC permissions before token issuance; local regression coverage pins that least-privilege behavior, including dropping unsupported account/blob/identity permission-set entries.
 - Deactivated accounts should still be able to establish and refresh sessions, but those responses must stay marked `active=false` with `status=deactivated`.
 - Local `app.bsky.*` emulation must be conservative: only synthesize owner-local feed/thread data when the PDS can answer authoritatively, and proxy upstream instead of inventing partial global state.
 - Account email handling needs consistent normalization on write, lookup, session creation, and confirmation checks; treating email case inconsistently leaves both tests and user-facing auth behavior brittle.
-- `app.bsky.actor.putPreferences` and `app.bsky.notification.putPreferencesV2` need shape validation; unvalidated merges are not a critical exploit here, but they are a real correctness and hardening issue.
+- `app.bsky.actor.putPreferences` and `app.bsky.notification.putPreferencesV2` now have explicit shape validation plus focused regression coverage, turning an earlier hardening concern into a pinned contract.
 - `com.atproto.identity.resolveHandle` should reject malformed handles with `400 InvalidHandle`, not quietly treat them as misses.
+- Remote `did:web` DID docs, conservative `resolveIdentity` handle validation, and external handle adoption all need explicit coverage because small resolver-policy drifts turn into visible interop bugs quickly.
+- `com.atproto.repo.getRecord` must honor `cid` when present, and `putRecord` / `deleteRecord` must actually enforce `swapRecord`; those negative edges are now covered directly.
+- `com.atproto.server.requestPasswordReset` and `com.atproto.server.deleteAccount` now follow the reference form-token flow, with focused regression coverage for missing-account and bearerless deletion semantics.
 - `com.atproto.sync.getBlob` should ship the same download-hardening headers as the reference PDS (`X-Content-Type-Options`, `Content-Disposition`, `Content-Security-Policy`).
 
 ## Known Intentional Divergences
@@ -84,12 +87,13 @@ The current suite splits into three broad buckets:
 | `t/cors.t` | local correctness/infrastructure | CORS and preflight behavior |
 | `t/crawlers.t` | audited local regression | outbound crawl notification semantics |
 | `t/crypto-interop.t` | direct reference differential | pinned upstream crypto fixture coverage |
+| `t/delete-account.t` | audited local regression | reference-style account deletion flow using DID, password, and action token without a live bearer session |
 | `t/email-confirmation.t` | audited local regression | intentionally testing-friendly email flow |
 | `t/event-stream.t` | audited local regression | wire-format, malformed frame, and event decoding coverage |
 | `t/extended-api.t` | audited local regression | broad XRPC behavior including invites and moderation-adjacent flows; still intentionally mixes conformance-ish happy paths with local-policy coverage |
 | `t/external-surface.t` | audited local regression | external repo/account surface including missing-blob behavior; intentionally broad, with order-insensitive assertions for label presence rather than brittle label ordering |
 | `t/firehose.t` | audited local regression | repo subscription lifecycle, cursor, and CAR behavior |
-| `t/identity.t` | local correctness/infrastructure | handle and DID identity flow coverage |
+| `t/identity.t` | local correctness/infrastructure | lower-level handle and DID helper coverage, including DNS-over-well-known preference and malformed-handle rejection |
 | `t/import-repo.t` | audited local regression | import/snapshot restore behavior, including perlsky's intentionally tolerant malformed-record import semantics and explicit rollback to the imported snapshot |
 | `t/invite-gating.t` | audited local regression | self-service invite flag behavior |
 | `t/ipld-canonical.t` | local correctness/infrastructure | canonical IPLD encoding invariants |
@@ -98,14 +102,15 @@ The current suite splits into three broad buckets:
 | `t/metrics.t` | audited local regression | metrics endpoint, token-gating smoke, and instrumentation contract for local appview behavior |
 | `t/moderation.t` | audited local regression | takedown visibility and moderation behavior |
 | `t/oauth-include.t` | audited local regression | permission-set scope expansion and least-privilege enforcement from `include:<nsid>` scopes |
-| `t/oauth-permissions.t` | audited local regression | granular OAuth permission enforcement across repo/blob/rpc scope families |
+| `t/oauth-permissions.t` | audited local regression | granular OAuth permission enforcement across account/email, identity, repo, blob, and rpc scope families |
 | `t/oauth-scopes.t` | audited local regression | OAuth scope parsing, normalization, and token-grant shaping |
 | `t/oauth.t` | audited local regression | OAuth provider metadata, PAR, PKCE, DPoP, and token lifecycle coverage |
+| `t/password-reset.t` | audited local regression | password reset token issuance and missing-email rejection semantics |
 | `t/pds_smoke.t` | local correctness/infrastructure | broad local PDS smoke; still intentionally optimistic and should only carry a small number of negative assertions |
 | `t/plc-identity.t` | direct reference differential | PLC mock driven by official library semantics |
 | `t/reference-differential-plc.t` | direct reference differential | official runtime comparison in PLC mode |
 | `t/reference-differential.t` | direct reference differential | official runtime comparison in baseline mode |
-| `t/remote-handle-resolution.t` | audited local regression | remote handle resolution behavior and invalid-handle rejection, with some malformed/upstream-failure branches still worth expanding |
+| `t/remote-handle-resolution.t` | audited local regression | remote `did:web` DID docs, conservative remote identity handling, external-handle adoption, and invalid-handle rejection, with some upstream-failure branches still worth expanding |
 | `t/repo-api.t` | audited local regression | record mutation and read semantics, but still lighter than ideal on some negative/reference edge cases |
 | `t/repo-firehose-car.t` | audited local regression | repo commit CAR shape and firehose interactions |
 | `t/repo_formats.t` | audited local regression | direct repo wire-format and CAR expectations |
