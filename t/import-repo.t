@@ -90,7 +90,7 @@ $t->post_ok('/xrpc/com.atproto.repo.importRepo' => {
   Authorization => "Bearer $access",
   'Content-Type' => 'application/vnd.ipld.car',
 } => 'not-a-car')->status_is(400)
-  ->json_is('/error' => 'InvalidRepoImport');
+  ->json_is('/error' => 'InvalidRequest');
 
 $t->get_ok('/xrpc/com.atproto.repo.listRecords' => form => {
   repo       => $did,

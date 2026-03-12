@@ -189,7 +189,7 @@ sub register_repo_handlers ($registry, $app) {
     } or do {
       my $err = $@;
       die $err if ref($err) eq 'HASH';
-      xrpc_error(400, 'InvalidRepoImport', 'Repo import CAR was invalid');
+      xrpc_error(400, 'InvalidRequest', 'Repo import CAR was invalid');
     };
     return {};
   });
