@@ -155,7 +155,7 @@ $t->post_ok('/xrpc/com.atproto.server.confirmEmail' => {
   email => 'BOB@example.test',
   token => $bob_token->{token},
 })->status_is(200)
-  ->json_is({});
+  ->content_is(q());
 
 ok(
   defined $app->store->get_account_by_did($bob->{did})->{email_confirmed_at},
@@ -197,7 +197,7 @@ $bypass_t->post_ok('/xrpc/com.atproto.server.confirmEmail' => json => {
   email => 'carol@example.test',
   token => $carol_token->{token},
 })->status_is(200)
-  ->json_is({});
+  ->content_is(q());
 
 $bypass_t->post_ok('/xrpc/com.atproto.server.createAccount' => json => {
   handle   => 'noemail.example.test',

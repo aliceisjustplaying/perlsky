@@ -694,7 +694,7 @@ for my $name (sort keys %server) {
     reset_uppercase  => {
       status     => $password_reset_upper->code // 0,
       success    => $password_reset_upper->is_success ? 1 : 0,
-      empty_body => same_hash($password_reset_upper->json || {}, {}) ? 1 : 0,
+      empty_body => (($password_reset_upper->body // q()) eq q()) ? 1 : 0,
     },
   };
 }
@@ -2873,6 +2873,7 @@ for my $name (sort keys %server) {
         token_required => (($initial_update->json || {})->{tokenRequired} ? 1 : 0),
       },
       request_status      => $request_confirm->code // 0,
+      request_empty_body  => (($request_confirm->body // q()) eq q()) ? 1 : 0,
       token_present       => $confirm_token && length($confirm_token->{token} // q()) ? 1 : 0,
       wrong_email_error   => {
         status  => $wrong_confirm->code // 0,
@@ -2880,6 +2881,7 @@ for my $name (sort keys %server) {
         message => ($wrong_confirm->json || {})->{message},
       },
       confirm_status      => $confirm_ok->code // 0,
+      confirm_empty_body  => (($confirm_ok->body // q()) eq q()) ? 1 : 0,
       session_confirmed   => ($session_after_confirm->json || {})->{emailConfirmed} ? 1 : 0,
     },
     update => {
@@ -2899,11 +2901,13 @@ for my $name (sort keys %server) {
       renew_status        => $renew_update->code // 0,
       fresh_token_present => $fresh_update_token && length($fresh_update_token->{token} // q()) ? 1 : 0,
       update_status       => $update_ok->code // 0,
+      update_empty_body   => (($update_ok->body // q()) eq q()) ? 1 : 0,
       session_email_matches => (($session_after_update->json || {})->{email} // q()) eq $updated_email ? 1 : 0,
       session_confirmed   => ($session_after_update->json || {})->{emailConfirmed} ? 1 : 0,
     },
     delete => {
       request_status      => $request_delete->code // 0,
+      request_empty_body  => (($request_delete->body // q()) eq q()) ? 1 : 0,
       token_present       => $delete_token && length($delete_token->{token} // q()) ? 1 : 0,
       expired_token_error => {
         status  => $expired_delete->code // 0,
@@ -2917,6 +2921,7 @@ for my $name (sort keys %server) {
         error   => ($delete_ok->json || {})->{error},
         message => ($delete_ok->json || {})->{message},
       },
+      delete_empty_body   => (($delete_ok->body // q()) eq q()) ? 1 : 0,
       post_delete_login   => normalize_xrpc_error($post_delete_login),
     },
   };

@@ -51,7 +51,7 @@ my $access  = $created->{accessJwt};
 $t->post_ok('/xrpc/com.atproto.server.requestAccountDelete' => {
   Authorization => "Bearer $access",
 } => json => {})->status_is(200)
-  ->json_is({});
+  ->content_is(q());
 
 my $token = $app->store->latest_action_token(
   did     => $did,
@@ -88,7 +88,7 @@ $t->post_ok('/xrpc/com.atproto.server.deleteAccount' => json => {
   password => 'hunter22',
   token    => $token->{token},
 })->status_is(200)
-  ->json_is({});
+  ->content_is(q());
 
 ok(defined $app->store->get_account_by_did($did)->{deleted_at}, 'deleteAccount marks the account deleted');
 

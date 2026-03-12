@@ -53,7 +53,7 @@ $t->post_ok('/xrpc/com.atproto.server.requestPasswordReset' => json => {
 $t->post_ok('/xrpc/com.atproto.server.requestPasswordReset' => json => {
   email => 'alice@example.test',
 })->status_is(200)
-  ->json_is({});
+  ->content_is(q());
 
 my $token = $app->store->latest_action_token(
   purpose => 'password_reset',
@@ -64,12 +64,12 @@ $t->post_ok('/xrpc/com.atproto.server.resetPassword' => json => {
   token    => $token->{token},
   password => 'new-hunter22',
 })->status_is(200)
-  ->json_is({});
+  ->content_is(q());
 
 $t->post_ok('/xrpc/com.atproto.server.requestPasswordReset' => json => {
   email => 'ALICE@example.test',
 })->status_is(200)
-  ->json_is({});
+  ->content_is(q());
 
 $t->post_ok('/xrpc/com.atproto.server.resetPassword' => json => {
   token    => $token->{token},

@@ -287,7 +287,7 @@ sub register_server_handlers ($registry, $app) {
     my ($claims) = require_auth($c, audience => TOKEN_AUD_REFRESH, allow_refresh => 1);
     my $session = $c->store->get_session($claims->{jti});
     $c->store->revoke_session($session->{id}) if $session;
-    return {};
+    return _render_empty_success($c);
   });
 
   $registry->register('com.atproto.server.checkAccountStatus', sub ($c, $endpoint) {
@@ -381,7 +381,7 @@ sub register_server_handlers ($registry, $app) {
       next if defined $session->{revoked_at};
       $c->store->revoke_session($session->{id});
     }
-    return {};
+    return _render_empty_success($c);
   });
 
   $registry->register('com.atproto.server.deactivateAccount', sub ($c, $endpoint) {
@@ -401,7 +401,7 @@ sub register_server_handlers ($registry, $app) {
         status => 'deactivated',
       },
     );
-    return {};
+    return _render_empty_success($c);
   });
 
   $registry->register('com.atproto.server.activateAccount', sub ($c, $endpoint) {
@@ -443,7 +443,7 @@ sub register_server_handlers ($registry, $app) {
         },
       ) if defined $sync_car;
     }
-    return {};
+    return _render_empty_success($c);
   });
 
   $registry->register('com.atproto.server.requestPasswordReset', sub ($c, $endpoint) {
@@ -458,7 +458,7 @@ sub register_server_handlers ($registry, $app) {
       subject => 'perlsky password reset',
       content => sub ($token) { "Use token $token->{token} to reset your password." },
     );
-    return {};
+    return _render_empty_success($c);
   });
 
   $registry->register('com.atproto.server.resetPassword', sub ($c, $endpoint) {
@@ -484,7 +484,7 @@ sub register_server_handlers ($registry, $app) {
       $c->store->revoke_app_passwords_by_did($account->{did});
       $c->store->consume_action_token($token->{token});
     });
-    return {};
+    return _render_empty_success($c);
   });
 
   $registry->register('com.atproto.server.requestEmailConfirmation', sub ($c, $endpoint) {
@@ -507,7 +507,7 @@ sub register_server_handlers ($registry, $app) {
       subject => 'perlsky email confirmation',
       content => sub ($token) { "Use token $token->{token} to confirm your email address." },
     );
-    return {};
+    return _render_empty_success($c);
   });
 
   $registry->register('com.atproto.server.confirmEmail', sub ($c, $endpoint) {
@@ -539,7 +539,7 @@ sub register_server_handlers ($registry, $app) {
       $c->store->update_account($account->{did}, email_confirmed_at => time);
       $c->store->consume_action_token($token->{token});
     });
-    return {};
+    return _render_empty_success($c);
   });
 
   $registry->register('com.atproto.server.requestEmailUpdate', sub ($c, $endpoint) {
@@ -593,7 +593,7 @@ sub register_server_handlers ($registry, $app) {
       $c->store->consume_action_token($token->{token});
     }
     update_account_email($c, $account->{did}, $email);
-    return {};
+    return _render_empty_success($c);
   });
 
   $registry->register('com.atproto.server.requestAccountDelete', sub ($c, $endpoint) {
@@ -612,7 +612,7 @@ sub register_server_handlers ($registry, $app) {
       subject => 'perlsky account deletion',
       content => sub ($token) { "Use token $token->{token} to delete your account." },
     );
-    return {};
+    return _render_empty_success($c);
   });
 
   $registry->register('com.atproto.server.deleteAccount', sub ($c, $endpoint) {
@@ -650,7 +650,7 @@ sub register_server_handlers ($registry, $app) {
         },
       );
     });
-    return {};
+    return _render_empty_success($c);
   });
 
   $registry->register('com.atproto.server.getServiceAuth', sub ($c, $endpoint) {
@@ -1205,6 +1205,11 @@ sub _new_app_password {
 
 sub _new_invite_code {
   return 'perlsky-' . substr(random_hex(8), 0, 12);
+}
+
+sub _render_empty_success ($c) {
+  $c->render(data => q());
+  return;
 }
 
 1;

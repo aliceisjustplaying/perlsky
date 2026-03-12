@@ -118,7 +118,7 @@ my $client_metadata = {
   my $email_manage = _oauth_tokens_for_scope($t, $did, 'atproto account:email?action=manage');
   $t->post_ok('/xrpc/com.atproto.server.requestEmailConfirmation' => _oauth_headers($email_manage->{access_token}, 'POST', $config->{base_url} . '/xrpc/com.atproto.server.requestEmailConfirmation') => json => {})
     ->status_is(200)
-    ->json_is({});
+    ->content_is(q());
   $t->post_ok('/xrpc/com.atproto.server.requestEmailUpdate' => _oauth_headers($email_manage->{access_token}, 'POST', $config->{base_url} . '/xrpc/com.atproto.server.requestEmailUpdate') => json => {})
     ->status_is(200)
     ->json_is('/tokenRequired' => JSON::PP::true);
