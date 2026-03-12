@@ -36,6 +36,7 @@ sub _get_author_feed ($self, $c) {
 
   my $account = resolve_repo($c, $actor) or return undef;
   my $viewer = $self->_optional_auth_account($c, 'app.bsky.feed.getAuthorFeed');
+  return undef unless $viewer && ($viewer->{did} // q()) eq ($account->{did} // q());
   my $limit = $c->param('limit') // 50;
   $limit = 1 if $limit < 1;
   $limit = 100 if $limit > 100;
@@ -67,8 +68,22 @@ sub _get_posts ($self, $c) {
   my @uris = grep { defined($_) && length($_) } $c->every_param('uris');
   xrpc_error(400, 'InvalidRequest', 'uris is required') unless @uris;
 
-  my @resolved = map { $self->_resolve_local_post_uri($c, $_) } @uris;
-  return undef if grep { !defined $_ } @resolved;
+  my @resolved;
+  my %seen_uri;
+  for my $uri (@uris) {
+    my $resolved = eval { $self->_resolve_local_post_uri($c, $uri) };
+    if (my $err = $@) {
+      next if ref($err) eq 'HASH'
+        && ($err->{status} // 0) == 404
+        && ($err->{error} // q()) eq 'RecordNotFound';
+      die $err;
+    }
+    return undef unless defined $resolved;
+    my ($account, $row) = @$resolved;
+    my $canonical_uri = $self->_post_uri($account, $row);
+    next if $seen_uri{$canonical_uri}++;
+    push @resolved, $resolved;
+  }
 
   my $viewer = $self->_optional_auth_account($c, 'app.bsky.feed.getPosts');
   my @posts = map {
@@ -91,6 +106,8 @@ sub _get_post_thread ($self, $c) {
   my $resolved = $self->_resolve_local_post_uri($c, $uri) or return undef;
   my ($account, $row) = @$resolved;
   my $viewer = $self->_optional_auth_account($c, 'app.bsky.feed.getPostThread');
+  return undef unless $viewer && ($viewer->{did} // q()) eq ($account->{did} // q());
+  return undef if _thread_requires_upstream($self, $c, $row);
   my $profile_value = $self->_profile_record_value($c, $account);
   my $depth = $self->_non_negative_int_param($c, 'depth', 6);
   my $parent_height = $self->_non_negative_int_param($c, 'parentHeight', 80);
@@ -125,7 +142,6 @@ sub _post_view ($self, $c, $account, $row, $profile_value = undef, $viewer = und
     author    => $self->_profile_view_basic($c, $account, $profile_value, $viewer),
     record    => $row->{value},
     indexedAt => $self->_post_indexed_at($row),
-    labels    => [],
   };
   if ($depth < 2) {
     my $embed = $self->_post_embed_view($c, $account, $row->{value}, $viewer, $depth + 1);
@@ -134,6 +150,15 @@ sub _post_view ($self, $c, $account, $row, $profile_value = undef, $viewer = und
   my $viewer_state = $self->_post_counts_and_viewer($c, $uri, $viewer)->{viewer} || {};
   $post->{viewer} = $viewer_state if %$viewer_state;
   return $post;
+}
+
+sub _thread_requires_upstream ($self, $c, $row) {
+  for my $uri ($self->_reply_parent_uri($row), $self->_quoted_uri($row->{value})) {
+    next unless defined $uri && length $uri;
+    my $resolved = eval { $self->_resolve_local_post_uri($c, $uri) };
+    return 1 if !$resolved || $@;
+  }
+  return 0;
 }
 
 sub _thread_view ($self, $c, $account, $row, $profile_value = undef, $viewer = undef, $depth = 6, $parent_height = 80) {

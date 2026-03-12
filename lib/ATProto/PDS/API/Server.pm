@@ -194,7 +194,12 @@ sub register_server_handlers ($registry, $app) {
     if (($authn->{kind} // q()) eq 'app_password' && is_repo_takedown($c, $account->{did})) {
       xrpc_error(401, 'AuthRequired', 'Invalid identifier or password');
     }
-    assert_login_allowed($c, $account, allow_takedown => $body->{allowTakendown});
+    assert_login_allowed(
+      $c,
+      $account,
+      allow_takedown    => $body->{allowTakendown},
+      allow_deactivated => 1,
+    );
     return _issue_session($c, $account,
       kind          => $authn->{kind},
       scope         => $authn->{scope},
@@ -218,7 +223,7 @@ sub register_server_handlers ($registry, $app) {
 
   $registry->register('com.atproto.server.refreshSession', sub ($c, $endpoint) {
     my (undef, $account, $session) = require_auth($c, audience => TOKEN_AUD_REFRESH);
-    assert_login_allowed($c, $account);
+    assert_login_allowed($c, $account, allow_deactivated => 1);
     my $rotated = $c->store->rotate_session($session->{id});
     xrpc_error(401, 'ExpiredToken', 'Refresh session has already been revoked') unless $rotated;
     return _session_response($c, $account, $rotated);

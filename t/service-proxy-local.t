@@ -82,6 +82,12 @@ use ATProto::PDS::ServiceProxy;
     $self->{get_record_calls}{"$did|$collection|$rkey"}++;
     return $self->{records}{"$did|$collection|$rkey"};
   }
+
+  sub get_subject_status {
+    my ($self, $key) = @_;
+    $self->{get_subject_status_calls}{$key}++;
+    return $self->{subject_status}{$key};
+  }
 }
 
 {

@@ -48,6 +48,10 @@ $t->get_ok('/xrpc/com.atproto.identity.resolveHandle?handle=localhost')
   ->status_is(200)
   ->json_is('/did' => 'did:web:127.0.0.1%3A7755');
 
+$t->get_ok('/xrpc/com.atproto.identity.resolveHandle?handle=not_a_handle')
+  ->status_is(400)
+  ->json_is('/error' => 'InvalidHandle');
+
 $t->get_ok('/xrpc/com.atproto.identity.resolveDid?did=did:web:127.0.0.1%3A7755')
   ->status_is(200)
   ->json_is('/didDoc/id' => 'did:web:127.0.0.1%3A7755');

@@ -119,6 +119,9 @@ $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.getBlob')->query(
   cid => $blob_cid,
 ))->status_is(200)
   ->header_is('Cross-Origin-Resource-Policy' => 'cross-origin')
+  ->header_is('X-Content-Type-Options' => 'nosniff')
+  ->header_like('Content-Disposition' => qr/\Aattachment; filename="/)
+  ->header_is('Content-Security-Policy' => "default-src 'none'; sandbox")
   ->content_type_is('text/plain')
   ->content_is('blob-bytes');
 
@@ -166,6 +169,9 @@ $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.getBlob')->query(
   cid => $blob_cid,
 ))->status_is(200)
   ->header_is('Cross-Origin-Resource-Policy' => 'cross-origin')
+  ->header_is('X-Content-Type-Options' => 'nosniff')
+  ->header_like('Content-Disposition' => qr/\Aattachment; filename="/)
+  ->header_is('Content-Security-Policy' => "default-src 'none'; sandbox")
   ->content_type_is('text/plain')
   ->content_is('blob-bytes');
 

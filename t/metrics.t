@@ -204,7 +204,7 @@ like(
 );
 like(
   $metrics,
-  qr/perlsky_service_proxy_local_post_resolution_total\{source="index_cache"\} [1-9]\d*\b/,
+  qr/perlsky_service_proxy_local_post_resolution_total\{source="request_cache"\} [1-9]\d*\b/,
   'local post-resolution source counters are exported',
 );
 like(

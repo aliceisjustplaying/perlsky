@@ -294,6 +294,41 @@ $t->get_ok('/xrpc/com.atproto.server.getServiceAuth?aud=did:web:api.bsky.app&lxm
 })->status_is(200)
   ->json_has('/token');
 
+$t->post_ok('/xrpc/com.atproto.admin.updateSubjectStatus' => {
+  Authorization => $admin_auth,
+} => json => {
+  subject  => {
+    '$type' => 'com.atproto.admin.defs#repoRef',
+    did     => $did,
+  },
+  takedown => { applied => JSON::PP::false },
+})->status_is(200);
+
+$t->post_ok('/xrpc/com.atproto.server.deactivateAccount' => {
+  Authorization => "Bearer $replacement_access",
+} => json => {})->status_is(200);
+
+$t->post_ok('/xrpc/com.atproto.server.createSession' => json => {
+  identifier => 'alice.localhost',
+  password   => 'password123',
+})->status_is(200)
+  ->json_is('/did' => $did)
+  ->json_is('/active' => JSON::PP::false)
+  ->json_is('/status' => 'deactivated');
+
+my $deactivated_session = $t->tx->res->json;
+
+$t->post_ok('/xrpc/com.atproto.server.refreshSession' => {
+  Authorization => "Bearer $deactivated_session->{refreshJwt}",
+} => json => {})->status_is(200)
+  ->json_is('/did' => $did)
+  ->json_is('/active' => JSON::PP::false)
+  ->json_is('/status' => 'deactivated');
+
+$t->post_ok('/xrpc/com.atproto.server.activateAccount' => {
+  Authorization => "Bearer $replacement_access",
+} => json => {})->status_is(200);
+
 my $legacy_tmp  = File::Spec->catdir($root, 'data', 'tmp-tests', 'server-auth-legacy');
 remove_tree($legacy_tmp) if -d $legacy_tmp;
 my $legacy_t = Test::Mojo->new(ATProto::PDS->new(

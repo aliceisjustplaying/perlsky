@@ -46,12 +46,24 @@ sub register_builtin_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.identity.resolveHandle', sub ($c, $endpoint) {
-    my $handle = lc($c->param('handle') // '');
+    my $raw_handle = lc($c->param('handle') // q());
+    my $service_handle = lc($c->config_value('service_handle_domain', 'localhost'));
+    if ($raw_handle eq $service_handle) {
+      return {
+        did => service_did($c->app->settings),
+      };
+    }
+
+    my $handle = normalize_handle($raw_handle, undef, { no_append => 1 });
+    die {
+      status  => 400,
+      error   => 'InvalidHandle',
+      message => 'Handle is invalid',
+    } unless defined $handle && length $handle;
     if (my $account = $c->store->get_account_by_handle($handle)) {
       return { did => $account->{did} };
     }
 
-    my $service_handle = lc($c->config_value('service_handle_domain', 'localhost'));
     if ($handle eq $service_handle) {
       return {
         did => service_did($c->app->settings),

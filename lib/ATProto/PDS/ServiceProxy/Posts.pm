@@ -8,7 +8,7 @@ no warnings 'experimental::signatures';
 use Exporter 'import';
 
 use ATProto::PDS::API::Util qw(iso8601 resolve_repo xrpc_error);
-use ATProto::PDS::Moderation qw(parse_at_uri);
+use ATProto::PDS::Moderation qw(assert_record_readable assert_repo_readable parse_at_uri);
 
 our @EXPORT_OK = qw(
   _non_negative_int_param
@@ -42,6 +42,7 @@ sub _resolve_local_post_uri ($self, $c, $uri) {
   };
   xrpc_error(404, 'RecordNotFound', 'Record was not found')
     unless $collection eq 'app.bsky.feed.post';
+  assert_repo_readable($c, $account);
   my $canonical_uri = 'at://' . $account->{did} . '/' . $collection . '/' . $rkey;
   my $local_post_index = $c->stash('local_post_index');
   if ($local_post_index && $local_post_index->{posts}{$canonical_uri}) {
@@ -63,6 +64,7 @@ sub _resolve_local_post_uri ($self, $c, $uri) {
   );
   my $row = $c->store->get_record($account->{did}, $collection, $rkey);
   xrpc_error(404, 'RecordNotFound', 'Record was not found') unless $row;
+  assert_record_readable($c, $canonical_uri);
   my $resolved = [ $account, $row ];
   $cache->{$uri} = $resolved;
   $cache->{$canonical_uri} = $resolved;

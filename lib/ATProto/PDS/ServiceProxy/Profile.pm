@@ -81,7 +81,6 @@ sub _profile_view_basic ($self, $c, $account, $profile_value = undef, $viewer = 
     did        => $account->{did},
     handle     => $account->{handle},
     associated => $self->_profile_associated,
-    labels     => [],
     createdAt  => iso8601($account->{created_at}),
   };
   if ($viewer) {

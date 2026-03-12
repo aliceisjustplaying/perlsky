@@ -23,6 +23,7 @@ BEGIN {
 use Crypt::PK::ECC;
 use IO::Socket::INET;
 use Mojo::Server::Daemon;
+use Mojo::URL;
 use Mojo::UserAgent;
 use Mojo::Util qw(url_unescape);
 use Mojolicious;
@@ -232,6 +233,68 @@ $t->get_ok('/xrpc/app.bsky.actor.getPreferences' => {
   ->json_is('/preferences/0/$type' => 'app.bsky.actor.defs#savedFeedsPref')
   ->json_is('/preferences/0/pinned/0' => 'at://did:plc:feed/app.bsky.feed.generator/demo');
 
+$t->post_ok('/xrpc/app.bsky.actor.putPreferences' => {
+  Authorization => "Bearer $access",
+} => json => {
+  preferences => [{
+    '$type' => 'com.atproto.server.defs#unknown',
+  }],
+})->status_is(400)
+  ->json_is('/error' => 'InvalidRequest');
+
+$t->post_ok('/xrpc/app.bsky.actor.putPreferences' => {
+  Authorization => "Bearer $access",
+} => json => {
+  preferences => [{
+    '$type'     => 'app.bsky.actor.defs#personalDetailsPref',
+    birthDate   => '1970-01-01T00:00:00.000Z',
+  }],
+})->status_is(200);
+
+$t->get_ok('/xrpc/app.bsky.actor.getPreferences' => {
+  Authorization => "Bearer $access",
+})->status_is(200)
+  ->json_is('/preferences/0/$type' => 'app.bsky.actor.defs#personalDetailsPref')
+  ->json_is('/preferences/1/$type' => 'app.bsky.actor.defs#declaredAgePref')
+  ->json_is('/preferences/1/isOverAge18' => JSON::PP::true);
+
+$t->post_ok('/xrpc/com.atproto.server.createAppPassword' => {
+  Authorization => "Bearer $access",
+} => json => {
+  name => 'prefs-device',
+})->status_is(200)
+  ->json_has('/password');
+
+my $prefs_app_password = $t->tx->res->json->{password};
+
+$t->post_ok('/xrpc/com.atproto.server.createSession' => json => {
+  identifier => 'alice.localhost',
+  password   => $prefs_app_password,
+})->status_is(200)
+  ->json_has('/accessJwt');
+
+my $prefs_app_access = $t->tx->res->json->{accessJwt};
+
+$t->get_ok('/xrpc/app.bsky.actor.getPreferences' => {
+  Authorization => "Bearer $prefs_app_access",
+})->status_is(200)
+  ->json_is('/preferences/0/$type' => 'app.bsky.actor.defs#declaredAgePref')
+  ->json_is('/preferences/0/isOverAge18' => JSON::PP::true);
+ok(
+  !scalar(grep { ($_->{'$type'} // q()) eq 'app.bsky.actor.defs#personalDetailsPref' } @{ $t->tx->res->json->{preferences} || [] }),
+  'app password preference reads hide personalDetailsPref',
+);
+
+$t->post_ok('/xrpc/app.bsky.actor.putPreferences' => {
+  Authorization => "Bearer $prefs_app_access",
+} => json => {
+  preferences => [{
+    '$type'     => 'app.bsky.actor.defs#personalDetailsPref',
+    birthDate   => '1970-01-01T00:00:00.000Z',
+  }],
+})->status_is(400)
+  ->json_is('/error' => 'InvalidRequest');
+
 $t->get_ok('/xrpc/app.bsky.notification.getPreferences' => {
   Authorization => "Bearer $access",
 })->status_is(200)
@@ -261,6 +324,15 @@ $t->post_ok('/xrpc/app.bsky.notification.putPreferencesV2' => {
   ->json_is('/preferences/chat/include' => 'all')
   ->json_is('/preferences/verified/list' => JSON::PP::false)
   ->json_is('/preferences/verified/push' => JSON::PP::false);
+
+$t->post_ok('/xrpc/app.bsky.notification.putPreferencesV2' => {
+  Authorization => "Bearer $access",
+} => json => {
+  mystery => {
+    push => JSON::PP::true,
+  },
+})->status_is(400)
+  ->json_is('/error' => 'InvalidRequest');
 
 $t->get_ok('/xrpc/app.bsky.notification.getPreferences' => {
   Authorization => "Bearer $access",
@@ -355,8 +427,8 @@ $t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
 $t->get_ok("/xrpc/app.bsky.feed.getAuthorFeed?actor=$bob_did&limit=10" => {
   Authorization => "Bearer $access",
 })->status_is(200)
-  ->json_is('/feed/0/post/author/viewer/following' => "at://$did/app.bsky.graph.follow/follow-bob")
-  ->json_is('/feed/0/post/author/viewer/followedBy' => "at://$bob_did/app.bsky.graph.follow/follow-alice");
+  ->json_is('/nsid' => 'app.bsky.feed.getAuthorFeed');
+ok($t->tx->res->json->{auth}, 'non-owner author feed proxies upstream instead of synthesizing local appview state');
 
 $t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
   Authorization => "Bearer $access",
@@ -390,8 +462,8 @@ $t->get_ok("/xrpc/app.bsky.feed.getAuthorFeed?actor=$did&limit=10" => {
   ->json_is('/feed/0/post/record/text' => 'browser smoke post')
   ->json_is('/feed/0/post/author/associated/chat/allowIncoming' => 'all')
   ->json_is('/feed/0/post/author/associated/activitySubscription/allowSubscriptions' => 'followers')
-  ->json_is('/feed/0/post/author/labels' => [])
   ->json_has('/feed/0/post/author/createdAt');
+ok(!exists($t->tx->res->json->{feed}[0]{post}{author}{labels}), 'local author view omits non-authoritative labels');
 ok(!exists($t->tx->res->json->{feed}[0]{post}{bookmarkCount}), 'local post view omits non-authoritative bookmarkCount');
 ok(!exists($t->tx->res->json->{feed}[0]{post}{replyCount}), 'local post view omits non-authoritative replyCount');
 ok(!exists($t->tx->res->json->{feed}[0]{post}{likeCount}), 'local post view omits non-authoritative likeCount');
@@ -461,6 +533,32 @@ $t->get_ok('/xrpc/app.bsky.feed.getPostThread?uri=' . _uri_escape("at://$handle/
 })->status_is(200);
 is_deeply($t->tx->res->json, $reply_thread, 'handle-form local post URIs return the same thread payload');
 
+$t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
+  Authorization => "Bearer $access",
+} => json => {
+  repo       => $did,
+  collection => 'app.bsky.feed.post',
+  rkey       => 'reply-remote-parent',
+  record     => {
+    '$type'   => 'app.bsky.feed.post',
+    text      => 'reply to remote parent',
+    reply     => {
+      root   => { uri => 'at://did:plc:remote/app.bsky.feed.post/root', cid => 'bafyremote-root' },
+      parent => { uri => 'at://did:plc:remote/app.bsky.feed.post/parent', cid => 'bafyremote-parent' },
+    },
+    createdAt => '2026-03-10T18:03:00Z',
+  },
+})->status_is(200)
+  ->json_has('/cid');
+
+my $remote_parent_reply = $t->tx->res->json;
+
+$t->get_ok('/xrpc/app.bsky.feed.getPostThread?uri=' . _uri_escape($remote_parent_reply->{uri}) => {
+  Authorization => "Bearer $access",
+})->status_is(200)
+  ->json_is('/nsid' => 'app.bsky.feed.getPostThread');
+ok($t->tx->res->json->{auth}, 'local thread with remote parent proxies upstream instead of dropping the parent tree');
+
 $t->get_ok('/xrpc/app.bsky.notification.listNotifications?limit=40' => {
   Authorization => "Bearer $access",
 })->status_is(200)
@@ -498,7 +596,7 @@ $t->get_ok('/xrpc/app.bsky.actor.getPreferences' => {
   Authorization   => "Bearer $access",
   'Atproto-Proxy' => 'did:web:appview.test#bsky_appview',
 })->status_is(200)
-  ->json_is('/preferences/0/$type' => 'app.bsky.actor.defs#savedFeedsPref');
+  ->json_is('/preferences/0/$type' => 'app.bsky.actor.defs#personalDetailsPref');
 
 $t->get_ok('/xrpc/example.unsupported.method')
   ->status_is(404)
