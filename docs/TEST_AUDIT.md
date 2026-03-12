@@ -116,7 +116,7 @@ The current suite splits into three broad buckets:
 Current suite counts by bucket:
 
 - `direct reference differential`: `5`
-- `audited local regression`: `32`
+- `audited local regression`: `33`
 - `local correctness/infrastructure`: `13`
 
 | Test file | Bucket | Current note |
@@ -144,6 +144,7 @@ Current suite counts by bucket:
 | `t/import-repo.t` | audited local regression | focused `importRepo` snapshot-restore and rollback behavior, now cleaner after splitting the disabled-import policy gate into its own suite |
 | `t/import-repo-policy.t` | audited local regression | local service-policy coverage for the `accepting_imports` gate on `importRepo` |
 | `t/invite-gating.t` | audited local regression | self-service invite flag behavior |
+| `t/invite-admin.t` | audited local regression | isolated invite-management coverage for admin listing/disabling and self-service invite-account gating |
 | `t/ipld-canonical.t` | local correctness/infrastructure | canonical IPLD encoding invariants |
 | `t/ipld-codecs.t` | local correctness/infrastructure | DAG-CBOR and codec coverage |
 | `t/labels.t` | audited local regression | label persistence, replay, negation, and cursor behavior |
@@ -183,7 +184,7 @@ The broadest suites are green and audited, but they still mix several categories
 - `t/import-repo.t`
   Is close to a clean conformance suite, but still includes the local `accepting_imports` gate in the same file.
 - `t/uncovered-endpoints.t`
-  Exists specifically to stop lesser-used local endpoints from falling out of coverage; it is a little narrower after moving the self-contained `com.atproto.temp.*` checks into `t/temp-endpoints.t`, but it should still be read as a pragmatic safety net, not as a pure reference-alignment suite.
+  Exists specifically to stop lesser-used local endpoints from falling out of coverage; it is narrower now that both the self-contained `com.atproto.temp.*` checks and invite-management block have moved into dedicated suites, but it should still be read as a pragmatic safety net, not as a pure reference-alignment suite.
 
 ## What This Audit Does Not Yet Claim
 
