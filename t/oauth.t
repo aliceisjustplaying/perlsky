@@ -226,7 +226,7 @@ my $client_metadata = {
     client_assertion_type => 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
     client_assertion      => _client_assertion($client_metadata->{client_id}, $revoke_url, $client_jwk, $client_private),
   })->status_is(200)
-    ->json_is({});
+    ->content_is(q());
 
   $t->get_ok('/xrpc/com.atproto.server.getSession' => {
     Authorization => "DPoP $refreshed->{access_token}",

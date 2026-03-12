@@ -225,7 +225,7 @@ $t->post_ok('/xrpc/app.bsky.actor.putPreferences' => {
     saved   => [],
   }],
 })->status_is(200)
-  ->json_is({});
+  ->content_is(q());
 
 $t->get_ok('/xrpc/app.bsky.actor.getPreferences' => {
   Authorization => "Bearer $access",

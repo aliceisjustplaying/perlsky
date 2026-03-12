@@ -74,7 +74,7 @@ sub _put_preferences ($self, $c) {
 
   my @stored = grep { !_pref_is_read_only($_->{'$type'} // q()) } @$preferences;
   $c->store->put_preferences($account->{did}, 'app.bsky', \@stored);
-  $c->render(json => {});
+  $c->render(data => q());
   return 200;
 }
 

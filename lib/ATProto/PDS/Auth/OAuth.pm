@@ -367,7 +367,7 @@ sub revoke ($self, $c) {
 
   $c->res->headers->header('Cache-Control' => 'no-store');
   $c->res->headers->header('Pragma'        => 'no-cache');
-  $c->render(json => {});
+  $c->render(data => q());
 }
 
 sub authenticate_oauth_access_token ($self, $c, $token, %opts) {
