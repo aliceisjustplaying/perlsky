@@ -4,6 +4,7 @@ use warnings;
 use Config ();
 use FindBin qw($Bin);
 use File::Spec;
+use File::Temp qw(tempdir);
 use Test::More;
 
 BEGIN {
@@ -50,7 +51,7 @@ $t->get_ok('/xrpc/com.atproto.identity.resolveHandle?handle=localhost')
 
 $t->get_ok('/xrpc/com.atproto.identity.resolveHandle?handle=not_a_handle')
   ->status_is(400)
-  ->json_is('/error' => 'InvalidHandle');
+  ->json_is('/error' => 'InvalidRequest');
 
 $t->get_ok('/xrpc/com.atproto.identity.resolveDid?did=did:web:127.0.0.1%3A7755')
   ->status_is(200)
@@ -59,6 +60,43 @@ $t->get_ok('/xrpc/com.atproto.identity.resolveDid?did=did:web:127.0.0.1%3A7755')
 $t->post_ok('/xrpc/com.atproto.server.createSession' => json => { identifier => 'alice', password => 'pw' })
   ->status_is(401)
   ->json_is('/error' => 'AuthRequired');
+
+my $tmp = tempdir(CLEANUP => 1);
+my $fresh = Test::Mojo->new(ATProto::PDS->new(
+  project_root => $root,
+  settings     => {
+    base_url              => 'http://127.0.0.1:7755',
+    service_did_method    => 'did:web',
+    service_handle_domain => 'localhost',
+    jwt_secret            => 'test-secret',
+    data_dir              => $tmp,
+    db_path               => File::Spec->catfile($tmp, 'perlsky.sqlite'),
+  },
+));
+
+$fresh->post_ok('/xrpc/com.atproto.server.createAccount' => json => {
+  handle   => 'alice.localhost',
+  email    => 'alice@example.test',
+  password => 'hunter22',
+})->status_is(200);
+
+my $user_did = $fresh->tx->res->json->{did};
+
+$fresh->get_ok("/xrpc/com.atproto.identity.resolveHandle?handle=alice.localhost")
+  ->status_is(200)
+  ->json_is('/did' => $user_did);
+
+$fresh->get_ok("/xrpc/com.atproto.identity.resolveDid?did=$user_did")
+  ->status_is(400)
+  ->json_is('/error' => 'InvalidRequest');
+
+$fresh->get_ok("/xrpc/com.atproto.identity.resolveIdentity?identifier=$user_did")
+  ->status_is(400)
+  ->json_is('/error' => 'InvalidRequest');
+
+$fresh->get_ok('/xrpc/com.atproto.identity.resolveIdentity?identifier=alice.localhost')
+  ->status_is(400)
+  ->json_is('/error' => 'InvalidRequest');
 
 my $missing_secret_error = eval {
   ATProto::PDS->new(

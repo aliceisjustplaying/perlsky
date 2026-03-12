@@ -36,6 +36,11 @@ sub register_builtin_handlers ($registry, $app) {
 
     my $account = $c->store->get_account_by_did(_canonical_did($did));
     if ($account) {
+      die {
+        status  => 400,
+        error   => 'InvalidRequest',
+        message => 'Unable to resolve DID',
+      } unless _local_account_identity_resolvable($c, $account);
       return {
         didDoc => $account->{did_doc} || account_did_doc($c->app->settings, $account),
       };
@@ -66,8 +71,8 @@ sub register_builtin_handlers ($registry, $app) {
     my $handle = normalize_handle($raw_handle, undef, { no_append => 1 });
     die {
       status  => 400,
-      error   => 'InvalidHandle',
-      message => 'Handle is invalid',
+      error   => 'InvalidRequest',
+      message => 'Unable to resolve handle',
     } unless defined $handle && length $handle;
     if (my $did = _resolve_handle_to_did($c, $handle)) {
       return { did => $did };
@@ -85,6 +90,11 @@ sub register_builtin_handlers ($registry, $app) {
     my $service_did = lc(service_did($c->app->settings));
     my $service_handle = lc($c->config_value('service_handle_domain', 'localhost'));
     if (my $account = $identifier =~ /^did:/ ? $c->store->get_account_by_did(_canonical_did($identifier)) : $c->store->get_account_by_handle($identifier)) {
+      die {
+        status  => 400,
+        error   => 'InvalidRequest',
+        message => 'Unable to resolve identity',
+      } unless _local_account_identity_resolvable($c, $account);
       return {
         did    => $account->{did},
         handle => $account->{handle},
@@ -136,6 +146,13 @@ sub register_builtin_handlers ($registry, $app) {
       },
     };
   });
+}
+
+sub _local_account_identity_resolvable ($c, $account) {
+  return 0 unless ref($account) eq 'HASH';
+  my $did = $account->{did} // q();
+  return 1 if _same_did($did, service_did($c->app->settings));
+  return 0;
 }
 
 sub _resolve_handle_to_did ($c, $handle) {
@@ -276,7 +293,9 @@ sub _relaxed_did ($did) {
 
 sub _canonical_did ($did) {
   $did = _relaxed_did($did);
-  $did =~ s/^(did:web:[^:]+):(\d+)$/$1%3A$2/i;
+  if ($did =~ /\A(did:web:[^:]+):(\d+)(:.*)?\z/i) {
+    $did = $1 . '%3A' . $2 . ($3 // q());
+  }
   return $did;
 }
 

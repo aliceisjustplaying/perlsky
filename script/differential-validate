@@ -582,6 +582,82 @@ check(
   'resolveHandle missing-handle semantics match the official reference PDS',
 );
 
+note('Comparing resolveDid and resolveIdentity');
+for my $name (sort keys %server) {
+  my $resolve_did = get_form(
+    $server{$name}{origin},
+    'com.atproto.identity.resolveDid',
+    { did => $server{$name}{did} },
+  );
+
+  my $identity_by_did = get_form(
+    $server{$name}{origin},
+    'com.atproto.identity.resolveIdentity',
+    { identifier => $server{$name}{did} },
+  );
+
+  my $identity_by_handle = get_form(
+    $server{$name}{origin},
+    'com.atproto.identity.resolveIdentity',
+    { identifier => $server{$name}{handle} },
+  );
+
+  my $invalid_handle = get_form(
+    $server{$name}{origin},
+    'com.atproto.identity.resolveHandle',
+    { handle => 'bad_handle' },
+  );
+
+  $server{$name}{identity_surface} = {
+    resolve_did => $resolve_did->is_success
+      ? {
+          status  => $resolve_did->code,
+          did_doc => normalize_did_doc(
+            ($resolve_did->json || {})->{didDoc} || {},
+            $server{$name}{did},
+            $server{$name}{handle},
+            $server{$name}{origin},
+          ),
+        }
+      : normalize_xrpc_error($resolve_did),
+    identity_by_did => $identity_by_did->is_success
+      ? {
+          status       => $identity_by_did->code,
+          did_match    => ((($identity_by_did->json || {})->{did} // q()) eq $server{$name}{did}) ? 1 : 0,
+          handle_match => ((($identity_by_did->json || {})->{handle} // q()) eq $server{$name}{handle}) ? 1 : 0,
+          did_doc      => normalize_did_doc(
+            (($identity_by_did->json || {})->{didDoc} || {}),
+            $server{$name}{did},
+            $server{$name}{handle},
+            $server{$name}{origin},
+          ),
+        }
+      : normalize_xrpc_error($identity_by_did),
+    identity_by_handle => $identity_by_handle->is_success
+      ? {
+          status       => $identity_by_handle->code,
+          did_match    => ((($identity_by_handle->json || {})->{did} // q()) eq $server{$name}{did}) ? 1 : 0,
+          handle_match => ((($identity_by_handle->json || {})->{handle} // q()) eq $server{$name}{handle}) ? 1 : 0,
+          did_doc      => normalize_did_doc(
+            (($identity_by_handle->json || {})->{didDoc} || {}),
+            $server{$name}{did},
+            $server{$name}{handle},
+            $server{$name}{origin},
+          ),
+        }
+      : normalize_xrpc_error($identity_by_handle),
+    invalid_handle => normalize_xrpc_error($invalid_handle),
+  };
+}
+
+if (!same_hash($server{reference}{identity_surface}, $server{perlsky}{identity_surface})) {
+  note('reference identity surface: ' . encode_json($server{reference}{identity_surface}));
+  note('perlsky identity surface: ' . encode_json($server{perlsky}{identity_surface}));
+  fail_check('resolveDid and resolveIdentity local-account semantics match the official reference PDS');
+} else {
+  pass('resolveDid and resolveIdentity local-account semantics match the official reference PDS');
+}
+
 note('Comparing subscribeRepos bootstrap backfill');
 for my $name (sort keys %server) {
   my $frames = frames_until_quiet("$server{$name}{origin}/xrpc/com.atproto.sync.subscribeRepos?cursor=0");

@@ -153,9 +153,8 @@ like($created->{didDoc}{verificationMethod}[0]{type}, qr/Secp256k1/, 'didDoc use
 
 $t->get_ok('/xrpc/com.atproto.identity.resolveDid' => form => {
   did => $did,
-})->status_is(200)
-  ->json_is('/didDoc/id', $did)
-  ->json_is('/didDoc/alsoKnownAs/0', 'at://alice.test');
+})->status_is(400)
+  ->json_is('/error', 'InvalidRequest');
 
 $t->get_ok('/xrpc/com.atproto.identity.getRecommendedDidCredentials' => {
   Authorization => "Bearer $access",
@@ -276,7 +275,7 @@ $t->get_ok('/xrpc/com.atproto.identity.resolveHandle' => form => {
 
 $t->get_ok('/xrpc/com.atproto.identity.resolveDid' => form => {
   did => $did,
-})->status_is(200)
-  ->json_is('/didDoc/alsoKnownAs/0', 'at://alice-renamed.test');
+})->status_is(400)
+  ->json_is('/error', 'InvalidRequest');
 
 done_testing;
