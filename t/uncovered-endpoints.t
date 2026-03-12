@@ -125,6 +125,59 @@ my $handle_event = $app->store->list_events_from($before_admin_handle_seq + 1, l
 is($handle_event->{type}, 'identity', 'admin.updateAccountHandle appends an identity event');
 is($handle_event->{payload}{handle}, 'alice.external.test', 'identity event carries the updated handle');
 
+$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.admin.getAccountInfos')->query(
+  dids => [ $did, 'did:web:example.test:users:missing' ],
+) => {
+  Authorization => $admin_auth,
+})->status_is(200)
+  ->json_is('/infos/0/did' => $did)
+  ->json_is('/infos/0/handle' => 'alice.external.test');
+
+is(scalar @{ $t->tx->res->json->{infos} || [] }, 1, 'getAccountInfos returns only existing accounts');
+
+$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.admin.searchAccounts')->query(
+  email => 'ALICE@EXAMPLE.TEST',
+) => {
+  Authorization => $admin_auth,
+})->status_is(200)
+  ->json_is('/accounts/0/did' => $did);
+
+$t->post_ok('/xrpc/com.atproto.admin.updateAccountEmail' => {
+  Authorization => $admin_auth,
+} => json => {
+  account => $did,
+  email   => 'Alice+Admin@Example.Test',
+})->status_is(200)
+  ->json_is({});
+
+$account = $app->store->get_account_by_did($did);
+is($account->{email}, 'alice+admin@example.test', 'admin.updateAccountEmail normalizes email');
+ok(!defined($account->{email_confirmed_at}), 'admin.updateAccountEmail clears email confirmation state');
+
+$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.admin.getAccountInfo')->query(
+  did => $did,
+) => {
+  Authorization => $admin_auth,
+})->status_is(200)
+  ->json_is('/email' => 'alice+admin@example.test');
+
+$t->post_ok('/xrpc/com.atproto.admin.sendEmail' => {
+  Authorization => $admin_auth,
+} => json => {
+  recipientDid => $did,
+  content      => 'hello from perlsky',
+})->status_is(200)
+  ->json_is('/sent' => JSON::PP::true);
+
+my $outbound = $app->store->dbh->selectrow_hashref(
+  q{SELECT * FROM outbound_emails WHERE recipient_did = ? ORDER BY id DESC LIMIT 1},
+  undef,
+  $did,
+);
+ok($outbound, 'admin.sendEmail logs an outbound email');
+is($outbound->{subject}, 'Message via your PDS', 'admin.sendEmail uses the reference default subject');
+is($outbound->{recipient_email}, 'alice+admin@example.test', 'admin.sendEmail uses the updated normalized email');
+
 $t->post_ok('/xrpc/com.atproto.admin.updateAccountSigningKey' => {
   Authorization => $admin_auth,
 } => json => {
@@ -154,7 +207,24 @@ $t->post_ok('/xrpc/com.atproto.server.createInviteCodes' => {
 })->status_is(200)
   ->json_is('/codes/0/account' => 'admin');
 
-is(scalar @{ $t->tx->res->json->{codes}[0]{codes} || [] }, 2, 'admin createInviteCodes returns the requested number of codes');
+my @admin_codes = @{ $t->tx->res->json->{codes}[0]{codes} || [] };
+is(scalar @admin_codes, 2, 'admin createInviteCodes returns the requested number of codes');
+
+$t->post_ok('/xrpc/com.atproto.admin.disableInviteCodes' => {
+  Authorization => $admin_auth,
+} => json => {
+  accounts => ['admin'],
+})->status_is(400)
+  ->json_is('/error' => 'InvalidRequest');
+
+$t->post_ok('/xrpc/com.atproto.admin.disableInviteCodes' => {
+  Authorization => $admin_auth,
+} => json => {
+  codes => [$admin_codes[0]],
+})->status_is(200)
+  ->json_is({});
+
+ok($app->store->get_invite_code($admin_codes[0])->{disabled}, 'disableInviteCodes marks the requested code disabled');
 
 $t->post_ok('/xrpc/com.atproto.server.createInviteCodes' => {
   Authorization => "Bearer $access",
@@ -174,6 +244,62 @@ $t->post_ok('/xrpc/com.atproto.server.createInviteCodes' => {
 })->status_is(400)
   ->json_is('/error' => 'InvalidRequest');
 
+$t->post_ok('/xrpc/com.atproto.admin.disableAccountInvites' => {
+  Authorization => $admin_auth,
+} => json => {
+  account => $did,
+  note    => 'paused for audit',
+})->status_is(200)
+  ->json_is({});
+
+$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.admin.getAccountInfo')->query(
+  did => $did,
+) => {
+  Authorization => $admin_auth,
+})->status_is(200)
+  ->json_is('/invitesDisabled' => JSON::PP::true)
+  ->json_is('/inviteNote' => 'paused for audit');
+
+$t->post_ok('/xrpc/com.atproto.server.createInviteCode' => {
+  Authorization => "Bearer $access",
+} => json => {
+  useCount => 1,
+})->status_is(400)
+  ->json_is('/error' => 'InvalidRequest');
+
+$t->post_ok('/xrpc/com.atproto.admin.enableAccountInvites' => {
+  Authorization => $admin_auth,
+} => json => {
+  account => $did,
+})->status_is(200)
+  ->json_is({});
+
+$t->post_ok('/xrpc/com.atproto.server.createInviteCode' => {
+  Authorization => "Bearer $access",
+} => json => {
+  useCount => 1,
+})->status_is(200)
+  ->json_like('/code' => qr/\Aperlsky-/);
+
+my $user_code = $t->tx->res->json->{code};
+
+$t->post_ok('/xrpc/com.atproto.admin.disableInviteCodes' => {
+  Authorization => $admin_auth,
+} => json => {
+  codes => [$user_code],
+})->status_is(200)
+  ->json_is({});
+
+my ($disabled_row) = grep { $_->{code} eq $user_code } @{ $app->store->list_invite_codes_for_account($did) || [] };
+ok($disabled_row && $disabled_row->{disabled}, 'disableInviteCodes disables the requested invite code');
+
+$t->post_ok('/xrpc/com.atproto.admin.disableInviteCodes' => {
+  Authorization => $admin_auth,
+} => json => {
+  accounts => ['admin'],
+})->status_is(400)
+  ->json_is('/error' => 'InvalidRequest');
+
 $t->post_ok('/xrpc/com.atproto.sync.notifyOfUpdate' => json => {
   hostname => 'crawler.example.test',
 })->status_is(200)
@@ -184,6 +310,40 @@ $t->get_ok('/xrpc/com.atproto.sync.getHostStatus' => form => {
 })->status_is(200)
   ->json_is('/hostname' => 'crawler.example.test')
   ->json_is('/status' => 'active');
+
+$t->post_ok('/xrpc/com.atproto.admin.sendEmail' => {
+  Authorization => $admin_auth,
+} => json => {
+  recipientDid => $did,
+  subject      => 'Hello',
+  content      => 'Testing',
+})->status_is(200)
+  ->json_is('/sent' => JSON::PP::true);
+
+$t->post_ok('/xrpc/com.atproto.server.createAccount' => json => {
+  handle   => 'noemail.example.test',
+  password => 'hunter22',
+})->status_is(200);
+
+my $noemail_did = $t->tx->res->json->{did};
+
+$t->post_ok('/xrpc/com.atproto.admin.sendEmail' => {
+  Authorization => $admin_auth,
+} => json => {
+  recipientDid => $noemail_did,
+  subject      => 'Hello',
+  content      => 'Testing',
+})->status_is(400)
+  ->json_is('/error' => 'InvalidRequest');
+
+$t->post_ok('/xrpc/com.atproto.admin.sendEmail' => {
+  Authorization => $admin_auth,
+} => json => {
+  recipientDid => 'did:web:example.test:users:missing',
+  subject      => 'Hello',
+  content      => 'Testing',
+})->status_is(404)
+  ->json_is('/error' => 'AccountNotFound');
 
 $t->post_ok('/xrpc/com.atproto.admin.updateAccountPassword' => {
   Authorization => $admin_auth,

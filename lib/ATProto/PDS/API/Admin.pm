@@ -110,11 +110,17 @@ sub register_admin_handlers ($registry, $app) {
     require_admin($c);
     my $body = $c->req->json || {};
     my $account = $c->store->get_account_by_did($body->{recipientDid} // q());
+    xrpc_error(404, 'AccountNotFound', 'Recipient was not found') unless $account;
+    xrpc_error(400, 'InvalidRequest', 'account does not have an email address')
+      unless defined($account->{email}) && length($account->{email});
+    my $subject = defined($body->{subject}) && length($body->{subject})
+      ? $body->{subject}
+      : 'Message via your PDS';
     $c->store->log_outbound_email(
       recipient_did   => $body->{recipientDid},
-      recipient_email => $account ? $account->{email} : undef,
+      recipient_email => $account->{email},
       sender_did      => $body->{senderDid},
-      subject         => $body->{subject},
+      subject         => $subject,
       content         => $body->{content},
       comment         => $body->{comment},
       sent            => 1,
@@ -203,6 +209,8 @@ sub register_admin_handlers ($registry, $app) {
   $registry->register('com.atproto.admin.disableInviteCodes', sub ($c, $endpoint) {
     require_admin($c);
     my $body = $c->req->json || {};
+    xrpc_error(400, 'InvalidRequest', 'cannot disable admin invite codes')
+      if grep { defined($_) && $_ eq 'admin' } @{ $body->{accounts} || [] };
     $c->store->disable_invite_codes(
       codes    => $body->{codes},
       accounts => $body->{accounts},

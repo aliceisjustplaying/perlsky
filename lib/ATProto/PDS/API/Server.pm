@@ -871,6 +871,8 @@ sub _invite_code_targets ($c, $body, %opts) {
   }
 
   my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS, required_scope => 'full');
+  xrpc_error(400, 'InvalidRequest', 'Invite creation is disabled for this account')
+    if $account->{invites_disabled};
   if ($opts{multiple}) {
     my @targets = @{ $body->{forAccounts} || [ $account->{did} ] };
     @targets = ($account->{did}) unless @targets;
