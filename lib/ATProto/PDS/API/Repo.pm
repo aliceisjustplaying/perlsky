@@ -65,6 +65,8 @@ sub register_repo_handlers ($registry, $app) {
     my $body = $c->req->json || {};
     my ($claims, $account) = _require_repo_owner($c, $body->{repo});
     my @writes = map { _normalize_apply_writes_input($_) } @{ $body->{writes} || [] };
+    xrpc_error(400, 'InvalidRequest', 'Too many writes. Max: 200')
+      if @writes > 200;
     _assert_oauth_write_permissions($claims, \@writes);
     my $commit = $c->repo_manager->apply_writes(
       $account,

@@ -353,6 +353,26 @@ $t->get_ok("/xrpc/com.atproto.sync.getLatestCommit?did=$did")
   ->json_is('/cid' => $pre_missing_delete_commit->{cid})
   ->json_is('/rev' => $pre_missing_delete_commit->{rev});
 
+my @too_many_writes = map {
+  +{
+    '$type'     => 'com.atproto.repo.applyWrites#create',
+    collection  => 'app.bsky.feed.post',
+    rkey        => sprintf('bulk-%03d', $_),
+    value       => {
+      '$type'   => 'app.bsky.feed.post',
+      text      => "bulk write $_",
+      createdAt => '2026-03-12T00:00:00Z',
+    },
+  }
+} 1 .. 201;
+
+$t->post_ok('/xrpc/com.atproto.repo.applyWrites' => { Authorization => "Bearer $access" } => json => {
+  repo   => $did,
+  writes => \@too_many_writes,
+})->status_is(400)
+  ->json_is('/error' => 'InvalidRequest')
+  ->json_is('/message' => 'Too many writes. Max: 200');
+
 done_testing;
 
 sub _start_mock_server {
