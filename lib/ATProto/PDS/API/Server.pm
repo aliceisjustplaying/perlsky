@@ -10,6 +10,7 @@ use JSON::PP ();
 
 use ATProto::PDS::API::Helpers qw(find_account invite_code_view issue_account_action_token require_admin verify_account_password verify_login_password);
 use ATProto::PDS::API::Util qw(iso8601 xrpc_error);
+use ATProto::PDS::Auth::OAuth qw(oauth_scope_allows oauth_scope_has_atproto);
 use ATProto::PDS::Auth::JWT qw(decode_jwt encode_jwt encode_service_jwt);
 use ATProto::PDS::Auth::Password qw(hash_password random_hex);
 use ATProto::PDS::Constants qw(
@@ -618,8 +619,14 @@ sub session_view ($account) {
 sub require_auth ($c, %opts) {
   my $auth = $c->req->headers->authorization // q();
   xrpc_error(401, 'AuthRequired', 'Authorization header is required')
-    unless $auth =~ /\ABearer\s+(.+)\z/i;
-  my $token = $1;
+    unless $auth =~ /\A(Bearer|DPoP)\s+(.+)\z/i;
+  my ($scheme, $token) = (lc($1), $2);
+
+  if ($scheme eq 'dpop') {
+    xrpc_error(401, 'InvalidToken', 'DPoP tokens cannot be used as refresh tokens')
+      if (($opts{audience} // TOKEN_AUD_ACCESS) eq TOKEN_AUD_REFRESH) || $opts{allow_refresh};
+    return $c->oauth_provider->authenticate_oauth_access_token($c, $token, %opts);
+  }
 
   my $decoded = eval { decode_jwt($token, _jwt_secret($c)) };
   if (my $err = $@) {
@@ -740,6 +747,7 @@ sub _normalize_lxm ($lxm = q()) {
 
 sub _scope_allows ($scope, $required_scope) {
   $scope = _canonical_access_scope($scope);
+  return oauth_scope_allows($scope, $required_scope) if oauth_scope_has_atproto($scope);
   return 1 if !defined($required_scope) || !length($required_scope);
   return $scope eq TOKEN_AUD_ACCESS
     if $required_scope eq 'full';

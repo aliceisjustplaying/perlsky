@@ -14,6 +14,7 @@ use ATProto::PDS::API::Repo qw(register_repo_handlers);
 use ATProto::PDS::API::Registry;
 use ATProto::PDS::API::Server qw(register_server_handlers);
 use ATProto::PDS::API::Sync qw(register_sync_handlers);
+use ATProto::PDS::Auth::OAuth;
 use ATProto::PDS::Crawlers;
 use ATProto::PDS::Identity qw(account_did_doc normalize_handle service_did);
 use ATProto::PDS::LexiconCatalog qw(endpoint_catalog);
@@ -128,6 +129,11 @@ sub startup ($self) {
       settings => $c->app->settings,
     );
   });
+  $self->helper(oauth_provider => sub ($c) {
+    state $oauth = ATProto::PDS::Auth::OAuth->new(
+      settings => $c->app->settings,
+    );
+  });
 
   my $routes = $self->routes;
   $routes->get('/')->to(cb => sub ($c) {
@@ -199,6 +205,44 @@ sub startup ($self) {
     $c->render(data => $account->{did});
   });
 
+  $routes->get('/.well-known/oauth-protected-resource')->to(cb => sub ($c) {
+    _apply_cors_headers($c);
+    $c->render(json => $c->oauth_provider->protected_resource_metadata);
+  });
+
+  $routes->get('/.well-known/oauth-authorization-server')->to(cb => sub ($c) {
+    _apply_cors_headers($c);
+    $c->render(json => $c->oauth_provider->authorization_server_metadata);
+  });
+
+  $routes->get('/oauth/jwks')->to(cb => sub ($c) {
+    _apply_cors_headers($c);
+    $c->render(json => $c->oauth_provider->jwks);
+  });
+
+  $routes->post('/oauth/par')->to(cb => sub ($c) {
+    _apply_cors_headers($c);
+    return $c->oauth_provider->pushed_authorization_request($c);
+  });
+
+  $routes->get('/oauth/authorize')->to(cb => sub ($c) {
+    return $c->oauth_provider->render_authorize($c);
+  });
+
+  $routes->post('/oauth/authorize')->to(cb => sub ($c) {
+    return $c->oauth_provider->submit_authorize($c);
+  });
+
+  $routes->post('/oauth/token')->to(cb => sub ($c) {
+    _apply_cors_headers($c);
+    return $c->oauth_provider->token($c);
+  });
+
+  $routes->post('/oauth/revoke')->to(cb => sub ($c) {
+    _apply_cors_headers($c);
+    return $c->oauth_provider->revoke($c);
+  });
+
   $routes->get('/users/:account_id/did.json')->to(cb => sub ($c) {
     my $match = $c->store->get_account_by_id($c->stash('account_id'));
     return $c->render(status => 404, json => { error => 'DidNotFound' }) unless $match;
@@ -230,6 +274,12 @@ sub _require_jwt_secret ($config) {
 sub _cors_path ($path) {
   my $text = ref($path) ? $path->to_string : ($path // q());
   return 1 if $text =~ m{\A/xrpc(?:/|\z)};
+  return 1 if $text eq '/.well-known/oauth-protected-resource';
+  return 1 if $text eq '/.well-known/oauth-authorization-server';
+  return 1 if $text eq '/oauth/jwks';
+  return 1 if $text eq '/oauth/par';
+  return 1 if $text eq '/oauth/token';
+  return 1 if $text eq '/oauth/revoke';
   return 1 if $text eq '/.well-known/did.json';
   return 1 if $text eq '/.well-known/atproto-did';
   return 0;

@@ -50,7 +50,7 @@ sub decode_jwt ($token, $secret, %opts) {
   my $now = $opts{now} // time;
 
   die 'token not yet valid' if defined $claims->{nbf} && $claims->{nbf} > $now;
-  die 'token expired'       if defined $claims->{exp} && $claims->{exp} <= $now;
+  die 'token expired'       if !$opts{allow_expired} && defined $claims->{exp} && $claims->{exp} <= $now;
 
   if (defined $opts{audience}) {
     my $aud = $claims->{aud};

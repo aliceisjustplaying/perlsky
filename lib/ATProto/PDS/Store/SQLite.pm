@@ -313,8 +313,9 @@ sub create_session ($self, %args) {
     q{
       INSERT INTO sessions (
         id, did, token, kind, scope, created_at, expires_at,
-        revoked_at, ip, user_agent, next_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        revoked_at, ip, user_agent, next_id, client_id, grant_id,
+        dpop_jkt, client_auth_alg, client_auth_kid, client_auth_jkt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     },
     undef,
     $id,
@@ -328,6 +329,12 @@ sub create_session ($self, %args) {
     $args{ip},
     $args{user_agent},
     $args{next_id},
+    $args{client_id},
+    $args{grant_id},
+    $args{dpop_jkt},
+    $args{client_auth_alg},
+    $args{client_auth_kid},
+    $args{client_auth_jkt},
   );
 
   return $self->get_session($id);
@@ -415,8 +422,9 @@ sub rotate_session ($self, $id, %args) {
         q{
           INSERT INTO sessions (
             id, did, token, kind, scope, created_at, expires_at,
-            revoked_at, ip, user_agent, next_id
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            revoked_at, ip, user_agent, next_id, client_id, grant_id,
+            dpop_jkt, client_auth_alg, client_auth_kid, client_auth_jkt
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         },
         undef,
         $next_id,
@@ -430,6 +438,12 @@ sub rotate_session ($self, $id, %args) {
         $session->{ip},
         $session->{user_agent},
         undef,
+        $args{client_id} // $session->{client_id},
+        $args{grant_id} // $session->{grant_id},
+        $args{dpop_jkt} // $session->{dpop_jkt},
+        $args{client_auth_alg} // $session->{client_auth_alg},
+        $args{client_auth_kid} // $session->{client_auth_kid},
+        $args{client_auth_jkt} // $session->{client_auth_jkt},
       );
 
       return $dbh->selectrow_hashref(
@@ -439,6 +453,141 @@ sub rotate_session ($self, $id, %args) {
       );
     });
   });
+}
+
+sub create_oauth_request ($self, %args) {
+  my $id = $args{id} // _random_id();
+  $self->dbh->do(
+    q{
+      INSERT INTO oauth_requests (
+        id, request_uri, client_id, client_name, client_uri, redirect_uri, scope, state,
+        nonce, login_hint, prompt, code_challenge, code_challenge_method,
+        client_auth_method, client_auth_alg, client_auth_kid, client_auth_jkt,
+        client_assertion_jti, client_assertion_exp, dpop_jkt,
+        did, grant_id, code, created_at, expires_at, code_expires_at, consumed_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    },
+    undef,
+    $id,
+    $args{request_uri},
+    $args{client_id},
+    $args{client_name},
+    $args{client_uri},
+    $args{redirect_uri},
+    $args{scope},
+    $args{state},
+    $args{nonce},
+    $args{login_hint},
+    $args{prompt},
+    $args{code_challenge},
+    $args{code_challenge_method},
+    $args{client_auth_method},
+    $args{client_auth_alg},
+    $args{client_auth_kid},
+    $args{client_auth_jkt},
+    $args{client_assertion_jti},
+    $args{client_assertion_exp},
+    $args{dpop_jkt},
+    $args{did},
+    $args{grant_id},
+    $args{code},
+    $args{created_at} // time,
+    $args{expires_at},
+    $args{code_expires_at},
+    $args{consumed_at},
+  );
+  return $self->get_oauth_request($id);
+}
+
+sub get_oauth_request ($self, $id) {
+  return $self->dbh->selectrow_hashref(
+    q{SELECT * FROM oauth_requests WHERE id = ?},
+    undef,
+    $id,
+  );
+}
+
+sub get_oauth_request_by_request_uri ($self, $request_uri) {
+  return $self->dbh->selectrow_hashref(
+    q{SELECT * FROM oauth_requests WHERE request_uri = ?},
+    undef,
+    $request_uri,
+  );
+}
+
+sub get_oauth_request_by_code ($self, $code) {
+  return $self->dbh->selectrow_hashref(
+    q{SELECT * FROM oauth_requests WHERE code = ?},
+    undef,
+    $code,
+  );
+}
+
+sub authorize_oauth_request ($self, %args) {
+  $self->dbh->do(
+    q{
+      UPDATE oauth_requests
+      SET did = ?, grant_id = ?, code = ?, code_expires_at = ?
+      WHERE id = ?
+    },
+    undef,
+    $args{did},
+    $args{grant_id},
+    $args{code},
+    $args{code_expires_at},
+    $args{id},
+  );
+  return $self->get_oauth_request($args{id});
+}
+
+sub consume_oauth_request_code ($self, $id, %args) {
+  $self->dbh->do(
+    q{UPDATE oauth_requests SET consumed_at = ? WHERE id = ?},
+    undef,
+    $args{consumed_at} // time,
+    $id,
+  );
+  return $self->get_oauth_request($id);
+}
+
+sub upsert_oauth_grant ($self, %args) {
+  my $id = $args{id} // _random_id();
+  my $now = $args{updated_at} // time;
+  $self->dbh->do(
+    q{
+      INSERT INTO oauth_grants (
+        id, did, client_id, scope, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(did, client_id) DO UPDATE SET
+        scope = excluded.scope,
+        updated_at = excluded.updated_at
+    },
+    undef,
+    $id,
+    $args{did},
+    $args{client_id},
+    $args{scope},
+    $args{created_at} // $now,
+    $now,
+  );
+  return $self->get_oauth_grant_by_subject($args{did}, $args{client_id});
+}
+
+sub get_oauth_grant ($self, $id) {
+  return $self->dbh->selectrow_hashref(
+    q{SELECT * FROM oauth_grants WHERE id = ?},
+    undef,
+    $id,
+  );
+}
+
+sub get_oauth_grant_by_subject ($self, $did, $client_id) {
+  return $self->dbh->selectrow_hashref(
+    q{SELECT * FROM oauth_grants WHERE did = ? AND client_id = ?},
+    undef,
+    $did,
+    $client_id,
+  );
 }
 
 sub create_app_password ($self, %args) {
@@ -1448,6 +1597,61 @@ sub default_migrations {
       version => 9,
       statements => [
         q{ALTER TABLE labels ADD COLUMN neg INTEGER NOT NULL DEFAULT 0},
+      ],
+    },
+    {
+      version => 10,
+      statements => [
+        q{ALTER TABLE sessions ADD COLUMN client_id TEXT},
+        q{ALTER TABLE sessions ADD COLUMN grant_id TEXT},
+        q{ALTER TABLE sessions ADD COLUMN dpop_jkt TEXT},
+        q{ALTER TABLE sessions ADD COLUMN client_auth_alg TEXT},
+        q{ALTER TABLE sessions ADD COLUMN client_auth_kid TEXT},
+        q{ALTER TABLE sessions ADD COLUMN client_auth_jkt TEXT},
+        q{
+          CREATE TABLE IF NOT EXISTS oauth_requests (
+            id TEXT PRIMARY KEY,
+            request_uri TEXT NOT NULL UNIQUE,
+            client_id TEXT NOT NULL,
+            client_name TEXT,
+            client_uri TEXT,
+            redirect_uri TEXT NOT NULL,
+            scope TEXT NOT NULL,
+            state TEXT,
+            nonce TEXT,
+            login_hint TEXT,
+            prompt TEXT,
+            code_challenge TEXT NOT NULL,
+            code_challenge_method TEXT NOT NULL,
+            client_auth_method TEXT NOT NULL,
+            client_auth_alg TEXT,
+            client_auth_kid TEXT,
+            client_auth_jkt TEXT,
+            client_assertion_jti TEXT,
+            client_assertion_exp INTEGER,
+            dpop_jkt TEXT,
+            did TEXT,
+            grant_id TEXT,
+            code TEXT UNIQUE,
+            created_at INTEGER NOT NULL,
+            expires_at INTEGER NOT NULL,
+            code_expires_at INTEGER,
+            consumed_at INTEGER
+          )
+        },
+        q{CREATE INDEX IF NOT EXISTS oauth_requests_by_request_uri ON oauth_requests (request_uri)},
+        q{CREATE INDEX IF NOT EXISTS oauth_requests_by_code ON oauth_requests (code)},
+        q{
+          CREATE TABLE IF NOT EXISTS oauth_grants (
+            id TEXT PRIMARY KEY,
+            did TEXT NOT NULL,
+            client_id TEXT NOT NULL,
+            scope TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            UNIQUE (did, client_id)
+          )
+        },
       ],
     },
   );
