@@ -78,6 +78,16 @@ $t->get_ok('/xrpc/com.atproto.sync.getBlob?did=' . $did . '&cid=' . $blob_cid)
   ->status_is(200);
 is($t->tx->res->body, 'blob-bytes', 'blob bytes are served back');
 like($t->tx->res->headers->content_type // '', qr{image/png}, 'blob content type preserved');
+ok(!defined($t->tx->res->headers->content_encoding), 'blob download is not dynamically compressed by default');
+
+my $gzip_blob_tx = $t->ua->build_tx(
+  GET => '/xrpc/com.atproto.sync.getBlob?did=' . $did . '&cid=' . $blob_cid => {
+    'Accept-Encoding' => 'gzip',
+  },
+);
+$t->request_ok($gzip_blob_tx)->status_is(200);
+is($t->tx->res->body, 'blob-bytes', 'blob bytes stay readable when gzip is accepted');
+ok(!defined($t->tx->res->headers->content_encoding), 'blob download ignores Accept-Encoding gzip');
 
 $t->get_ok('/xrpc/com.atproto.sync.getLatestCommit?did=' . $did)
   ->status_is(200)

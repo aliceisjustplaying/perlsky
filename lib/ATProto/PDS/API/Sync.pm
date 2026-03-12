@@ -128,7 +128,10 @@ sub register_sync_handlers ($registry, $app) {
     $c->res->headers->header('Content-Disposition' => 'attachment; filename="' . ($c->param('cid') // q()) . '"');
     $c->res->headers->header('Content-Security-Policy' => q{default-src 'none'; sandbox});
     $c->observe_blob_egress($blob->{mime_type}, length($bytes));
-    $c->render(data => $bytes);
+    # Blob bytes need to bypass Mojolicious' dynamic gzip so image proxy routes
+    # do not see a decompressed body paired with a stale Content-Encoding header.
+    $c->res->body($bytes);
+    $c->rendered(200);
     return;
   });
 

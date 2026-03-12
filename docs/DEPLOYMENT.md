@@ -200,6 +200,8 @@ https:// {
 }
 ```
 
+`com.atproto.sync.getBlob` responses should stay uncompressed end-to-end. `perlsky` now bypasses Mojolicious dynamic gzip for blob bytes because some downstream image proxy routes will auto-decompress the body and accidentally forward a stale `Content-Encoding` header, which shows up in clients as broken image loads (`ERR_CONTENT_DECODING_FAILED`).
+
 This still requires wildcard DNS or per-handle DNS records so public ACME validation can reach the server.
 
 A minimal nginx site looks like:
