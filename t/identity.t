@@ -18,6 +18,7 @@ BEGIN {
 
 use ATProto::PDS::Identity qw(
   account_did
+  account_did_doc_valid_for_service
   did_to_path
   is_valid_handle
   normalize_handle
@@ -76,6 +77,31 @@ is(
   resolve_handle_to_did({ base_url => 'https://pds.example.com' }, 'not a handle'),
   undef,
   'handle resolution rejects invalid handles before any network lookup',
+);
+
+ok(
+  account_did_doc_valid_for_service(
+    { base_url => 'https://pds.example.com' },
+    {
+      did                 => 'did:web:pds.example.com:users:alice01',
+      public_key_multibase => 'zExampleMultibaseKey',
+      did_doc             => {
+        id         => 'did:web:pds.example.com:users:alice01',
+        service    => [{
+          id              => '#atproto_pds',
+          type            => 'AtprotoPersonalDataServer',
+          serviceEndpoint => 'https://pds.example.com',
+        }],
+        verificationMethod => [{
+          id                 => '#atproto',
+          controller         => 'did:web:pds.example.com:users:alice01',
+          publicKeyMultibase => 'zExampleMultibaseKey',
+        }],
+        assertionMethod => ['#atproto'],
+      },
+    },
+  ),
+  'service DID-doc validation accepts relative service and verification ids',
 );
 
 done_testing;
