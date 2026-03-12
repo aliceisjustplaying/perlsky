@@ -560,6 +560,40 @@ for my $name (sort keys %server) {
     if $diff_account_did_method eq 'did:plc';
 }
 
+note('Comparing account password boundary semantics');
+for my $name (sort keys %server) {
+  my $too_long_create = post_json($server{$name}{origin}, 'com.atproto.server.createAccount', {
+    handle   => "toolong-$name-" . substr(random_hex(3), 0, 6),
+    email    => "toolong-$name-" . substr(random_hex(3), 0, 6) . '@test.com',
+    password => ('x' x 257),
+  });
+  my $too_long_session = post_json($server{$name}{origin}, 'com.atproto.server.createSession', {
+    identifier => $server{$name}{handle},
+    password   => ('x' x 513),
+  });
+  my $password_reset_upper = post_json($server{$name}{origin}, 'com.atproto.server.requestPasswordReset', {
+    email => uc($server{$name}{email}),
+  });
+
+  $server{$name}{password_boundaries} = {
+    create_too_long  => normalize_xrpc_error($too_long_create),
+    session_too_long => normalize_xrpc_error($too_long_session),
+    reset_uppercase  => {
+      status     => $password_reset_upper->code // 0,
+      success    => $password_reset_upper->is_success ? 1 : 0,
+      empty_body => same_hash($password_reset_upper->json || {}, {}) ? 1 : 0,
+    },
+  };
+}
+
+if (!same_hash($server{reference}{password_boundaries}, $server{perlsky}{password_boundaries})) {
+  note('reference password boundaries: ' . encode_json($server{reference}{password_boundaries}));
+  note('perlsky password boundaries: ' . encode_json($server{perlsky}{password_boundaries}));
+  fail_check('account password boundary and reset-email semantics match the official reference PDS');
+} else {
+  pass('account password boundary and reset-email semantics match the official reference PDS');
+}
+
 note('Comparing resolveHandle');
 for my $name (sort keys %server) {
   my $res = get_form($server{$name}{origin}, 'com.atproto.identity.resolveHandle', { handle => $server{$name}{handle} });

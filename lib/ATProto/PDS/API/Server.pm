@@ -210,7 +210,7 @@ sub register_server_handlers ($registry, $app) {
 
   $registry->register('com.atproto.server.createSession', sub ($c, $endpoint) {
     my $body = $c->req->json || {};
-    xrpc_error(401, 'AuthRequired', 'Password too long. Consider resetting your password.')
+    xrpc_error(401, 'AuthenticationRequired', 'Password too long. Consider resetting your password.')
       if length($body->{password} // q()) > $OLD_PASSWORD_MAX_LENGTH;
     my $account = find_account($c, $body->{identifier} // q());
     xrpc_error(401, 'AuthRequired', 'Invalid identifier or password') unless $account;
