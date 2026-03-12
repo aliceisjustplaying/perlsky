@@ -2078,6 +2078,9 @@ for my $name (sort keys %server) {
   check($res->is_success, "$name getBlocks succeeds");
   my $car = $res->is_success ? read_car($res->body // q()) : undef;
 
+  my $no_cids = get_form($server{$name}{origin}, 'com.atproto.sync.getBlocks', {
+    did => $server{$name}{did},
+  });
   my $missing = get_form($server{$name}{origin}, 'com.atproto.sync.getBlocks', {
     did  => $server{$name}{did},
     cids => 'bafyreifakecidmismatch',
@@ -2096,8 +2099,8 @@ for my $name (sort keys %server) {
     car_type           => (($res->headers->content_type // q()) =~ m{application/vnd\.ipld\.car}) ? 1 : 0,
     roots_empty        => ($car && !@{ $car->{roots} || [] }) ? 1 : 0,
     has_requested_cid  => ($car && scalar(grep { $_->{cid}->to_string eq $requested_cid } @{ $car->{blocks} || [] })) ? 1 : 0,
-    missing_status     => $missing->code,
-    missing_error      => ($missing->json || {})->{error},
+    no_cids            => normalize_xrpc_error($no_cids),
+    missing            => normalize_xrpc_error($missing),
     missing_repo       => normalize_xrpc_error($missing_repo),
     wrong_repo         => normalize_xrpc_error($wrong_repo),
   };

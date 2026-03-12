@@ -89,6 +89,16 @@ $t->get_ok('/xrpc/com.atproto.sync.getBlocks?did=' . $did . '&cids=' . $commit_c
   ->status_is(200);
 like($t->tx->res->headers->content_type // '', qr{application/vnd\.ipld\.car}, 'block export is a CAR');
 
+$t->get_ok('/xrpc/com.atproto.sync.getBlocks?did=' . $did)
+  ->status_is(400)
+  ->json_is('/error', 'InvalidRequest')
+  ->json_is('/message', 'At least one CID is required');
+
+$t->get_ok('/xrpc/com.atproto.sync.getBlocks?did=' . $did . '&cids=bafyreifakecidmismatch')
+  ->status_is(400)
+  ->json_is('/error', 'InvalidRequest')
+  ->json_is('/message', 'Could not find cids: bafyreifakecidmismatch');
+
 $t->get_ok('/xrpc/com.atproto.sync.listBlobs?did=did:web:missing.test')
   ->status_is(400)
   ->json_is('/error', 'RepoNotFound');
