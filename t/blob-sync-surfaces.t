@@ -89,4 +89,16 @@ $t->get_ok('/xrpc/com.atproto.sync.getBlocks?did=' . $did . '&cids=' . $commit_c
   ->status_is(200);
 like($t->tx->res->headers->content_type // '', qr{application/vnd\.ipld\.car}, 'block export is a CAR');
 
+$t->get_ok('/xrpc/com.atproto.sync.listBlobs?did=did:web:missing.test')
+  ->status_is(400)
+  ->json_is('/error', 'RepoNotFound');
+
+$t->get_ok('/xrpc/com.atproto.sync.getBlob?did=did:web:missing.test&cid=' . $blob_cid)
+  ->status_is(400)
+  ->json_is('/error', 'RepoNotFound');
+
+$t->get_ok('/xrpc/com.atproto.sync.getBlocks?did=did:web:missing.test&cids=' . $commit_cid)
+  ->status_is(400)
+  ->json_is('/error', 'RepoNotFound');
+
 done_testing;

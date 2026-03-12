@@ -94,7 +94,7 @@ sub register_sync_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.sync.getBlocks', sub ($c, $endpoint) {
-    my $account = _readable_repo_by_did($c);
+    my $account = _readable_repo_by_did($c, missing_status => 400);
     my @cids = flatten_params($c->every_param('cids'));
     xrpc_error(400, 'InvalidRequest', 'At least one CID is required') unless @cids;
     my $repo_car = $c->store->repo_car($account->{did});
@@ -112,7 +112,7 @@ sub register_sync_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.sync.getBlob', sub ($c, $endpoint) {
-    my $account = _repo_by_did_or_error($c);
+    my $account = _repo_by_did_or_error($c, missing_status => 400);
     my $blob = $c->store->get_blob($c->param('cid') // q());
     xrpc_error(404, 'BlobNotFound', 'Blob was not found')
       unless $blob && $c->store->blob_owned_by_did($c->param('cid') // q(), $account->{did});
@@ -156,7 +156,7 @@ sub register_sync_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.sync.listBlobs', sub ($c, $endpoint) {
-    my $account = _readable_repo_by_did($c);
+    my $account = _readable_repo_by_did($c, missing_status => 400);
     my $page = $c->store->list_blobs_by_did(
       $account->{did},
       since  => $c->param('since'),

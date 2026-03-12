@@ -2022,6 +2022,10 @@ for my $name (sort keys %server) {
     did  => $server{$name}{did},
     cids => 'bafyreifakecidmismatch',
   });
+  my $missing_repo = get_form($server{$name}{origin}, 'com.atproto.sync.getBlocks', {
+    did  => 'did:web:missing.test',
+    cids => $requested_cid,
+  });
 
   $server{$name}{get_blocks} = {
     ok                 => $res->is_success ? 1 : 0,
@@ -2030,6 +2034,7 @@ for my $name (sort keys %server) {
     has_requested_cid  => ($car && scalar(grep { $_->{cid}->to_string eq $requested_cid } @{ $car->{blocks} || [] })) ? 1 : 0,
     missing_status     => $missing->code,
     missing_error      => ($missing->json || {})->{error},
+    missing_repo       => normalize_xrpc_error($missing_repo),
   };
 }
 
@@ -2120,6 +2125,9 @@ for my $name (sort keys %server) {
     did   => $server{$name}{did},
     since => $server{$name}{latest_commit_raw}{rev},
   });
+  my $missing_repo = get_form($server{$name}{origin}, 'com.atproto.sync.listBlobs', {
+    did => 'did:web:missing.test',
+  });
   check($res->is_success, "$name listBlobs with since succeeds");
   my $json = $res->json || {};
   my $blob_cid = $blob->{ref}{'$link'};
@@ -2130,6 +2138,7 @@ for my $name (sort keys %server) {
     ok                 => $res->is_success ? 1 : 0,
     returns_blob       => (scalar grep { $_ eq $blob_cid } @{ $json->{cids} || [] }) ? 1 : 0,
     cursor_matches_tail => (($json->{cursor} // q()) eq (($json->{cids} || [])->[-1] // q())) ? 1 : 0,
+    missing_repo       => normalize_xrpc_error($missing_repo),
   };
 }
 
@@ -2148,6 +2157,10 @@ for my $name (sort keys %server) {
     did => $server{$name}{did},
     cid => $blob_cid,
   });
+  my $missing_repo = get_form($server{$name}{origin}, 'com.atproto.sync.getBlob', {
+    did => 'did:web:missing.test',
+    cid => $blob_cid,
+  });
   check($res->is_success, "$name getBlob succeeds");
   next unless $res->is_success;
   my $content_type = $res->headers->content_type // q();
@@ -2158,6 +2171,7 @@ for my $name (sort keys %server) {
     nosniff            => (($res->headers->header('X-Content-Type-Options') // q()) eq 'nosniff') ? 1 : 0,
     csp_sandbox        => (($res->headers->header('Content-Security-Policy') // q()) eq q{default-src 'none'; sandbox}) ? 1 : 0,
     attachment_name    => ($disposition =~ /\Aattachment; filename="/) ? 1 : 0,
+    missing_repo       => normalize_xrpc_error($missing_repo),
   };
 }
 
