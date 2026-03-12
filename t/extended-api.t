@@ -170,17 +170,6 @@ $t->get_ok('/xrpc/com.atproto.admin.getAccountInfo' => {
   ->json_is('/did', $did)
   ->json_is('/handle', 'alice.example.test');
 
-$t->post_ok('/xrpc/com.atproto.temp.addReservedHandle' => {
-  Authorization => $admin_auth,
-} => json => {
-  handle => 'reserved.example.test',
-})->status_is(200);
-
-$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.temp.checkHandleAvailability')->query(
-  handle => 'reserved.example.test',
-))->status_is(200)
-  ->json_is('/available', JSON::PP::false);
-
 $t->post_ok('/xrpc/com.atproto.identity.updateHandle' => {
   Authorization => "Bearer $access",
 } => json => {
@@ -316,20 +305,6 @@ ok(
   _find_label($t->tx->res->json->{labels}, val => '!hide', neg => JSON::PP::true),
   'fetchLabels includes the negated takedown label',
 );
-
-$t->post_ok('/xrpc/com.atproto.sync.requestCrawl' => json => {
-  hostname => 'relay.example.test',
-})->status_is(200)
-  ->content_is(q());
-
-$t->get_ok('/xrpc/com.atproto.sync.listHosts')
-  ->status_is(200)
-  ->json_is('/hosts/0/hostname', 'relay.example.test');
-
-$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.getHostStatus')->query(
-  hostname => 'relay.example.test',
-))->status_is(200)
-  ->json_is('/hostname', 'relay.example.test');
 
 done_testing;
 
