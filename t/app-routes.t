@@ -66,6 +66,7 @@ $t->get_ok('/.well-known/oauth-protected-resource')
 $t->get_ok('/.well-known/oauth-authorization-server')
   ->status_is(200)
   ->json_is('/issuer' => 'http://127.0.0.1:7755')
+  ->json_is('/scopes_supported/0' => 'atproto')
   ->json_is('/authorization_endpoint' => 'http://127.0.0.1:7755/oauth/authorize')
   ->json_is('/token_endpoint' => 'http://127.0.0.1:7755/oauth/token')
   ->json_is('/pushed_authorization_request_endpoint' => 'http://127.0.0.1:7755/oauth/par');

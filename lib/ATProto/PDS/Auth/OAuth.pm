@@ -50,14 +50,23 @@ sub authorization_server_metadata ($self) {
   my $issuer = $self->_issuer;
   return {
     issuer                                     => $issuer,
+    scopes_supported                           => [
+      'atproto',
+      'transition:email',
+      'transition:generic',
+      'transition:chat.bsky',
+    ],
+    subject_types_supported                    => ['public'],
     authorization_endpoint                     => $issuer . '/oauth/authorize',
     token_endpoint                             => $issuer . '/oauth/token',
     revocation_endpoint                        => $issuer . '/oauth/revoke',
     pushed_authorization_request_endpoint      => $issuer . '/oauth/par',
     jwks_uri                                   => $issuer . '/oauth/jwks',
     response_types_supported                   => ['code'],
+    response_modes_supported                   => ['query', 'fragment', 'form_post'],
     grant_types_supported                      => ['authorization_code', 'refresh_token'],
     code_challenge_methods_supported           => ['S256'],
+    prompt_values_supported                    => ['none', 'login', 'consent', 'select_account', 'create'],
     token_endpoint_auth_methods_supported      => ['private_key_jwt', 'none'],
     token_endpoint_auth_signing_alg_values_supported => ['ES256'],
     dpop_signing_alg_values_supported          => ['ES256'],
