@@ -127,6 +127,19 @@ $t->post_ok('/xrpc/com.atproto.repo.createRecord' => { Authorization => "Bearer 
 })->status_is(400)
   ->json_is('/error' => 'InvalidRequest');
 
+$t->post_ok('/xrpc/com.atproto.repo.createRecord' => { Authorization => "Bearer $access" } => json => {
+  repo       => $did,
+  collection => 'app.bsky.feed.post',
+  rkey       => 'swap-create',
+  swapRecord => 'bafyreifakecidmismatch',
+  record     => {
+    '$type'   => 'app.bsky.feed.post',
+    text      => 'create should reject swapRecord',
+    createdAt => '2026-03-10T00:00:45Z',
+  },
+})->status_is(400)
+  ->json_is('/error' => 'InvalidSwap');
+
 $t->post_ok('/xrpc/com.atproto.repo.putRecord' => { Authorization => "Bearer $access" } => json => {
   repo       => $did,
   collection => 'app.bsky.feed.post',
@@ -159,6 +172,19 @@ $t->get_ok("/xrpc/com.atproto.sync.getLatestCommit?did=$did")
   ->json_like('/cid' => qr/\Ab/)
   ->json_has('/rev');
 my $pre_noop_commit = $t->tx->res->json;
+
+$t->post_ok('/xrpc/com.atproto.repo.putRecord' => { Authorization => "Bearer $access" } => json => {
+  repo       => $did,
+  collection => 'app.bsky.feed.post',
+  rkey       => 'first-post',
+  swapCommit => 'bafyreifakeheadmismatch',
+  record     => {
+    '$type'   => 'app.bsky.feed.post',
+    text      => 'swapCommit mismatch should fail',
+    createdAt => '2026-03-10T00:02:15Z',
+  },
+})->status_is(400)
+  ->json_is('/error' => 'InvalidSwap');
 
 $t->post_ok('/xrpc/com.atproto.repo.putRecord' => { Authorization => "Bearer $access" } => json => {
   repo       => $did,
