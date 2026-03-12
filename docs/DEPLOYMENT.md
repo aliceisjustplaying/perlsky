@@ -260,7 +260,7 @@ You should see:
 - `describeServer.availableUserDomains` matching `service_handle_domain`
 - a per-handle `/.well-known/atproto-did` response returning the account DID when queried on the handle host
 
-Modern third-party ATProto OAuth clients should now be able to discover and authenticate directly against your PDS. For example, a client like Tangled will start by fetching `/.well-known/oauth-protected-resource`, follow the advertised authorization-server metadata, submit a pushed authorization request, and then send the browser through `/oauth/authorize`.
+Modern third-party ATProto OAuth clients should now be able to discover and authenticate directly against your PDS. The built-in provider enforces both the transition scopes (`transition:generic`, `transition:email`, `transition:chat.bsky`) and the granular ATProto permission families (`account:`, `identity:`, `repo:`, `blob:`, and `rpc:`). For example, a client like Tangled will start by fetching `/.well-known/oauth-protected-resource`, follow the advertised authorization-server metadata, submit a pushed authorization request, and then send the browser through `/oauth/authorize`.
 
 ## First Account
 
