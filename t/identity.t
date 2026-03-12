@@ -21,6 +21,7 @@ use ATProto::PDS::Identity qw(
   did_to_path
   is_valid_handle
   normalize_handle
+  resolve_handle_to_did
   service_did
   service_host
 );
@@ -34,5 +35,47 @@ ok(is_valid_handle('alice.example.com'), 'handles validate');
 ok(!is_valid_handle('alice', 'example.com'), 'bare handles do not validate');
 ok(is_valid_handle('alice.example.com', 'example.com'), 'allowed domains are enforced');
 is(normalize_handle('@Alice', 'example.com'), 'alice.example.com', 'handles are normalized');
+
+{
+  no warnings 'redefine';
+  local *ATProto::PDS::Identity::_resolve_handle_dns = sub {
+    my ($handle) = @_;
+    return 'did:plc:dns-preferred' if $handle eq 'alice.example.com';
+    return undef;
+  };
+  local *ATProto::PDS::Identity::_resolve_handle_well_known = sub {
+    my ($handle) = @_;
+    return 'did:plc:well-known-fallback' if $handle eq 'alice.example.com';
+    return undef;
+  };
+
+  is(
+    resolve_handle_to_did({ base_url => 'https://pds.example.com' }, '@Alice.Example.com'),
+    'did:plc:dns-preferred',
+    'handle resolution normalizes input and prefers DNS over well-known',
+  );
+}
+
+{
+  no warnings 'redefine';
+  local *ATProto::PDS::Identity::_resolve_handle_dns = sub { return undef; };
+  local *ATProto::PDS::Identity::_resolve_handle_well_known = sub {
+    my ($handle) = @_;
+    return 'did:web:example.com:users:alice' if $handle eq 'alice.example.com';
+    return undef;
+  };
+
+  is(
+    resolve_handle_to_did({ base_url => 'https://pds.example.com' }, 'alice.example.com'),
+    'did:web:example.com:users:alice',
+    'handle resolution falls back to well-known when DNS has no answer',
+  );
+}
+
+is(
+  resolve_handle_to_did({ base_url => 'https://pds.example.com' }, 'not a handle'),
+  undef,
+  'handle resolution rejects invalid handles before any network lookup',
+);
 
 done_testing;
