@@ -13,6 +13,10 @@ use Mojo::URL;
 
 use ATProto::PDS::API::Server qw(require_auth);
 use ATProto::PDS::API::Util qw(blob_ref resolve_repo xrpc_error);
+use ATProto::PDS::Auth::OAuth qw(
+  oauth_required_permission_scope
+  oauth_scope_allows_permission
+);
 use ATProto::PDS::Constants qw(TOKEN_AUD_ACCESS);
 use ATProto::PDS::Moderation qw(assert_record_readable assert_repo_readable assert_repo_writable is_record_takedown parse_at_uri);
 use ATProto::PDS::Repo::CID;
@@ -55,8 +59,9 @@ sub register_repo_handlers ($registry, $app) {
 
   $registry->register('com.atproto.repo.applyWrites', sub ($c, $endpoint) {
     my $body = $c->req->json || {};
-    my $account = _require_repo_owner($c, $body->{repo});
+    my ($claims, $account) = _require_repo_owner($c, $body->{repo});
     my @writes = map { _normalize_apply_writes_input($_) } @{ $body->{writes} || [] };
+    _assert_oauth_write_permissions($claims, \@writes);
     my $commit = $c->repo_manager->apply_writes(
       $account,
       \@writes,
@@ -104,9 +109,15 @@ sub register_repo_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.repo.uploadBlob', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS);
+    my ($claims, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS);
     assert_repo_writable($c, $account);
     my $bytes = $c->req->body // q();
+    my $mime_type = $c->req->headers->content_type || 'application/octet-stream';
+    _assert_oauth_permission(
+      $claims,
+      type => 'blob',
+      mime => $mime_type,
+    );
     my $cid = ATProto::PDS::Repo::CID->for_raw($bytes)->to_string;
     my $existing = $c->store->get_blob($cid);
     xrpc_error(400, 'BlobTakenDown', 'Blob has been taken down')
@@ -123,7 +134,6 @@ sub register_repo_handlers ($registry, $app) {
       xrpc_error(500, 'StorageFailure', "Unable to write blob $cid");
     }
 
-    my $mime_type = $c->req->headers->content_type || 'application/octet-stream';
     $c->observe_blob_ingress($mime_type, length($bytes));
     $c->store->put_blob(
       cid          => $cid,
@@ -155,8 +165,14 @@ sub register_repo_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.repo.importRepo', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS, required_scope => 'full');
+    my ($claims, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS, required_scope => 'full');
     assert_repo_writable($c, $account);
+    _assert_oauth_permission(
+      $claims,
+      type   => 'account',
+      attr   => 'repo',
+      action => 'manage',
+    );
     xrpc_error(400, 'InvalidRequest', 'Service is not accepting repo imports')
       unless $c->config_value('accepting_imports', 1);
     my $car_bytes = $c->req->body // q();
@@ -173,7 +189,7 @@ sub _require_repo_owner ($c, $repo) {
   xrpc_error(404, 'RepoNotFound', 'Repository was not found') unless $account;
   xrpc_error(401, 'AuthRequired', 'Token is not authorized for that repo') unless ($claims->{sub} // '') eq $account->{did};
   assert_repo_writable($c, $account);
-  return $account;
+  return ($claims, $account);
 }
 
 sub _readable_repo ($c, $repo, %args) {
@@ -246,7 +262,8 @@ sub _proxy_remote_get_record ($c) {
 }
 
 sub _apply_single_write ($c, $body, $write, %args) {
-  my $account = _require_repo_owner($c, $body->{repo});
+  my ($claims, $account) = _require_repo_owner($c, $body->{repo});
+  _assert_oauth_write_permissions($claims, [$write]);
   my $commit = $c->repo_manager->apply_writes(
     $account,
     [$write],
@@ -266,13 +283,24 @@ sub _apply_single_write ($c, $body, $write, %args) {
 }
 
 sub _put_record ($c, $body) {
-  my $account = _require_repo_owner($c, $body->{repo});
+  my ($claims, $account) = _require_repo_owner($c, $body->{repo});
   my $did = $account->{did};
   my $collection = $body->{collection};
   my $rkey = $body->{rkey};
   my $uri = _record_uri($did, $collection, $rkey);
   my $current = $c->store->get_record($did, $collection, $rkey);
   my $record_bytes = encode_dag_cbor($body->{record});
+
+  _assert_oauth_write_permissions($claims, [
+    {
+      action     => 'create',
+      collection => $collection,
+    },
+    {
+      action     => 'update',
+      collection => $collection,
+    },
+  ]);
 
   if ($current && defined($current->{record_bytes}) && $current->{record_bytes} eq $record_bytes) {
     return {
@@ -299,9 +327,13 @@ sub _put_record ($c, $body) {
 }
 
 sub _delete_record ($c, $body) {
-  my $account = _require_repo_owner($c, $body->{repo});
+  my ($claims, $account) = _require_repo_owner($c, $body->{repo});
   my $current = $c->store->get_record($account->{did}, $body->{collection}, $body->{rkey});
   return {} unless $current;
+  _assert_oauth_write_permissions($claims, [{
+    action     => 'delete',
+    collection => $body->{collection},
+  }]);
   my $commit = $c->repo_manager->apply_writes(
     $account,
     [{
@@ -314,6 +346,26 @@ sub _delete_record ($c, $body) {
   return {
     commit => _commit_view($commit),
   };
+}
+
+sub _assert_oauth_write_permissions ($claims, $writes) {
+  return unless ($claims->{typ} // q()) eq 'oauth_access';
+
+  for my $write (@$writes) {
+    _assert_oauth_permission(
+      $claims,
+      type       => 'repo',
+      action     => $write->{action},
+      collection => $write->{collection},
+    );
+  }
+}
+
+sub _assert_oauth_permission ($claims, %required) {
+  return unless ($claims->{typ} // q()) eq 'oauth_access';
+  return if oauth_scope_allows_permission($claims->{scope}, %required);
+  my $needed = oauth_required_permission_scope(%required);
+  xrpc_error(403, 'Forbidden', qq{Missing required scope "$needed"});
 }
 
 sub _commit_view ($commit) {

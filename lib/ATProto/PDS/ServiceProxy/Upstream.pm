@@ -15,6 +15,7 @@ use ATProto::PDS::Constants qw(
 
 our @EXPORT_OK = qw(
   _config
+  _permission_audience_for_request
   _perform_upstream_request
   _target_for_request
   _target_from_proxy_header
@@ -78,14 +79,16 @@ sub _target_for_request ($self, $c, $nsid) {
   }
 
   return {
+    aud => $self->_config('chat_service_did', 'did:web:api.bsky.chat') . '#' . SERVICE_ID_BSKY_CHAT,
     did => $self->_config('chat_service_did', 'did:web:api.bsky.chat'),
     url => $self->_config('chat_service_url', 'https://api.bsky.chat'),
   } if $nsid =~ /\Achat\.bsky\./;
 
   return {
+    aud => $self->_config('bsky_appview_did', 'did:web:api.bsky.app') . '#' . SERVICE_ID_BSKY_APPVIEW,
     did => $self->_config('bsky_appview_did', 'did:web:api.bsky.app'),
     url => $self->_config('bsky_appview_url', 'https://api.bsky.app'),
-  } if $nsid =~ /\Aapp\.bsky\./;
+  } if $nsid =~ /\Aapp\.bsky\./ || $nsid eq 'com.atproto.moderation.createReport';
 
   return undef;
 }
@@ -100,12 +103,14 @@ sub _target_from_proxy_header ($self, $proxy_to) {
 
   my $appview_did = $self->_config('bsky_appview_did', 'did:web:api.bsky.app');
   return {
+    aud => $proxy_to,
     did => $appview_did,
     url => $self->_config('bsky_appview_url', 'https://api.bsky.app'),
   } if $did eq $appview_did && $service_id eq SERVICE_ID_BSKY_APPVIEW;
 
   my $chat_did = $self->_config('chat_service_did', 'did:web:api.bsky.chat');
   return {
+    aud => $proxy_to,
     did => $chat_did,
     url => $self->_config('chat_service_url', 'https://api.bsky.chat'),
   } if $did eq $chat_did && $service_id eq SERVICE_ID_BSKY_CHAT;
@@ -115,6 +120,11 @@ sub _target_from_proxy_header ($self, $proxy_to) {
 
 sub _config ($self, $key, $default) {
   return $self->settings->{$key} // $default;
+}
+
+sub _permission_audience_for_request ($self, $c, $nsid) {
+  my $target = $self->_target_for_request($c, $nsid);
+  return $target ? $target->{aud} : undef;
 }
 
 1;

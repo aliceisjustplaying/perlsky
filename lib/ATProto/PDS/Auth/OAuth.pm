@@ -18,14 +18,24 @@ use Mojo::Util qw(xml_escape);
 use ATProto::PDS::API::Helpers qw(find_account verify_login_password);
 use ATProto::PDS::API::Util qw(xrpc_error);
 use ATProto::PDS::Auth::JWT qw(decode_jwt encode_jwt);
+use ATProto::PDS::Auth::OAuthScope qw(
+  oauth_normalize_scope
+  oauth_scope_allows
+  oauth_scope_has_atproto
+  oauth_required_permission_scope
+  oauth_scope_allows_permission
+);
 use ATProto::PDS::Auth::Password qw(random_hex timing_safe_eq);
 use ATProto::PDS::Constants qw(TOKEN_AUD_ACCESS TOKEN_AUD_REFRESH);
 use ATProto::PDS::Moderation qw(assert_login_allowed is_repo_takedown);
 use ATProto::PDS::Util::BaseX qw(base64url_decode base64url_encode);
 
 our @EXPORT_OK = qw(
+  oauth_normalize_scope
   oauth_scope_allows
+  oauth_scope_allows_permission
   oauth_scope_has_atproto
+  oauth_required_permission_scope
 );
 
 has settings => sub { {} };
@@ -112,9 +122,11 @@ sub pushed_authorization_request ($self, $c) {
   return _oauth_json_error($c, 400, 'invalid_dpop_proof', "$@") if $@;
 
   my $redirect_uri = $body->{redirect_uri} // q();
-  my $scope        = _normalize_scope($body->{scope} // q());
+  my $scope        = oauth_normalize_scope($body->{scope} // q());
   return _oauth_json_error($c, 400, 'invalid_request', 'response_type must be code')
     unless ($body->{response_type} // q()) eq 'code';
+  return _oauth_json_error($c, 400, 'invalid_scope', 'scope contains unsupported values')
+    unless defined $scope;
   return _oauth_json_error($c, 400, 'invalid_scope', 'scope must include atproto')
     unless oauth_scope_has_atproto($scope);
   return _oauth_json_error($c, 400, 'invalid_request', 'redirect_uri is required')
@@ -387,27 +399,27 @@ sub authenticate_oauth_access_token ($self, $c, $token, %opts) {
     );
   };
   if (my $err = $@) {
-    xrpc_error(401, 'InvalidToken', "$err");
+    my $message = "$err";
+    $message =~ s/\s+at\s+\S+\s+line\s+\d+\.?\n?\z//;
+    xrpc_error(401, 'InvalidToken', $message);
   }
 
-  my $scope = _normalize_scope($claims->{scope} // $session->{scope});
+  my $scope = oauth_normalize_scope($claims->{scope} // $session->{scope});
+  if ($opts{disallow_oauth}) {
+    xrpc_error(403, 'Forbidden', 'OAuth credentials are not supported for this endpoint');
+  }
   if ($opts{required_scope} && !oauth_scope_allows($scope, $opts{required_scope})) {
     xrpc_error(400, 'InvalidToken', 'Bad token scope');
+  }
+  if ($opts{required_permission} && !oauth_scope_allows_permission($scope, %{ $opts{required_permission} })) {
+    my $needed = oauth_required_permission_scope(%{ $opts{required_permission} });
+    xrpc_error(403, 'Forbidden', qq{Missing required scope "$needed"});
   }
 
   my $account = $c->store->get_account_by_did($claims->{sub});
   xrpc_error(401, 'InvalidToken', 'Token subject no longer exists') unless $account;
   xrpc_error(401, 'InvalidToken', 'Token subject has been deleted') if defined $account->{deleted_at};
   return ($claims, $account, $session, $proof);
-}
-
-sub oauth_scope_has_atproto ($scope) {
-  return scalar grep { $_ eq 'atproto' } split /\s+/, ($scope // q());
-}
-
-sub oauth_scope_allows ($scope, $required_scope) {
-  return 1 if oauth_scope_has_atproto($scope);
-  return 0;
 }
 
 sub _exchange_authorization_code ($self, $c, $body, $client_auth, $dpop) {
@@ -496,7 +508,7 @@ sub _oauth_token_response ($self, $account, $session) {
   my $issuer = $self->_issuer;
   my $secret = $self->_jwt_secret;
   my $now = time;
-  my $scope = _normalize_scope($session->{scope});
+  my $scope = oauth_normalize_scope($session->{scope});
 
   my $access_token = encode_jwt({
     iss   => $issuer,
@@ -758,11 +770,6 @@ sub _authorize_html (%args) {
   </body>
 </html>
 HTML
-}
-
-sub _normalize_scope ($scope) {
-  my %seen;
-  return join ' ', grep { !$seen{$_}++ } grep { length } split /\s+/, ($scope // q());
 }
 
 sub _client_auth_matches ($request, $client_auth) {

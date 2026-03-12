@@ -10,7 +10,11 @@ use JSON::PP ();
 
 use ATProto::PDS::API::Helpers qw(find_account invite_code_view issue_account_action_token require_admin verify_account_password verify_login_password);
 use ATProto::PDS::API::Util qw(iso8601 xrpc_error);
-use ATProto::PDS::Auth::OAuth qw(oauth_scope_allows oauth_scope_has_atproto);
+use ATProto::PDS::Auth::OAuth qw(
+  oauth_scope_allows
+  oauth_scope_allows_permission
+  oauth_scope_has_atproto
+);
 use ATProto::PDS::Auth::JWT qw(decode_jwt encode_jwt encode_service_jwt);
 use ATProto::PDS::Auth::Password qw(hash_password random_hex);
 use ATProto::PDS::Constants qw(
@@ -199,8 +203,17 @@ sub register_server_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.server.getSession', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS);
-    return session_view($account);
+    my ($claims, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS);
+    my %opts;
+    if (($claims->{typ} // q()) eq 'oauth_access') {
+      $opts{include_email} = oauth_scope_allows_permission(
+        $claims->{scope},
+        type   => 'account',
+        attr   => 'email',
+        action => 'read',
+      ) ? 1 : 0;
+    }
+    return session_view($account, %opts);
   });
 
   $registry->register('com.atproto.server.refreshSession', sub ($c, $endpoint) {
@@ -240,7 +253,12 @@ sub register_server_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.server.createAppPassword', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS, required_scope => 'full');
+    my (undef, $account) = require_auth(
+      $c,
+      audience       => TOKEN_AUD_ACCESS,
+      required_scope => 'full',
+      disallow_oauth => 1,
+    );
     my $body = $c->req->json || {};
     my $name = $body->{name} // q();
     xrpc_error(400, 'InvalidRequest', 'App password name is required') unless length $name;
@@ -263,7 +281,7 @@ sub register_server_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.server.listAppPasswords', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS);
+    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS, disallow_oauth => 1);
     my $rows = $c->store->list_app_passwords_by_did($account->{did});
     return {
       passwords => [
@@ -279,7 +297,7 @@ sub register_server_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.server.revokeAppPassword', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS);
+    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS, disallow_oauth => 1);
     my $body = $c->req->json || {};
     my $name = $body->{name} // q();
     xrpc_error(400, 'InvalidRequest', 'App password name is required') unless length $name;
@@ -296,7 +314,12 @@ sub register_server_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.server.deactivateAccount', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS, required_scope => 'full');
+    my (undef, $account) = require_auth(
+      $c,
+      audience       => TOKEN_AUD_ACCESS,
+      required_scope => 'full',
+      disallow_oauth => 1,
+    );
     $c->store->update_account($account->{did}, deactivated_at => time);
     $c->append_event(
       did     => $account->{did},
@@ -311,7 +334,12 @@ sub register_server_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.server.activateAccount', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS, required_scope => 'full');
+    my (undef, $account) = require_auth(
+      $c,
+      audience       => TOKEN_AUD_ACCESS,
+      required_scope => 'full',
+      disallow_oauth => 1,
+    );
     $account = $c->store->update_account($account->{did}, deactivated_at => undef);
     $c->append_event(
       did     => $account->{did},
@@ -387,7 +415,15 @@ sub register_server_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.server.requestEmailConfirmation', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS);
+    my (undef, $account) = require_auth(
+      $c,
+      audience           => TOKEN_AUD_ACCESS,
+      required_permission => {
+        type   => 'account',
+        attr   => 'email',
+        action => 'manage',
+      },
+    );
     return {} unless $account->{email};
     issue_account_action_token(
       $c,
@@ -400,6 +436,17 @@ sub register_server_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.server.confirmEmail', sub ($c, $endpoint) {
+    if (($c->req->headers->authorization // q()) =~ /\A(?:Bearer|DPoP)\s+/i) {
+      require_auth(
+        $c,
+        audience            => TOKEN_AUD_ACCESS,
+        required_permission => {
+          type   => 'account',
+          attr   => 'email',
+          action => 'manage',
+        },
+      );
+    }
     my $body = $c->req->json || {};
     my $token = _require_action_token($c,
       token   => $body->{token},
@@ -420,7 +467,15 @@ sub register_server_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.server.requestEmailUpdate', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS);
+    my (undef, $account) = require_auth(
+      $c,
+      audience            => TOKEN_AUD_ACCESS,
+      required_permission => {
+        type   => 'account',
+        attr   => 'email',
+        action => 'manage',
+      },
+    );
     my $token_required = defined $account->{email_confirmed_at} ? 1 : 0;
     if ($token_required) {
       issue_account_action_token(
@@ -437,7 +492,12 @@ sub register_server_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.server.updateEmail', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS, required_scope => 'full');
+    my (undef, $account) = require_auth(
+      $c,
+      audience       => TOKEN_AUD_ACCESS,
+      required_scope => 'full',
+      disallow_oauth => 1,
+    );
     my $body = $c->req->json || {};
     if (defined $account->{email_confirmed_at}) {
       xrpc_error(400, 'TokenRequired', 'A confirmation token is required to update email')
@@ -459,7 +519,12 @@ sub register_server_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.server.requestAccountDelete', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS, required_scope => 'full');
+    my (undef, $account) = require_auth(
+      $c,
+      audience       => TOKEN_AUD_ACCESS,
+      required_scope => 'full',
+      disallow_oauth => 1,
+    );
     issue_account_action_token(
       $c,
       $account,
@@ -471,7 +536,12 @@ sub register_server_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.server.deleteAccount', sub ($c, $endpoint) {
-    my ($claims, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS, required_scope => 'full');
+    my ($claims, $account) = require_auth(
+      $c,
+      audience       => TOKEN_AUD_ACCESS,
+      required_scope => 'full',
+      disallow_oauth => 1,
+    );
     my $body = $c->req->json || {};
     xrpc_error(401, 'AuthRequired', 'Token is not authorized for that repo')
       unless ($claims->{sub} // q()) eq ($body->{did} // q()) && ($account->{did} // q()) eq ($body->{did} // q());
@@ -514,7 +584,16 @@ sub register_server_handlers ($registry, $app) {
     xrpc_error(400, 'InvalidRequest', 'Protected methods cannot be service-authenticated')
       if length($normalized_lxm) && $PROTECTED_SERVICE_AUTH_METHOD{$normalized_lxm};
     my $scope = _canonical_access_scope($claims->{scope} // $session->{scope});
-    if (length($normalized_lxm) && _service_auth_method_requires_privileged_access($normalized_lxm) && !_scope_allows($scope, 'privileged')) {
+    if (($claims->{typ} // q()) eq 'oauth_access') {
+      my $rpc_lxm = length($normalized_lxm) ? $lxm : '*';
+      xrpc_error(403, 'Forbidden', qq{Missing required scope "} . 'rpc:' . $rpc_lxm . '?aud=' . $aud . q{"})
+        unless oauth_scope_allows_permission(
+          $scope,
+          type => 'rpc',
+          aud  => $aud,
+          lxm  => $rpc_lxm,
+        );
+    } elsif (length($normalized_lxm) && _service_auth_method_requires_privileged_access($normalized_lxm) && !_scope_allows($scope, 'privileged')) {
       xrpc_error(400, 'InvalidToken', 'Bad token scope');
     }
     my $requested_exp = $c->param('exp');
@@ -592,7 +671,12 @@ sub register_server_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.server.getAccountInviteCodes', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS, required_scope => 'full');
+    my (undef, $account) = require_auth(
+      $c,
+      audience       => TOKEN_AUD_ACCESS,
+      required_scope => 'full',
+      disallow_oauth => 1,
+    );
     my $rows = $c->store->list_invite_codes_for_account($account->{did});
     return {
       codes => [ map { invite_code_view($c->store, $_) } @$rows ],
@@ -600,14 +684,17 @@ sub register_server_handlers ($registry, $app) {
   });
 }
 
-sub session_view ($account) {
+sub session_view ($account, %opts) {
+  my $include_email = exists $opts{include_email} ? $opts{include_email} : 1;
   return {
     handle          => $account->{handle},
     did             => $account->{did},
     didDoc          => $account->{did_doc} || account_did_doc({}, $account),
-    email           => $account->{email},
-    emailConfirmed  => defined($account->{email_confirmed_at}) ? JSON::PP::true : JSON::PP::false,
-    emailAuthFactor => JSON::PP::false,
+    ($include_email ? (
+      email           => $account->{email},
+      emailConfirmed  => defined($account->{email_confirmed_at}) ? JSON::PP::true : JSON::PP::false,
+      emailAuthFactor => JSON::PP::false,
+    ) : ()),
     active          => (!defined($account->{deactivated_at}) && !defined($account->{deleted_at}))
       ? JSON::PP::true
       : JSON::PP::false,

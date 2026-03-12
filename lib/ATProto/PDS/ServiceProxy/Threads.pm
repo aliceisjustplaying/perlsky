@@ -35,7 +35,7 @@ sub _get_author_feed ($self, $c) {
   xrpc_error(400, 'InvalidRequest', 'actor is required') unless length $actor;
 
   my $account = resolve_repo($c, $actor) or return undef;
-  my $viewer = $self->_optional_auth_account($c);
+  my $viewer = $self->_optional_auth_account($c, 'app.bsky.feed.getAuthorFeed');
   my $limit = $c->param('limit') // 50;
   $limit = 1 if $limit < 1;
   $limit = 100 if $limit > 100;
@@ -70,7 +70,7 @@ sub _get_posts ($self, $c) {
   my @resolved = map { $self->_resolve_local_post_uri($c, $_) } @uris;
   return undef if grep { !defined $_ } @resolved;
 
-  my $viewer = $self->_optional_auth_account($c);
+  my $viewer = $self->_optional_auth_account($c, 'app.bsky.feed.getPosts');
   my @posts = map {
     my ($account, $row) = @$_;
     my $profile_value = $self->_profile_record_value($c, $account);
@@ -90,7 +90,7 @@ sub _get_post_thread ($self, $c) {
 
   my $resolved = $self->_resolve_local_post_uri($c, $uri) or return undef;
   my ($account, $row) = @$resolved;
-  my $viewer = $self->_optional_auth_account($c);
+  my $viewer = $self->_optional_auth_account($c, 'app.bsky.feed.getPostThread');
   my $profile_value = $self->_profile_record_value($c, $account);
   my $depth = $self->_non_negative_int_param($c, 'depth', 6);
   my $parent_height = $self->_non_negative_int_param($c, 'parentHeight', 80);
@@ -100,10 +100,20 @@ sub _get_post_thread ($self, $c) {
   return 200;
 }
 
-sub _optional_auth_account ($self, $c) {
+sub _optional_auth_account ($self, $c, $nsid) {
   my $auth = $c->req->headers->authorization;
   return undef unless defined $auth && length $auth;
-  my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS);
+  my %opts = (
+    audience => TOKEN_AUD_ACCESS,
+  );
+  if (defined $nsid && length $nsid) {
+    $opts{required_permission} = {
+      type => 'rpc',
+      aud  => $self->_permission_audience_for_request($c, $nsid),
+      lxm  => $nsid,
+    };
+  }
+  my (undef, $account) = require_auth($c, %opts);
   return $account;
 }
 

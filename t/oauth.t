@@ -153,8 +153,9 @@ my $client_metadata = {
   $t->get_ok('/xrpc/com.atproto.server.getAccountInviteCodes' => {
     Authorization => "DPoP $access_token",
     DPoP          => _dpop_jwt($client_jwk, $client_private, 'GET', $config->{base_url} . '/xrpc/com.atproto.server.getAccountInviteCodes', ath => $access_token),
-  })->status_is(200)
-    ->json_is('/codes' => []);
+  })->status_is(403)
+    ->json_is('/error' => 'Forbidden')
+    ->json_is('/message' => 'OAuth credentials are not supported for this endpoint');
 
   $t->post_ok('/oauth/token' => {
     DPoP => _dpop_jwt($client_jwk, $client_private, 'POST', $token_url),

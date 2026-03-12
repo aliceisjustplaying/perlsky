@@ -53,6 +53,7 @@ use ATProto::PDS::ServiceProxy::Threads qw(
 );
 use ATProto::PDS::ServiceProxy::Upstream qw(
   _config
+  _permission_audience_for_request
   _perform_upstream_request
   _target_for_request
   _target_from_proxy_header
@@ -125,7 +126,15 @@ sub proxy_xrpc_request ($self, $c, $nsid) {
 
   my $auth = $c->req->headers->authorization;
   if (defined $auth && length $auth) {
-    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS);
+    my (undef, $account) = require_auth(
+      $c,
+      audience            => TOKEN_AUD_ACCESS,
+      required_permission => {
+        type => 'rpc',
+        aud  => $target->{aud},
+        lxm  => $nsid,
+      },
+    );
     xrpc_error(500, 'SigningKeyUnavailable', 'Account signing key is unavailable')
       unless defined($account->{private_key}) && length($account->{private_key});
     $headers{Authorization} = 'Bearer ' . encode_service_jwt(

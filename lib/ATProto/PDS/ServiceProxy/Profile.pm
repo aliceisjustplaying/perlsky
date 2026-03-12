@@ -31,7 +31,7 @@ sub _get_local_profile ($self, $c) {
 
   my $account = resolve_repo($c, $actor) or return undef;
   my $profile_value = $self->_profile_record_value($c, $account);
-  my $viewer = $self->_optional_auth_account($c);
+  my $viewer = $self->_optional_auth_account($c, 'app.bsky.actor.getProfile');
   my $result = {
     %{ $self->_profile_view_detailed($c, $account, $profile_value) },
     associated => {

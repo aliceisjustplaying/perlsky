@@ -62,7 +62,14 @@ sub register_misc_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.identity.requestPlcOperationSignature', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS);
+    my (undef, $account) = require_auth(
+      $c,
+      audience            => TOKEN_AUD_ACCESS,
+      required_permission => {
+        type => 'identity',
+        attr => '*',
+      },
+    );
     xrpc_error(400, 'InvalidRequest', 'account does not have an email address')
       unless defined($account->{email}) && length($account->{email});
     issue_account_action_token(
@@ -76,7 +83,14 @@ sub register_misc_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.identity.signPlcOperation', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS);
+    my (undef, $account) = require_auth(
+      $c,
+      audience            => TOKEN_AUD_ACCESS,
+      required_permission => {
+        type => 'identity',
+        attr => '*',
+      },
+    );
     xrpc_error(400, 'InvalidRequest', 'PLC operations are only supported for did:plc accounts')
       unless is_plc_did($account->{did});
     my $body = $c->req->json || {};
@@ -106,7 +120,14 @@ sub register_misc_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.identity.submitPlcOperation', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS);
+    my (undef, $account) = require_auth(
+      $c,
+      audience            => TOKEN_AUD_ACCESS,
+      required_permission => {
+        type => 'identity',
+        attr => '*',
+      },
+    );
     xrpc_error(400, 'InvalidRequest', 'PLC operations are only supported for did:plc accounts')
       unless is_plc_did($account->{did});
     my $body = $c->req->json || {};
@@ -131,7 +152,14 @@ sub register_misc_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.identity.updateHandle', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS);
+    my (undef, $account) = require_auth(
+      $c,
+      audience            => TOKEN_AUD_ACCESS,
+      required_permission => {
+        type => 'identity',
+        attr => 'handle',
+      },
+    );
     my $body   = $c->req->json || {};
     my $domain = $c->config_value('service_handle_domain', 'localhost');
     my $handle = normalize_handle($body->{handle}, $domain);
@@ -167,7 +195,15 @@ sub register_misc_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.moderation.createReport', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS);
+    my (undef, $account) = require_auth(
+      $c,
+      audience            => TOKEN_AUD_ACCESS,
+      required_permission => {
+        type => 'rpc',
+        aud  => $c->service_proxy->_permission_audience_for_request($c, $endpoint->{id}),
+        lxm  => $endpoint->{id},
+      },
+    );
     my $body = $c->req->json || {};
     assert_report_allowed($c, $account, $body->{reasonType});
     my $row = $c->store->create_report(
