@@ -1,83 +1,84 @@
 # perlsky
 
-`perlsky` is a Perl 5 implementation of an AT Protocol Personal Data Server.
+## Why
 
-Current direction:
+Look, it started as a joke and then quickly got out of hand.
 
-- Official `com.atproto.*` lexicons are vendored into `share/lexicons`.
-- The external XRPC surface is loaded from those lexicons at runtime.
-- Account, repo, blob, sync, CAR, DAG-CBOR, CID, and MST support are being implemented in native Perl.
-- The app is designed to run self-contained with SQLite and filesystem blob storage.
+## What
 
-The immediate goal is a PDS that is pleasant to hack on and interoperable enough to be exercised with real AT Protocol clients and repo sync tooling.
+An AT Protocol Personal Data Server written in Perl 5. It runs self-contained on SQLite and filesystem blob storage, loads the official `com.atproto.*` lexicons at runtime, and is meant to be pleasant to hack on if you like Perl. It has been extensively tested and aims for accuracy and parity with the official PDS. It is ready to use in Production for at least smaller servers.
 
-Developer-oriented notes about the current facade/module split live in `docs/CODE_STRUCTURE.md`.
-Endpoint-by-endpoint conformance status lives in `docs/ENDPOINT_CONFORMANCE.md`.
+## Quick start
 
-Reference differential validation:
+```sh
+# install dependencies (Debian/Ubuntu)
+apt-get install -y cpanminus libcbor-xs-perl libcryptx-perl \
+  libdbd-sqlite3-perl libio-socket-ssl-perl
+cpanm --notest Mojolicious@9.42
 
-- Run `script/differential-validate` to compare `perlsky` against the official published `@atproto/pds` on a focused set of account, repo, moderation, sync, firehose, and `importRepo` snapshot-restore behaviors.
-- The differential harness also configures a local relay/crawler mock for both servers and verifies that both emit `com.atproto.sync.requestCrawl` notices with the expected hostname after repo activity, based on the upstream crawler wiring in `packages/pds/src/crawlers.ts`, `context.ts`, and `sequencer.ts`.
-- Run `PERLSKY_DIFF_ACCOUNT_DID_METHOD=did:plc script/differential-validate` to exercise the same harness in PLC-account mode, including recommended DID credentials, PLC signature requests, PLC handle updates, token-gated PLC signing behavior, and moderation checks after PLC handle changes.
-- The helper installs the reference runtime into `.tools/reference-runtime` with Node 20 via `fnm`.
-- Run `PERLSKY_RUN_REFERENCE_DIFF=1 prove -lv t/reference-differential.t` to exercise the same harness from the test suite.
-- Run `PERLSKY_RUN_REFERENCE_DIFF=1 prove -lv t/reference-differential-plc.t` to run the PLC-specific reference comparison from the test suite.
+# run locally
+PERLSKY_CONFIG=config.json perl script/perlsky daemon -l http://127.0.0.1:7755
 
-Metrics and observability:
+# check it's alive
+curl http://127.0.0.1:7755/_health
+```
 
-- `perlsky` now exposes Prometheus-compatible metrics at `/metrics`.
-- Set `metrics_token` to require `Authorization: Bearer <token>` for scrapes.
-- The main runtime signals cover XRPC request counts/latency, websocket subscriptions and emitted frames, crawler notifications, blob ingress/egress bytes, and key store operation timings.
-- Detailed operator documentation lives in `docs/METRICS.md`.
+For a real deployment with TLS, systemd, and reverse proxy setup, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
-Deployment and first-account setup:
+## What's implemented
 
-- Generic single-node deployment instructions live in `docs/DEPLOYMENT.md`.
-- The deployment guide includes a reverse-proxy layout, a sample `systemd` unit, validation commands, and a `createAccount` example for bootstrapping the first user.
-- `perlsky` now includes a built-in ATProto OAuth provider surface, so modern third-party clients that use the Bluesky OAuth flow can authenticate directly against your PDS without extra auth-server infrastructure.
-- The built-in provider publishes `/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server`, `/oauth/jwks`, `/oauth/par`, `/oauth/authorize`, `/oauth/token`, and `/oauth/revoke` from the same host as the PDS.
-- OAuth scope enforcement now understands both the transition scopes (`transition:generic`, `transition:email`, `transition:chat.bsky`), the newer granular permission families (`account:`, `identity:`, `repo:`, `blob:`, and `rpc:`), and `include:<nsid>` permission-set scopes, so clients that request narrower ATProto permissions can be authorized without silently getting broader access.
-- If `service_handle_domain` is `example.com`, submitting `handle: "alice"` to `com.atproto.server.createAccount` creates `alice.example.com`.
-- If `invite_code_required` is enabled, public signup is disabled until a valid invite code is supplied.
-- `com.atproto.server.createInviteCode` and `com.atproto.server.createInviteCodes` are admin-only by default. Set `self_service_invite_codes` to enable self-service invite minting for authenticated full-access sessions, limited to the caller's own account.
-- `script/perlsky-admin create-invite` can mint invite codes locally on the server without needing an existing user session.
-- The invite-only bootstrap flow is documented with copy-pasteable commands in `docs/DEPLOYMENT.md`.
-- Browser clients such as `bsky.app` can talk to `perlsky` directly because XRPC and DID-document responses include CORS headers and answer OPTIONS preflight requests.
-- OAuth clients such as Tangled can also discover and use `perlsky` directly as both the protected resource and authorization server, using PAR, PKCE, `private_key_jwt`, and DPoP as required by the ATProto OAuth profile.
-- Unknown `app.bsky.*` requests are proxied to `https://api.bsky.app` by default, and unknown `chat.bsky.*` requests are proxied to `https://api.bsky.chat` by default using per-account service-auth JWTs.
-- Set `bsky_appview_url` / `bsky_appview_did` or `chat_service_url` / `chat_service_did` in your config if you want different upstream services.
+- **Accounts and auth** — `createAccount`, `createSession`, refresh tokens, invite codes, email updates, password changes, account deletion. Both `did:web` and `did:plc` account methods.
+- **OAuth** — built-in ATProto OAuth provider surface. Modern clients (like Tangled) can authenticate directly against your PDS using PAR, PKCE, `private_key_jwt`, and DPoP. Supports transition scopes, granular permission families, and `include:<nsid>` scopes.
+- **Repos and sync** — native Perl implementations of CAR, DAG-CBOR, CID, and MST. Full `com.atproto.sync.*` surface including firehose, `getRepo`, and `importRepo` snapshot-restore.
+- **Blobs** — upload, download, deduplication, reference-counted lifecycle.
+- **AppView proxying** — unknown `app.bsky.*` and `chat.bsky.*` requests are forwarded to the public Bluesky services (or your own) using per-account service-auth JWTs.
+- **Moderation** — repo, record, and blob takedowns with real enforcement. Persisted labels with query and subscription support.
+- **Crawler discovery** — notifies configured relays (e.g. `bsky.network`) after repo activity.
+- **Metrics** — Prometheus-compatible endpoint at `/metrics`. See [docs/METRICS.md](docs/METRICS.md).
 
-Relay / crawler discovery:
+For endpoint-by-endpoint conformance status, see [docs/ENDPOINT_CONFORMANCE.md](docs/ENDPOINT_CONFORMANCE.md). For the module/facade split, see [docs/CODE_STRUCTURE.md](docs/CODE_STRUCTURE.md).
 
-- Configure `hostname` to the public host name you want relays to crawl, for example `pds.example.com`. This should be the host, not the full URL.
-- Configure `crawlers` as a list of relay or crawler service origins, for example `["https://bsky.network"]`.
-- `perlsky` will POST `com.atproto.sync.requestCrawl` to each configured crawler after local repo/account/identity activity, while throttling repeat notices with `crawler_notify_interval` (default `1200` seconds).
-- Local regression coverage for this path lives in `t/crawlers.t`.
+## Testing
 
-Browser smoke:
+Run the local test suite:
 
-- `script/perlsky-browser-smoke run-dual` now prefers a saved reusable account pair from `.cache/browser-smoke/reusable-pair.json`, so the default dual-account smoke does not create new actors.
-- Use `script/perlsky-browser-smoke bootstrap-pair` once to mint and save a dedicated smoke pair, then rerun `script/perlsky-browser-smoke run-dual` as often as you want against those same accounts.
-- Use `script/perlsky-browser-smoke show-pair` to inspect the saved pair metadata and `script/perlsky-browser-smoke clear-pair` to forget it locally.
-- The reusable dual-account smoke now covers list lifecycle plus deeper `bsky.app` settings flows, and it pre-cleans old smoke-created posts/lists before each run.
-- DMs are intentionally deferred from the current browser-smoke tranche; see `docs/BROWSER_SMOKE.md` for current scope and rationale.
-- Fresh-account creation is still available through the explicit `bootstrap-*` commands, but it is no longer the normal path for repeated browser smoke runs.
-- Detailed browser-smoke workflow, current interaction coverage, and the env-gated `prove` wrapper live in `docs/BROWSER_SMOKE.md`.
-- Extraction work toward a cross-PDS standalone package now lives in the `atproto-smoke` repo, which owns the browser runtime, package CLI, example configs, and bring-your-own-account plus `perlsky` adapter helpers.
-- `script/perlsky-browser-smoke` expects a standalone checkout at `../atproto-smoke` by default. Set `PERLSKY_BROWSER_SUITE_ROOT` to point it at any other checkout explicitly.
-- The lowest-friction local layout is to clone `atproto-smoke` next to `perlsky`, so both repos share the same parent directory.
-- The shared smoke runtime now applies a bounded per-step timeout (`stepTimeoutMs`, default `120000`) so late browser stalls fail with artifacts instead of hanging forever.
+```sh
+prove -lr t
+```
 
-Moderation and labels:
+### Differential validation
 
-- `com.atproto.admin.updateSubjectStatus` now enforces repo, record, and blob takedowns as real behavior instead of passive metadata.
-- Repo takedowns block ordinary login, repo writes, and public repo reads. `allowTakendown` sessions are accepted for parity with the reference PDS, but those sessions still cannot write.
-- Record takedowns hide records from `com.atproto.repo.getRecord` and `com.atproto.repo.listRecords`.
-- Blob takedowns quarantine blob reads for the public while still permitting authenticated self/admin recovery access, and they block both duplicate blob uploads and new record writes that reference quarantined blobs.
-- `com.atproto.label.queryLabels`, `com.atproto.label.subscribeLabels`, and `com.atproto.temp.fetchLabels` are backed by persisted local labels rather than synthesized snapshots. Admin takedowns emit `!hide` labels and restores emit negation events.
-- Label query/stream behavior is covered by local regression tests in `t/labels.t`. The official reference PDS does not provide a like-for-like local labeler implementation to diff against, so direct upstream differential checks are focused on moderation semantics rather than label RPC parity.
+`perlsky` can be tested side-by-side against the official `@atproto/pds` to verify matching behavior on accounts, repos, moderation, sync, firehose, and `importRepo`:
 
-Interop fixtures:
+```sh
+script/differential-validate
 
-- `t/crypto-interop.t` loads the official Bluesky `tools/reference/atproto/interop-test-files/crypto/w3c_didkey_K256.json` vectors so secp256k1 `did:key` encoding stays pinned to the same public fixtures as the upstream stack.
-- `t/plc-identity.t` drives `perlsky` against the local PLC mock built on the official `@did-plc/lib`, covering account creation, recommended DID credentials, PLC handle updates, token-gated PLC signing, and validated PLC submission semantics.
+# or with PLC-backed accounts
+PERLSKY_DIFF_ACCOUNT_DID_METHOD=did:plc script/differential-validate
+
+# from the test suite
+PERLSKY_RUN_REFERENCE_DIFF=1 prove -lv t/reference-differential.t
+PERLSKY_RUN_REFERENCE_DIFF=1 prove -lv t/reference-differential-plc.t
+```
+
+The harness installs the reference runtime into `.tools/reference-runtime` with Node 20 via `fnm`.
+
+### Browser smoke — [atproto-smoke](https://github.com/aliceisjustplaying/atproto-smoke)
+
+End-to-end smoke tests drive real `bsky.app` sessions against a running `perlsky` instance — posting, following, lists, notifications, settings, and more. The browser runtime is a standalone project, [atproto-smoke](https://github.com/aliceisjustplaying/atproto-smoke), designed to work with any AT Protocol PDS. `perlsky` provides a thin adapter script on top of it.
+
+```sh
+# clone atproto-smoke next to perlsky (one-time)
+git clone https://github.com/aliceisjustplaying/atproto-smoke.git ../atproto-smoke
+cd ../atproto-smoke && npm install && cd -
+
+# bootstrap a reusable smoke account pair, then run
+script/perlsky-browser-smoke bootstrap-pair   # one-time setup
+script/perlsky-browser-smoke run-dual         # run the smoke
+```
+
+Full details in [docs/BROWSER_SMOKE.md](docs/BROWSER_SMOKE.md).
+
+### Interop fixtures
+
+Crypto and PLC identity tests run against official Bluesky test vectors and the `@did-plc/lib` mock to keep encoding and identity semantics pinned to upstream.
