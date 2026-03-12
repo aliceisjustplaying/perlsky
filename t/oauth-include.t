@@ -59,6 +59,16 @@ my $context = OAuthIncludeTestContext->new;
             'com.atproto.server.createSession',
           ],
         },
+        {
+          type     => 'permission',
+          resource => 'blob',
+          accept   => ['image/*'],
+        },
+        {
+          type     => 'permission',
+          resource => 'identity',
+          attr     => 'handle',
+        },
       ],
     } if $nsid eq 'app.bsky.authManageNotifications';
     return undef;
@@ -109,6 +119,22 @@ my $context = OAuthIncludeTestContext->new;
       collection => 'com.atproto.server.createSession',
     ),
     'compiled scope drops out-of-authority repo permissions from permission sets',
+  );
+  ok(
+    !oauth_scope_allows_permission(
+      $compiled,
+      type => 'blob',
+      mime => 'image/png',
+    ),
+    'compiled scope ignores blob permissions from permission sets',
+  );
+  ok(
+    !oauth_scope_allows_permission(
+      $compiled,
+      type => 'identity',
+      attr => 'handle',
+    ),
+    'compiled scope ignores identity permissions from permission sets',
   );
 }
 
