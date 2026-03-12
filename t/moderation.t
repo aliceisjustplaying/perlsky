@@ -74,7 +74,18 @@ $t->post_ok('/xrpc/com.atproto.admin.updateSubjectStatus' => {
   subject  => { uri => "at://$did/app.bsky.feed.post/visible-post", cid => $record_cid },
   takedown => { applied => JSON::PP::true },
 })->status_is(200)
-  ->json_is('/subject/uri', "at://$did/app.bsky.feed.post/visible-post");
+  ->json_is('/subject/uri', "at://$did/app.bsky.feed.post/visible-post")
+  ->json_is('/takedown/applied' => JSON::PP::true)
+  ->json_hasnt('/deactivated');
+
+$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.admin.getSubjectStatus')->query(
+  uri => "at://$did/app.bsky.feed.post/visible-post",
+) => {
+  Authorization => $admin_auth,
+})->status_is(200)
+  ->json_is('/subject/$type' => 'com.atproto.repo.strongRef')
+  ->json_is('/subject/cid' => $record_cid)
+  ->json_is('/takedown/applied' => JSON::PP::true);
 
 $t->get_ok("/xrpc/com.atproto.repo.getRecord?repo=$did&collection=app.bsky.feed.post&rkey=visible-post")
   ->status_is(404)
@@ -103,7 +114,10 @@ $t->post_ok('/xrpc/com.atproto.admin.updateSubjectStatus' => {
 } => json => {
   subject  => { did => $did },
   takedown => { applied => JSON::PP::true },
-})->status_is(200);
+})->status_is(200)
+  ->json_is('/subject/did' => $did)
+  ->json_is('/takedown/applied' => JSON::PP::true)
+  ->json_hasnt('/deactivated');
 
 $t->get_ok("/xrpc/com.atproto.sync.getRepoStatus?did=$did")
   ->status_is(200)
@@ -189,7 +203,19 @@ $t->post_ok('/xrpc/com.atproto.admin.updateSubjectStatus' => {
   subject  => { did => $did, cid => $blob_cid },
   takedown => { applied => JSON::PP::true },
 })->status_is(200)
-  ->json_is('/subject/cid', $blob_cid);
+  ->json_is('/subject/cid', $blob_cid)
+  ->json_is('/takedown/applied' => JSON::PP::true)
+  ->json_hasnt('/deactivated');
+
+$t->get_ok(Mojo::URL->new('/xrpc/com.atproto.admin.getSubjectStatus')->query(
+  did  => $did,
+  blob => $blob_cid,
+) => {
+  Authorization => $admin_auth,
+})->status_is(200)
+  ->json_is('/subject/$type' => 'com.atproto.admin.defs#repoBlobRef')
+  ->json_is('/subject/cid' => $blob_cid)
+  ->json_is('/takedown/applied' => JSON::PP::true);
 
 $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.getBlob')->query(
   did => $did,

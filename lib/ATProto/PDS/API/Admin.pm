@@ -102,8 +102,7 @@ sub register_admin_handlers ($registry, $app) {
     }
     return {
       subject => $status->{subject},
-      ($status->{takedown} ? (takedown => $status->{takedown}) : ()),
-      ($status->{deactivated} ? (deactivated => $status->{deactivated}) : ()),
+      (exists($body->{takedown}) ? (takedown => $body->{takedown}) : ()),
     };
   });
 

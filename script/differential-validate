@@ -1464,6 +1464,7 @@ for my $name (sort keys %server) {
   );
   check($res->is_success, "$name repo takedown succeeds");
   next unless $res->is_success;
+  my $repo_takedown_json = $res->json || {};
 
   my $blocked_login = post_json($server{$name}{origin}, 'com.atproto.server.createSession', {
     identifier => $server{$name}{renamed_handle} || $server{$name}{handle},
@@ -1500,6 +1501,9 @@ for my $name (sort keys %server) {
     write_error   => $blocked_write ? (($blocked_write->json || {})->{error}) : undef,
     list_blocked  => $blocked_list->is_success ? 0 : 1,
     list_error    => ($blocked_list->json || {})->{error},
+    response_subject_type   => $repo_takedown_json->{subject}{'$type'},
+    response_takedown       => $repo_takedown_json->{takedown}{applied} ? 1 : 0,
+    response_has_deactivated => exists($repo_takedown_json->{deactivated}) ? 1 : 0,
   };
 
   $res = post_json(
@@ -1531,6 +1535,7 @@ for my $name (sort keys %server) {
   );
   check($res->is_success, "$name record takedown succeeds");
   next unless $res->is_success;
+  my $record_takedown_json = $res->json || {};
 
   my $record_uri = $server{$name}{record_uri};
   my ($collection, $rkey) = $record_uri =~ m{at://[^/]+/([^/]+)/([^/?#]+)\z};
@@ -1546,11 +1551,24 @@ for my $name (sort keys %server) {
 
   my $records = $list_records->is_success ? ($list_records->json->{records} || []) : [];
   my $record_hidden = !(grep { (($_->{uri} // q()) eq $record_uri) } @$records);
+  my $record_subject_status = get_form(
+    $server{$name}{origin},
+    'com.atproto.admin.getSubjectStatus',
+    { uri => $record_uri },
+    admin_auth_header($server{$name}{admin_password}),
+  );
+  my $record_subject_json = $record_subject_status->json || {};
   $server{$name}{record_takedown} = {
     get_blocked   => $get_record->is_success ? 0 : 1,
     get_error     => ($get_record->json || {})->{error},
     list_hidden   => $record_hidden ? 1 : 0,
     list_success  => $list_records->is_success ? 1 : 0,
+    response_subject_type    => $record_takedown_json->{subject}{'$type'},
+    response_takedown        => $record_takedown_json->{takedown}{applied} ? 1 : 0,
+    response_has_deactivated => exists($record_takedown_json->{deactivated}) ? 1 : 0,
+    subject_status_ok        => $record_subject_status->is_success ? 1 : 0,
+    subject_status_type      => $record_subject_json->{subject}{'$type'},
+    subject_status_takedown  => $record_subject_json->{takedown}{applied} ? 1 : 0,
   };
 
   my $sync_record = get_form($server{$name}{origin}, 'com.atproto.sync.getRecord', {
@@ -1638,6 +1656,7 @@ for my $name (sort keys %server) {
     admin_auth_header($server{$name}{admin_password}),
   );
   check($reactivate->is_success, "$name repo reactivation succeeds for repo status comparison");
+  my $reactivate_json = $reactivate->json || {};
 
   my $takedown = post_json(
     $server{$name}{origin},
@@ -1684,6 +1703,12 @@ for my $name (sort keys %server) {
       active => ($deactivated->json || {})->{active} ? 1 : 0,
       status => ($deactivated->json || {})->{status},
       has_rev => defined(($deactivated->json || {})->{rev}) ? 1 : 0,
+    },
+    reactivate_response => {
+      status          => $reactivate->code // 0,
+      subject_type    => $reactivate_json->{subject}{'$type'},
+      has_takedown    => exists($reactivate_json->{takedown}) ? 1 : 0,
+      has_deactivated => exists($reactivate_json->{deactivated}) ? 1 : 0,
     },
     takendown => {
       ok     => $takendown->is_success ? 1 : 0,

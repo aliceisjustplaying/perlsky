@@ -13,7 +13,7 @@ That does not mean every test has been manually revalidated against every other 
 The current baseline for saying "the audited suite is green" is:
 
 - `prove -lr t`
-  - latest full green result in the realigned Meridian worktree: `Files=48, Tests=3009`
+  - latest full green result in the realigned Meridian worktree: `Files=48, Tests=3026`
 - `prove -lv t/server-auth.t`
 - `perl -c script/differential-validate`
 - `PERLSKY_RUN_REFERENCE_DIFF=1 prove -lv t/reference-differential.t`
@@ -63,6 +63,8 @@ When the official runtime and upstream comments disagree, the runtime behavior w
 - `com.atproto.admin.deleteAccount` is now reference-style idempotent for missing DIDs: it succeeds and emits the same deleted account event shape instead of failing locally with `404 AccountNotFound`.
 - `com.atproto.admin.getSubjectStatus` now follows the reference runtime more closely for repo subjects: existing repos return a synthesized active subject status even without a stored moderation row, missing repos use `400 NotFound` / `Subject not found`, blob requests without a DID use `400 InvalidRequest` / `Must provide a did to request blob state`, and entirely missing subject references use `400 InvalidRequest` / `No provided subject`.
 - `com.atproto.admin.updateAccountPassword` and `com.atproto.admin.disableAccountInvites` / `enableAccountInvites` now follow the reference runtime’s missing-account behavior: they are empty-body `200` no-ops instead of returning local `404 AccountNotFound` or JSON `{}` success bodies.
+- `com.atproto.admin.updateSubjectStatus` now follows the reference runtime’s narrower response contract: it echoes the normalized `subject`, includes `takedown` only when that field was part of the request, and no longer synthesizes `deactivated` into the response body from stored state.
+- Record and blob moderation now have direct coverage for `com.atproto.admin.getSubjectStatus`, so taken-down record/blob subjects are pinned as first-class admin-surface behavior instead of only being inferred from repo and sync visibility.
 - `com.atproto.admin.updateAccountPassword` follows the reference runtime’s looser admin policy: it rejects overlong passwords with `400 InvalidRequest` / `Invalid password length.`, but does not impose the normal user-facing minimum-length gate.
 - `com.atproto.admin.disableAccountInvites` / `enableAccountInvites` now ignore the local `note` field so the visible account state matches the official runtime instead of carrying an extra stored `inviteNote`.
 - `com.atproto.admin.getInviteCodes` now matches the official runtime on sort validation, always-emitted cursor behavior, total `available` counts, and newest-first `uses` ordering.
