@@ -28,7 +28,11 @@ use ATProto::PDS::Auth::OAuthScope qw(
 );
 use ATProto::PDS::Auth::Password qw(random_hex timing_safe_eq);
 use ATProto::PDS::Constants qw(TOKEN_AUD_ACCESS TOKEN_AUD_REFRESH);
+use ATProto::PDS::Identity qw(did_to_path);
 use ATProto::PDS::Moderation qw(assert_login_allowed is_repo_takedown);
+use ATProto::PDS::PLC qw(is_plc_did refresh_plc_did_doc);
+use ATProto::PDS::Repo::CAR qw(read_car);
+use ATProto::PDS::Repo::DagCbor qw(decode_dag_cbor);
 use ATProto::PDS::Util::BaseX qw(base64url_decode base64url_encode);
 
 our @EXPORT_OK = qw(
@@ -755,26 +759,125 @@ sub _load_permission_set ($self, $c, $nsid) {
     return $cache{$nsid} = $local->{defs}{main};
   }
 
-  my $authority_handle = _nsid_authority_handle($nsid);
-  return $cache{$nsid} = undef unless defined $authority_handle && length $authority_handle;
+  my $authority_did = $self->_resolve_lexicon_authority_did($nsid);
+  return undef unless defined $authority_did && length $authority_did;
 
-  my $appview_url = $c->config_value('bsky_appview_url', 'https://api.bsky.app');
-  return $cache{$nsid} = undef unless defined $appview_url && length $appview_url;
+  my $did_doc = $self->_resolve_remote_did_doc($authority_did);
+  return undef unless ref($did_doc) eq 'HASH';
 
-  my $url = Mojo::URL->new($appview_url)->path('/xrpc/com.atproto.repo.getRecord')->query(
-    repo       => $authority_handle,
+  my $service_url = _did_doc_atproto_service($did_doc);
+  return undef unless defined $service_url && length $service_url;
+
+  my $url = Mojo::URL->new($service_url)->path('/xrpc/com.atproto.sync.getRecord')->query(
+    did        => $authority_did,
     collection => 'com.atproto.lexicon.schema',
     rkey       => $nsid,
   );
   my $tx = eval { $self->ua->get($url => { 'Accept-Encoding' => 'identity' }) };
-  return $cache{$nsid} = undef if $@ || !$tx;
+  return undef if $@ || !$tx;
 
   my $res = $tx->result;
-  return $cache{$nsid} = undef unless $res && $res->is_success;
+  return undef unless $res && $res->is_success;
+  my $lexicon = _permission_set_lexicon_from_car($res->body, $nsid);
+  return undef unless ref($lexicon) eq 'HASH';
+  return $cache{$nsid} = $lexicon->{defs}{main};
+}
+
+sub _resolve_lexicon_authority_did ($self, $nsid) {
+  my $authority = _nsid_authority_handle($nsid);
+  return undef unless defined $authority && length $authority;
+
+  state $resolver = do {
+    return undef unless eval { require Net::DNS::Resolver; 1 };
+    Net::DNS::Resolver->new;
+  };
+  return undef unless $resolver;
+
+  my $packet = eval { $resolver->search('_lexicon.' . $authority, 'TXT') };
+  return undef if $@ || !$packet;
+
+  for my $rr ($packet->answer) {
+    next unless ($rr->type // q()) eq 'TXT';
+    for my $txt ($rr->txtdata) {
+      next unless defined $txt && $txt =~ /\Adid=(did:[^\s]+)\z/i;
+      return $1;
+    }
+  }
+
+  return undef;
+}
+
+sub _resolve_remote_did_doc ($self, $did) {
+  if (is_plc_did($did)) {
+    my $did_doc = eval { refresh_plc_did_doc($self->settings, $did) };
+    return undef if $@;
+    return $did_doc;
+  }
+
+  return undef unless defined $did && $did =~ /\Adid:web:/i;
+
+  my ($host, $path) = _web_did_origin_and_path($did);
+  return undef unless defined $host && defined $path;
+  my $scheme = $host =~ /\A(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?\z/i ? 'http' : 'https';
+  my $url = Mojo::URL->new("$scheme://$host");
+  $url->path($path);
+
+  my $tx = eval { $self->ua->get($url) };
+  return undef if $@ || !$tx;
+  my $res = eval { $tx->result };
+  return undef if $@ || !$res;
+  return undef unless ($res->code // 0) == 200;
   my $json = $res->json;
-  my $value = ref($json) eq 'HASH' ? $json->{value} : undef;
-  return $cache{$nsid} = undef unless _is_permission_set_lexicon($value, $nsid);
-  return $cache{$nsid} = $value->{defs}{main};
+  return undef unless ref($json) eq 'HASH' && ($json->{id} // q()) eq $did;
+  return $json;
+}
+
+sub _did_doc_atproto_service ($did_doc) {
+  return undef unless ref($did_doc) eq 'HASH';
+  my $services = $did_doc->{service};
+  return undef unless ref($services) eq 'ARRAY';
+
+  for my $service (@$services) {
+    next unless ref($service) eq 'HASH';
+    next unless ($service->{type} // q()) eq 'AtprotoPersonalDataServer';
+    my $endpoint = $service->{serviceEndpoint};
+    return $endpoint if defined $endpoint && length $endpoint;
+  }
+
+  return undef;
+}
+
+sub _web_did_origin_and_path ($did) {
+  return unless defined $did && $did =~ s/\Adid:web://i;
+  my @parts = split /:/, $did;
+  return unless @parts;
+
+  my $host = shift @parts;
+  $host =~ s/%3a/:/ig;
+  if (@parts && $parts[0] =~ /\A\d+\z/ && $host !~ /:/) {
+    $host .= ':' . shift @parts;
+  }
+
+  my $path = @parts
+    ? '/' . join('/', map { s/%3A/:/igr } @parts) . '/did.json'
+    : did_to_path('did:web:' . $did);
+  return ($host, $path);
+}
+
+sub _permission_set_lexicon_from_car ($bytes, $nsid) {
+  return undef unless defined $bytes && length $bytes;
+
+  my $car = eval { read_car($bytes) };
+  return undef if $@ || ref($car) ne 'HASH';
+
+  for my $block (@{ $car->{blocks} || [] }) {
+    next unless ref($block) eq 'HASH' && defined($block->{bytes});
+    my $value = eval { decode_dag_cbor($block->{bytes}) };
+    next if $@;
+    return $value if _is_permission_set_lexicon($value, $nsid);
+  }
+
+  return undef;
 }
 
 sub _is_permission_set_lexicon ($lexicon, $nsid) {
