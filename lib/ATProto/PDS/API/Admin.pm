@@ -180,7 +180,8 @@ sub register_admin_handlers ($registry, $app) {
     require_admin($c);
     my $body = $c->req->json || {};
     my $account = find_account($c, $body->{account} // q());
-    xrpc_error(404, 'AccountNotFound', 'Account was not found') unless $account;
+    xrpc_error(400, 'InvalidRequest', 'Account does not exist: ' . ($body->{account} // q()))
+      unless $account;
     update_account_email($c, $account->{did}, $body->{email});
     return {};
   });
@@ -189,18 +190,27 @@ sub register_admin_handlers ($registry, $app) {
     require_admin($c);
     my $body = $c->req->json || {};
     my $account = $c->store->get_account_by_did($body->{did} // q());
-    xrpc_error(404, 'AccountNotFound', 'Account was not found') unless $account;
     $c->store->txn(sub ($dbh) {
-      my $deleted = $c->store->update_account(
-        $account->{did},
-        deactivated_at => time,
-        deleted_at     => time,
-      );
-      $c->store->revoke_sessions_by_did($account->{did});
-      $c->store->revoke_app_passwords_by_did($account->{did});
-      _append_account_event($c, $account->{did}, $deleted, _repo_account_event_payload($deleted, undef));
+      my $did = $body->{did} // q();
+      my $deleted = $account
+        ? $c->store->update_account(
+          $did,
+          deactivated_at => time,
+          deleted_at     => time,
+        )
+        : undef;
+      $c->store->revoke_sessions_by_did($did);
+      $c->store->revoke_app_passwords_by_did($did);
+      my $payload = $deleted
+        ? _repo_account_event_payload($deleted, undef)
+        : {
+          active => JSON::PP::false,
+          status => 'deleted',
+        };
+      _append_account_event($c, $did, $deleted, $payload);
     });
-    return {};
+    $c->render(data => q());
+    return;
   });
 
   $registry->register('com.atproto.admin.disableInviteCodes', sub ($c, $endpoint) {

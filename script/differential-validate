@@ -2312,6 +2312,23 @@ for my $name (sort keys %server) {
     },
     admin_auth_header($server{$name}{admin_password}),
   );
+  my $update_email_missing = post_json(
+    $server{$name}{origin},
+    'com.atproto.admin.updateAccountEmail',
+    {
+      account => 'did:web:missing.test',
+      email   => 'missing@test.invalid',
+    },
+    admin_auth_header($server{$name}{admin_password}),
+  );
+  my $delete_missing = post_json(
+    $server{$name}{origin},
+    'com.atproto.admin.deleteAccount',
+    {
+      did => 'did:web:missing.test',
+    },
+    admin_auth_header($server{$name}{admin_password}),
+  );
   my $disable_admin = post_json(
     $server{$name}{origin},
     'com.atproto.admin.disableInviteCodes',
@@ -2386,7 +2403,12 @@ for my $name (sort keys %server) {
       returned_count   => scalar @infos,
       first_is_primary => (@infos && (($infos[0]{did} // q()) eq $server{$name}{did})) ? 1 : 0,
     },
-    send_missing        => normalize_xrpc_error($send_missing),
+    send_missing         => normalize_xrpc_error($send_missing),
+    update_email_missing => normalize_xrpc_error($update_email_missing),
+    delete_missing       => {
+      status => $delete_missing->code // 0,
+      body   => $delete_missing->body,
+    },
     disable_admin_codes => normalize_xrpc_error($disable_admin),
     disable_account_invites => {
       status           => $disable_invites->code // 0,

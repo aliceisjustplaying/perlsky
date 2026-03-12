@@ -170,6 +170,15 @@ $account = $app->store->get_account_by_did($did);
 is($account->{email}, 'alice+admin@example.test', 'admin.updateAccountEmail normalizes email');
 ok(!defined($account->{email_confirmed_at}), 'admin.updateAccountEmail clears email confirmation state');
 
+$t->post_ok('/xrpc/com.atproto.admin.updateAccountEmail' => {
+  Authorization => $admin_auth,
+} => json => {
+  account => 'did:web:missing.test',
+  email   => 'missing@example.test',
+})->status_is(400)
+  ->json_is('/error' => 'InvalidRequest')
+  ->json_is('/message' => 'Account does not exist: did:web:missing.test');
+
 $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.admin.getAccountInfo')->query(
   did => $did,
 ) => {
@@ -214,6 +223,20 @@ $t->post_ok('/xrpc/com.atproto.admin.updateAccountSigningKey' => {
 })->status_is(400)
   ->json_is('/error' => 'InvalidRequest')
   ->json_is('/message' => 'signingKey must be a valid secp256k1 did:key');
+
+my $before_missing_delete_seq = $app->store->latest_event_seq;
+$t->post_ok('/xrpc/com.atproto.admin.deleteAccount' => {
+  Authorization => $admin_auth,
+} => json => {
+  did => 'did:web:missing.test',
+})->status_is(200)
+  ->content_is('');
+
+my $missing_delete_event = $app->store->list_events_from($before_missing_delete_seq + 1, limit => 1)->[0];
+is($missing_delete_event->{type}, 'account', 'admin.deleteAccount missing DID still appends an account event');
+is($missing_delete_event->{did}, 'did:web:missing.test', 'missing delete event identifies the requested DID');
+ok(!$missing_delete_event->{payload}{active}, 'missing delete event marks the account inactive');
+is($missing_delete_event->{payload}{status}, 'deleted', 'missing delete event reports deleted status');
 
 $t->post_ok('/xrpc/com.atproto.server.createInviteCodes' => {
   Authorization => $admin_auth,
