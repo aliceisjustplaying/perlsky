@@ -1,6 +1,6 @@
 # Test Audit Status
 
-As of 2026-03-11, the focused test-correctness and reference-audit pass is complete on rewritten history through `c51228e`.
+As of 2026-03-12, the focused test-correctness and reference-audit pass is complete on rewritten history through `50447c9`.
 
 That does not mean every test has been manually revalidated against every other PDS implementation line by line. It means:
 
@@ -13,13 +13,13 @@ That does not mean every test has been manually revalidated against every other 
 The current baseline for saying "the audited suite is green" is:
 
 - `prove -lr t`
-  - last green result in the realigned Meridian worktree: `Files=36, Tests=1847`
+  - last green result in the realigned Meridian worktree: `Files=40, Tests=2258`
 - `prove -lv t/server-auth.t`
 - `perl -c script/differential-validate`
 - `PERLSKY_RUN_REFERENCE_DIFF=1 prove -lv t/reference-differential.t`
 - `PERLSKY_RUN_REFERENCE_DIFF=1 prove -lv t/reference-differential-plc.t`
 
-Focused suites were also rerun during individual fixes, especially around labels, firehose, repo writes, moderation, missing blobs, and service-auth behavior.
+Focused suites were also rerun during individual fixes, especially around labels, firehose, repo writes, moderation, missing blobs, service-auth behavior, local appview fallbacks, preference validation, handle resolution, and blob download headers.
 
 ## Reference Hierarchy
 
@@ -45,6 +45,11 @@ When the official runtime and upstream comments disagree, the runtime behavior w
 - Firehose tests must not assume the smallest possible CAR diff. The reference runtime guarantees normalized behavior, not a minimal encoding.
 - Label replay and cursor handling need exclusive replay semantics, proper future-cursor rejection, and forward progress across unhandled backlog events.
 - `com.atproto.repo.listMissingBlobs` needed a real implementation rather than an always-empty placeholder.
+- Deactivated accounts should still be able to establish and refresh sessions, but those responses must stay marked `active=false` with `status=deactivated`.
+- Local `app.bsky.*` emulation must be conservative: only synthesize owner-local feed/thread data when the PDS can answer authoritatively, and proxy upstream instead of inventing partial global state.
+- `app.bsky.actor.putPreferences` and `app.bsky.notification.putPreferencesV2` need shape validation; unvalidated merges are not a critical exploit here, but they are a real correctness and hardening issue.
+- `com.atproto.identity.resolveHandle` should reject malformed handles with `400 InvalidHandle`, not quietly treat them as misses.
+- `com.atproto.sync.getBlob` should ship the same download-hardening headers as the reference PDS (`X-Content-Type-Options`, `Content-Disposition`, `Content-Security-Policy`).
 
 ## Known Intentional Divergences
 
@@ -70,7 +75,7 @@ The current suite splits into three broad buckets:
 | --- | --- | --- |
 | `t/api-util.t` | audited local regression | helper semantics, cursor validation, service-auth helper behavior |
 | `t/app-routes.t` | local correctness/infrastructure | app route exposure and startup wiring smoke |
-| `t/app.t` | local correctness/infrastructure | application bootstrap and core route smoke |
+| `t/app.t` | audited local regression | application bootstrap plus malformed-handle rejection and startup hardening |
 | `t/auth-jwt.t` | local correctness/infrastructure | JWT signing and validation behavior |
 | `t/browser-smoke.t` | local correctness/infrastructure | optional browser-driven end-to-end wrapper |
 | `t/catalog.t` | local correctness/infrastructure | lexicon/catalog exposure smoke |
@@ -88,19 +93,19 @@ The current suite splits into three broad buckets:
 | `t/ipld-canonical.t` | local correctness/infrastructure | canonical IPLD encoding invariants |
 | `t/ipld-codecs.t` | local correctness/infrastructure | DAG-CBOR and codec coverage |
 | `t/labels.t` | audited local regression | label persistence, replay, negation, and cursor behavior |
-| `t/metrics.t` | local correctness/infrastructure | metrics endpoint and token-gating smoke |
+| `t/metrics.t` | audited local regression | metrics endpoint, token-gating smoke, and instrumentation contract for local appview behavior |
 | `t/moderation.t` | audited local regression | takedown visibility and moderation behavior |
 | `t/pds_smoke.t` | local correctness/infrastructure | broad local PDS smoke |
 | `t/plc-identity.t` | direct reference differential | PLC mock driven by official library semantics |
 | `t/reference-differential-plc.t` | direct reference differential | official runtime comparison in PLC mode |
 | `t/reference-differential.t` | direct reference differential | official runtime comparison in baseline mode |
-| `t/remote-handle-resolution.t` | local correctness/infrastructure | remote handle resolution behavior |
+| `t/remote-handle-resolution.t` | audited local regression | remote handle resolution behavior and invalid-handle rejection |
 | `t/repo-api.t` | audited local regression | record mutation and read semantics |
 | `t/repo-firehose-car.t` | audited local regression | repo commit CAR shape and firehose interactions |
 | `t/repo_formats.t` | audited local regression | direct repo wire-format and CAR expectations |
 | `t/server-auth.t` | direct reference differential | auth/session/service-auth behavior repeatedly compared to official runtime |
 | `t/service-proxy-local.t` | audited local regression | local appview fallback behavior |
-| `t/service-proxy.t` | local correctness/infrastructure | upstream service-proxy behavior |
+| `t/service-proxy.t` | audited local regression | upstream proxy behavior plus conservative local appview fallback and preference semantics |
 | `t/sqlite-binary.t` | local correctness/infrastructure | SQLite binary round-trip correctness |
 | `t/store-sqlite.t` | audited local regression | store-level session, invite, label, and repo persistence behavior |
 | `t/tid-repair.t` | local correctness/infrastructure | TID repair and recovery helpers |
@@ -124,6 +129,7 @@ If the goal becomes "audit all tests" in the strongest possible sense, the next 
 3. add a written mapping from each local-only suite to the protocol or product invariant it is meant to protect
 4. decide whether to tighten admin auth to reference semantics or document the bearer shortcut as a permanent extension
 5. move the testing-friendly email confirmation path behind an explicit smoke/dev switch instead of ambient behavior
+6. keep narrowing the local `ServiceProxy` surface until every locally answered `app.bsky.*` field is either authoritative or explicitly documented as a local-only extension
 
 ## Practical Reading Of The Current Status
 
