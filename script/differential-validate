@@ -560,6 +560,20 @@ for my $name (sort keys %server) {
     if $diff_account_did_method eq 'did:plc';
 }
 
+note('Creating secondary accounts for conflict checks');
+for my $name (sort keys %server) {
+  my $res = post_json($server{$name}{origin}, 'com.atproto.server.createAccount', {
+    handle   => $name eq 'reference' ? 'bob-ref.test' : 'bob-perl.test',
+    email    => $name eq 'reference' ? 'bob-ref@test.com' : 'bob-perl@test.com',
+    password => 'hunter22',
+  });
+  check($res->is_success, "$name secondary createAccount succeeds");
+  next unless $res->is_success;
+  my $json = $res->json || {};
+  $server{$name}{secondary_did}    = $json->{did};
+  $server{$name}{secondary_handle} = $json->{handle};
+}
+
 note('Comparing account password boundary semantics');
 for my $name (sort keys %server) {
   my $too_long_create = post_json($server{$name}{origin}, 'com.atproto.server.createAccount', {
@@ -610,6 +624,38 @@ if (!same_hash($server{reference}{password_boundaries}, $server{perlsky}{passwor
   fail_check('account password boundary and reset-email semantics match the official reference PDS');
 } else {
   pass('account password boundary and reset-email semantics match the official reference PDS');
+}
+
+note('Comparing handle conflict semantics');
+for my $name (sort keys %server) {
+  my $duplicate_identity_handle = post_json(
+    $server{$name}{origin},
+    'com.atproto.identity.updateHandle',
+    { handle => $server{$name}{secondary_handle} },
+    auth_header($server{$name}{access}),
+  );
+  my $duplicate_admin_handle = post_json(
+    $server{$name}{origin},
+    'com.atproto.admin.updateAccountHandle',
+    {
+      did    => $server{$name}{did},
+      handle => $server{$name}{secondary_handle},
+    },
+    admin_auth_header($server{$name}{admin_password}),
+  );
+
+  $server{$name}{handle_conflicts} = {
+    identity_update_dup => normalize_xrpc_error($duplicate_identity_handle),
+    admin_update_dup    => normalize_xrpc_error($duplicate_admin_handle),
+  };
+}
+
+if (!same_hash($server{reference}{handle_conflicts}, $server{perlsky}{handle_conflicts})) {
+  note('reference handle conflicts: ' . encode_json($server{reference}{handle_conflicts}));
+  note('perlsky handle conflicts: ' . encode_json($server{perlsky}{handle_conflicts}));
+  fail_check('handle conflict update semantics match the official reference PDS');
+} else {
+  pass('handle conflict update semantics match the official reference PDS');
 }
 
 note('Comparing resolveHandle');
