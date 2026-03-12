@@ -71,6 +71,12 @@ use ATProto::PDS::ServiceProxy;
     ];
   }
 
+  sub count_records_by_collection {
+    my ($self, $did, $collection) = @_;
+    $self->{count_records_by_collection_calls}{"$did|$collection"}++;
+    return $self->{count_records_by_collection}{"$did|$collection"} // 0;
+  }
+
   sub latest_event_seq {
     my ($self) = @_;
     $self->{latest_event_seq_calls}++;
@@ -329,6 +335,40 @@ is(
   $viewer->{followedBy},
   "at://did:plc:bob/app.bsky.graph.follow/follow-alice",
   'profile viewer includes the reciprocal follow URI',
+);
+
+my $remote_quote_embed = $proxy->_post_embed_view(
+  $c,
+  $store->{accounts_by_did}{$did},
+  {
+    embed => {
+      '$type' => 'app.bsky.embed.record',
+      record  => {
+        uri => 'at://did:plc:bob/app.bsky.feed.post/remote-post',
+        cid => 'bafyremote',
+      },
+    },
+  },
+);
+ok(!defined($remote_quote_embed), 'remote quoted records omit non-authoritative derived embeds');
+
+my $missing_local_quote_embed = $proxy->_post_embed_view(
+  $c,
+  $store->{accounts_by_did}{$did},
+  {
+    embed => {
+      '$type' => 'app.bsky.embed.record',
+      record  => {
+        uri => "at://$did/app.bsky.feed.post/missing-post",
+        cid => 'bafymissing',
+      },
+    },
+  },
+);
+is(
+  $missing_local_quote_embed->{record}{'$type'},
+  'app.bsky.embed.record#viewNotFound',
+  'missing local quoted records still render viewNotFound',
 );
 
 done_testing;

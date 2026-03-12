@@ -493,15 +493,40 @@ my $quoted_remote_uri = $t->tx->res->json->{uri};
 
 $t->get_ok("/xrpc/app.bsky.feed.getAuthorFeed?actor=$did&limit=10" => {
   Authorization => "Bearer $access",
-})->status_is(200)
-  ->json_is('/nsid' => 'app.bsky.feed.getAuthorFeed');
-ok($t->tx->res->json->{auth}, 'author feed proxies upstream when quoted remote records need non-local context');
+})->status_is(200);
+ok(!$t->tx->res->json->{auth}, 'author feed keeps local read-after-write behavior for quoted remote records');
+is($t->tx->res->json->{feed}[0]{post}{uri}, $quoted_remote_uri, 'quoted remote post stays visible in the local author feed');
+ok(!exists($t->tx->res->json->{feed}[0]{post}{embed}), 'quoted remote post omits a non-authoritative derived embed');
 
 $t->get_ok('/xrpc/app.bsky.feed.getPosts?uris=' . _uri_escape($quoted_remote_uri) => {
   Authorization => "Bearer $access",
 })->status_is(200)
-  ->json_is('/nsid' => 'app.bsky.feed.getPosts');
-ok($t->tx->res->json->{auth}, 'getPosts proxies upstream when quoted remote records need non-local context');
+  ->json_is('/posts/0/uri' => $quoted_remote_uri);
+ok(!$t->tx->res->json->{auth}, 'getPosts keeps local read-after-write behavior for quoted remote records');
+ok(!exists($t->tx->res->json->{posts}[0]{embed}), 'getPosts omits non-authoritative derived embeds for remote quotes');
+
+$t->post_ok('/xrpc/com.atproto.repo.createRecord' => {
+  Authorization => "Bearer $access",
+} => json => {
+  repo       => $did,
+  collection => 'app.bsky.feed.repost',
+  rkey       => 'repost-remote',
+  record     => {
+    '$type'   => 'app.bsky.feed.repost',
+    subject   => {
+      uri => 'at://did:plc:remote/app.bsky.feed.post/reposted-post',
+      cid => 'bafyremote-repost',
+    },
+    createdAt => '2026-03-10T18:00:30Z',
+  },
+})->status_is(200)
+  ->json_has('/uri');
+
+$t->get_ok("/xrpc/app.bsky.feed.getAuthorFeed?actor=$did&limit=10" => {
+  Authorization => "Bearer $access",
+})->status_is(200)
+  ->json_is('/nsid' => 'app.bsky.feed.getAuthorFeed');
+ok($t->tx->res->json->{auth}, 'author feed proxies upstream when repost records make the local feed incomplete');
 
 $t->get_ok('/xrpc/app.bsky.feed.getPostThread?uri=' . _uri_escape($post_uri) => {
   Authorization => "Bearer $access",

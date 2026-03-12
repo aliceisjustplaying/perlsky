@@ -40,6 +40,7 @@ sub _get_author_feed ($self, $c) {
   my $limit = $c->param('limit') // 50;
   $limit = 1 if $limit < 1;
   $limit = 100 if $limit > 100;
+  return undef if $c->store->count_records_by_collection($account->{did}, 'app.bsky.feed.repost');
 
   my $page = $c->store->list_records(
     $account->{did},
@@ -48,7 +49,6 @@ sub _get_author_feed ($self, $c) {
     cursor  => $c->param('cursor'),
     reverse => 1,
   );
-  return undef if grep { _post_requires_upstream($self, $c, $_) } @{ $page->{items} || [] };
   my $profile_value = $self->_profile_record_value($c, $account);
   my @feed = map {
     +{
@@ -66,7 +66,9 @@ sub _get_posts ($self, $c) {
   xrpc_error(405, 'MethodNotAllowed', 'app.bsky.feed.getPosts expects GET')
     unless $c->req->method eq 'GET';
 
-  my @uris = grep { defined($_) && length($_) } $c->every_param('uris');
+  my @uris = grep { defined($_) && length($_) }
+    map { ref($_) eq 'ARRAY' ? @$_ : $_ }
+    $c->every_param('uris');
   xrpc_error(400, 'InvalidRequest', 'uris is required') unless @uris;
 
   my @resolved;
@@ -81,7 +83,6 @@ sub _get_posts ($self, $c) {
     }
     return undef unless defined $resolved;
     my ($account, $row) = @$resolved;
-    return undef if _post_requires_upstream($self, $c, $row);
     my $canonical_uri = $self->_post_uri($account, $row);
     next if $seen_uri{$canonical_uri}++;
     push @resolved, $resolved;
@@ -155,7 +156,7 @@ sub _post_view ($self, $c, $account, $row, $profile_value = undef, $viewer = und
 }
 
 sub _thread_requires_upstream ($self, $c, $row) {
-  for my $uri ($self->_reply_parent_uri($row), $self->_quoted_uri($row->{value})) {
+  for my $uri ($self->_reply_parent_uri($row)) {
     next unless defined $uri && length $uri;
     my $resolved = eval { $self->_resolve_local_post_uri($c, $uri) };
     return 1 if !$resolved || $@;
@@ -413,9 +414,11 @@ sub _post_embed_view ($self, $c, $account, $value, $viewer = undef, $depth = 0) 
   }
 
   if ($type eq 'app.bsky.embed.record' && ref($embed->{record}) eq 'HASH') {
+    my $record = $self->_record_embed_view($c, $embed->{record}, $viewer, $depth);
+    return undef unless defined $record;
     return {
       '$type' => 'app.bsky.embed.record#view',
-      record  => $self->_record_embed_view($c, $embed->{record}, $viewer, $depth),
+      record  => $record,
     };
   }
 
@@ -446,12 +449,18 @@ sub _post_embed_view ($self, $c, $account, $value, $viewer = undef, $depth = 0) 
 
 sub _record_embed_view ($self, $c, $record_ref, $viewer = undef, $depth = 0) {
   my $uri = $record_ref->{uri} // q();
-  my $resolved = $self->_resolve_local_post_uri($c, $uri);
-  return {
-    '$type'   => 'app.bsky.embed.record#viewNotFound',
-    uri       => $uri,
-    notFound  => JSON::PP::true,
-  } unless $resolved;
+  my $resolved = eval { $self->_resolve_local_post_uri($c, $uri) };
+  if (my $err = $@) {
+    return {
+      '$type'   => 'app.bsky.embed.record#viewNotFound',
+      uri       => $uri,
+      notFound  => JSON::PP::true,
+    } if ref($err) eq 'HASH'
+      && ($err->{status} // 0) == 404
+      && ($err->{error} // q()) eq 'RecordNotFound';
+    die $err;
+  }
+  return undef unless $resolved;
 
   my ($account, $row) = @$resolved;
   my $profile_value = $self->_profile_record_value($c, $account);
