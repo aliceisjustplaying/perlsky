@@ -183,7 +183,14 @@ sub register_repo_handlers ($registry, $app) {
     my $car_bytes = $c->req->body // q();
     xrpc_error(400, 'InvalidRequest', 'Repo import requires a CAR payload')
       unless length $car_bytes;
-    $c->repo_manager->import_repo_car($account, $car_bytes);
+    eval {
+      $c->repo_manager->import_repo_car($account, $car_bytes);
+      1;
+    } or do {
+      my $err = $@;
+      die $err if ref($err) eq 'HASH';
+      xrpc_error(400, 'InvalidRepoImport', 'Repo import CAR was invalid');
+    };
     return {};
   });
 }

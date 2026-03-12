@@ -89,6 +89,18 @@ is(scalar @{ $t->tx->res->json->{records} || [] }, 2, 'repo contains the extra w
 $t->post_ok('/xrpc/com.atproto.repo.importRepo' => {
   Authorization => "Bearer $access",
   'Content-Type' => 'application/vnd.ipld.car',
+} => 'not-a-car')->status_is(400)
+  ->json_is('/error' => 'InvalidRepoImport');
+
+$t->get_ok('/xrpc/com.atproto.repo.listRecords' => form => {
+  repo       => $did,
+  collection => 'app.bsky.feed.post',
+})->status_is(200);
+is(scalar @{ $t->tx->res->json->{records} || [] }, 2, 'invalid import leaves repo state untouched');
+
+$t->post_ok('/xrpc/com.atproto.repo.importRepo' => {
+  Authorization => "Bearer $access",
+  'Content-Type' => 'application/vnd.ipld.car',
 } => $snapshot)->status_is(200);
 
 $t->get_ok('/xrpc/com.atproto.repo.listRecords' => form => {
@@ -101,5 +113,40 @@ is(scalar @$records, 1, 'importRepo restores the earlier repo snapshot');
 my ($restored) = grep { ($_->{uri} // q()) eq "at://$did/app.bsky.feed.post/before-import" } @$records;
 ok($restored, 'imported repo keeps the earlier record URI');
 is($restored->{value}{text}, 'state before import', 'imported repo restores the earlier record body');
+ok(
+  !(scalar grep { ($_->{uri} // q()) eq "at://$did/app.bsky.feed.post/after-import" } @$records),
+  'importRepo drops writes that happened after the imported snapshot',
+);
+
+my $disabled_tmp = tempdir(CLEANUP => 1);
+my $disabled_app = ATProto::PDS->new(
+  project_root => $root,
+  settings => {
+    base_url              => 'http://127.0.0.1:7755',
+    service_handle_domain => 'example.test',
+    service_did_method    => 'did:web',
+    accepting_imports     => 0,
+    jwt_secret            => 'import-disabled-secret',
+    admin_password        => 'admin-secret',
+    data_dir              => File::Spec->catdir($disabled_tmp, 'data'),
+    db_path               => File::Spec->catfile($disabled_tmp, 'perlsky.sqlite'),
+  },
+);
+my $disabled_t = Test::Mojo->new($disabled_app);
+
+$disabled_t->post_ok('/xrpc/com.atproto.server.createAccount' => json => {
+  handle   => 'carol.example.test',
+  email    => 'carol@example.test',
+  password => 'hunter22',
+})->status_is(200);
+
+my $disabled_access = $disabled_t->tx->res->json->{accessJwt};
+
+$disabled_t->post_ok('/xrpc/com.atproto.repo.importRepo' => {
+  Authorization => "Bearer $disabled_access",
+  'Content-Type' => 'application/vnd.ipld.car',
+} => 'x')->status_is(400)
+  ->json_is('/error' => 'InvalidRequest')
+  ->json_is('/message' => 'Service is not accepting repo imports');
 
 done_testing;
