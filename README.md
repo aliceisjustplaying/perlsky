@@ -33,12 +33,15 @@ Deployment and first-account setup:
 
 - Generic single-node deployment instructions live in `docs/DEPLOYMENT.md`.
 - The deployment guide includes a reverse-proxy layout, a sample `systemd` unit, validation commands, and a `createAccount` example for bootstrapping the first user.
+- `perlsky` now includes a built-in ATProto OAuth provider surface, so modern third-party clients that use the Bluesky OAuth flow can authenticate directly against your PDS without extra auth-server infrastructure.
+- The built-in provider publishes `/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server`, `/oauth/jwks`, `/oauth/par`, `/oauth/authorize`, `/oauth/token`, and `/oauth/revoke` from the same host as the PDS.
 - If `service_handle_domain` is `example.com`, submitting `handle: "alice"` to `com.atproto.server.createAccount` creates `alice.example.com`.
 - If `invite_code_required` is enabled, public signup is disabled until a valid invite code is supplied.
 - `com.atproto.server.createInviteCode` and `com.atproto.server.createInviteCodes` are admin-only by default. Set `self_service_invite_codes` to enable self-service invite minting for authenticated full-access sessions, limited to the caller's own account.
 - `script/perlsky-admin create-invite` can mint invite codes locally on the server without needing an existing user session.
 - The invite-only bootstrap flow is documented with copy-pasteable commands in `docs/DEPLOYMENT.md`.
 - Browser clients such as `bsky.app` can talk to `perlsky` directly because XRPC and DID-document responses include CORS headers and answer OPTIONS preflight requests.
+- OAuth clients such as Tangled can also discover and use `perlsky` directly as both the protected resource and authorization server, using PAR, PKCE, `private_key_jwt`, and DPoP as required by the ATProto OAuth profile.
 - Unknown `app.bsky.*` requests are proxied to `https://api.bsky.app` by default, and unknown `chat.bsky.*` requests are proxied to `https://api.bsky.chat` by default using per-account service-auth JWTs.
 - Set `bsky_appview_url` / `bsky_appview_did` or `chat_service_url` / `chat_service_did` in your config if you want different upstream services.
 

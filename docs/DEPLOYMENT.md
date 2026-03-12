@@ -82,6 +82,7 @@ Important fields:
 - `service_handle_domain`: the suffix used for local handles
 - `jwt_secret`: required; the server now refuses to start if it is missing or still set to the old `perlsky-dev-secret` fallback
 - `sentry_dsn`: optional; when set, perlsky reports unhandled XRPC exceptions to Sentry with request context and Perl stack frames
+- `base_url` also drives the built-in ATProto OAuth provider metadata and endpoints, so it must be the same public origin that third-party clients will use for login
 - If you want users like `alice.pds.example.com`, set `service_handle_domain` to `pds.example.com`, not `example.com`.
 - Public handle resolution for `alice.pds.example.com` also requires wildcard DNS for `*.pds.example.com` and a reverse proxy/TLS setup that will answer those subdomains.
 - `invite_code_required`: if true, `createAccount` requires a valid invite code
@@ -234,6 +235,9 @@ Then validate the public host:
 ```sh
 curl https://pds.example.com/_health
 curl https://pds.example.com/.well-known/did.json
+curl https://pds.example.com/.well-known/oauth-protected-resource
+curl https://pds.example.com/.well-known/oauth-authorization-server
+curl https://pds.example.com/oauth/jwks
 curl https://pds.example.com/xrpc/com.atproto.server.describeServer
 curl --resolve alice.pds.example.com:443:SERVER_IP https://alice.pds.example.com/.well-known/atproto-did
 ```
@@ -250,8 +254,13 @@ You should see:
 
 - a healthy `_health` response
 - a `did:web:pds.example.com` DID document
+- OAuth protected-resource metadata advertising the same host as the authorization server
+- OAuth authorization-server metadata advertising `private_key_jwt`, PAR, PKCE `S256`, DPoP-bound access tokens, and the local `/oauth/*` endpoints
+- a JWK set with at least one signing key from `/oauth/jwks`
 - `describeServer.availableUserDomains` matching `service_handle_domain`
 - a per-handle `/.well-known/atproto-did` response returning the account DID when queried on the handle host
+
+Modern third-party ATProto OAuth clients should now be able to discover and authenticate directly against your PDS. For example, a client like Tangled will start by fetching `/.well-known/oauth-protected-resource`, follow the advertised authorization-server metadata, submit a pushed authorization request, and then send the browser through `/oauth/authorize`.
 
 ## First Account
 
