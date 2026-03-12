@@ -83,10 +83,11 @@ my $client_metadata = {
     return undef;
   };
 
-  my $t = Test::Mojo->new(ATProto::PDS->new(
+  my $app = ATProto::PDS->new(
     project_root => $root,
     settings     => $config,
-  ));
+  );
+  my $t = Test::Mojo->new($app);
 
   $t->post_ok('/xrpc/com.atproto.server.createAccount' => json => {
     handle   => 'alice',
@@ -117,6 +118,9 @@ my $client_metadata = {
   $t->post_ok('/xrpc/com.atproto.server.requestEmailConfirmation' => _oauth_headers($email_manage->{access_token}, 'POST', $config->{base_url} . '/xrpc/com.atproto.server.requestEmailConfirmation') => json => {})
     ->status_is(200)
     ->json_is({});
+  $t->post_ok('/xrpc/com.atproto.server.requestEmailUpdate' => _oauth_headers($email_manage->{access_token}, 'POST', $config->{base_url} . '/xrpc/com.atproto.server.requestEmailUpdate') => json => {})
+    ->status_is(200)
+    ->json_is('/tokenRequired' => JSON::PP::true);
 
   $t->post_ok('/xrpc/com.atproto.repo.createRecord' => _oauth_headers($atproto_only->{access_token}, 'POST', $config->{base_url} . '/xrpc/com.atproto.repo.createRecord') => json => {
     repo       => $did,
@@ -235,6 +239,45 @@ my $client_metadata = {
     $config->{base_url} . '/xrpc/com.atproto.identity.updateHandle',
   ) => json => { handle => 'alice-renamed' })->status_is(200)
     ->json_is({});
+
+  $t->post_ok('/xrpc/com.atproto.identity.requestPlcOperationSignature' => _oauth_headers(
+    $identity_handle->{access_token},
+    'POST',
+    $config->{base_url} . '/xrpc/com.atproto.identity.requestPlcOperationSignature',
+  ) => json => {})->status_is(403)
+    ->json_like('/message' => qr/identity:\*/);
+
+  my $identity_all = _oauth_tokens_for_scope($t, $did, 'atproto identity:*');
+  $t->post_ok('/xrpc/com.atproto.identity.requestPlcOperationSignature' => _oauth_headers(
+    $identity_all->{access_token},
+    'POST',
+    $config->{base_url} . '/xrpc/com.atproto.identity.requestPlcOperationSignature',
+  ) => json => {})->status_is(200)
+    ->json_is({});
+
+  my $plc_token = $app->store->latest_action_token(
+    did     => $did,
+    purpose => 'plc_operation',
+  );
+  ok($plc_token && $plc_token->{token}, 'identity:* oauth token can request a PLC operation token');
+
+  $t->post_ok('/xrpc/com.atproto.identity.signPlcOperation' => _oauth_headers(
+    $identity_handle->{access_token},
+    'POST',
+    $config->{base_url} . '/xrpc/com.atproto.identity.signPlcOperation',
+  ) => json => {
+    token => $plc_token->{token},
+  })->status_is(403)
+    ->json_like('/message' => qr/identity:\*/);
+
+  $t->post_ok('/xrpc/com.atproto.identity.signPlcOperation' => _oauth_headers(
+    $identity_all->{access_token},
+    'POST',
+    $config->{base_url} . '/xrpc/com.atproto.identity.signPlcOperation',
+  ) => json => {
+    token => $plc_token->{token},
+  })->status_is(400)
+    ->json_is('/error' => 'InvalidRequest');
 }
 
 done_testing;

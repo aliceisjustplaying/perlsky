@@ -189,6 +189,8 @@ sub register_server_handlers ($registry, $app) {
     my $body = $c->req->json || {};
     my $account = find_account($c, $body->{identifier} // q());
     xrpc_error(401, 'AuthRequired', 'Invalid identifier or password') unless $account;
+    xrpc_error(401, 'AuthRequired', 'Invalid identifier or password')
+      if defined $account->{deleted_at};
     my $authn = verify_login_password($c, $account, $body->{password} // q());
     xrpc_error(401, 'AuthRequired', 'Invalid identifier or password') unless $authn;
     if (($authn->{kind} // q()) eq 'app_password' && is_repo_takedown($c, $account->{did})) {
@@ -383,15 +385,15 @@ sub register_server_handlers ($registry, $app) {
   $registry->register('com.atproto.server.requestPasswordReset', sub ($c, $endpoint) {
     my $body = $c->req->json || {};
     my $account = $c->store->get_account_by_email($body->{email} // q());
-    if ($account) {
-      issue_account_action_token(
-        $c,
-        $account,
-        purpose => ACTION_TOKEN_PASSWORD_RESET,
-        subject => 'perlsky password reset',
-        content => sub ($token) { "Use token $token->{token} to reset your password." },
-      );
-    }
+    xrpc_error(400, 'InvalidRequest', 'account does not have an email address')
+      unless $account && !defined($account->{deleted_at}) && defined($account->{email}) && length($account->{email});
+    issue_account_action_token(
+      $c,
+      $account,
+      purpose => ACTION_TOKEN_PASSWORD_RESET,
+      subject => 'perlsky password reset',
+      content => sub ($token) { "Use token $token->{token} to reset your password." },
+    );
     return {};
   });
 
@@ -541,15 +543,11 @@ sub register_server_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.server.deleteAccount', sub ($c, $endpoint) {
-    my ($claims, $account) = require_auth(
-      $c,
-      audience       => TOKEN_AUD_ACCESS,
-      required_scope => 'full',
-      disallow_oauth => 1,
-    );
     my $body = $c->req->json || {};
-    xrpc_error(401, 'AuthRequired', 'Token is not authorized for that repo')
-      unless ($claims->{sub} // q()) eq ($body->{did} // q()) && ($account->{did} // q()) eq ($body->{did} // q());
+    my $did = $body->{did} // q();
+    my $account = $c->store->get_account_by_did($did);
+    xrpc_error(400, 'InvalidRequest', 'account not found')
+      unless $account && !defined($account->{deleted_at});
     xrpc_error(401, 'AuthRequired', 'Invalid identifier or password')
       unless verify_account_password($c, $account, $body->{password} // q());
     my $token = _require_action_token($c,

@@ -11,6 +11,7 @@ use JSON::PP ();
 use ATProto::PDS::API::Helpers qw(find_account issue_account_action_token require_admin subject_key);
 use ATProto::PDS::API::Server qw(require_auth);
 use ATProto::PDS::API::Util qw(flatten_params iso8601 pump_event_subscription subscription_start_seq xrpc_error);
+use ATProto::PDS::Auth::OAuth qw(oauth_scope_has_atproto);
 use ATProto::PDS::Auth::Password qw(hash_password random_hex);
 use ATProto::PDS::Constants qw(
   ACTION_TOKEN_PLC_OPERATION
@@ -62,7 +63,7 @@ sub register_misc_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.identity.requestPlcOperationSignature', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth(
+    my ($claims, $account) = require_auth(
       $c,
       audience            => TOKEN_AUD_ACCESS,
       required_permission => {
@@ -70,6 +71,7 @@ sub register_misc_handlers ($registry, $app) {
         attr => '*',
       },
     );
+    _assert_full_non_oauth_access($claims);
     xrpc_error(400, 'InvalidRequest', 'account does not have an email address')
       unless defined($account->{email}) && length($account->{email});
     issue_account_action_token(
@@ -83,7 +85,7 @@ sub register_misc_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.identity.signPlcOperation', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth(
+    my ($claims, $account) = require_auth(
       $c,
       audience            => TOKEN_AUD_ACCESS,
       required_permission => {
@@ -91,6 +93,7 @@ sub register_misc_handlers ($registry, $app) {
         attr => '*',
       },
     );
+    _assert_full_non_oauth_access($claims);
     xrpc_error(400, 'InvalidRequest', 'PLC operations are only supported for did:plc accounts')
       unless is_plc_did($account->{did});
     my $body = $c->req->json || {};
@@ -347,6 +350,14 @@ sub _append_identity_event ($c, $account) {
     },
   );
   return;
+}
+
+sub _assert_full_non_oauth_access ($claims) {
+  return if ($claims->{typ} // q()) eq 'oauth_access';
+  return if oauth_scope_has_atproto($claims->{scope} // q());
+  xrpc_error(400, 'InvalidToken', 'Bad token scope')
+    unless (($claims->{scope} // TOKEN_AUD_ACCESS) eq TOKEN_AUD_ACCESS);
+  return 1;
 }
 
 sub _label_page ($page) {
