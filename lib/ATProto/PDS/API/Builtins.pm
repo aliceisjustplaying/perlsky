@@ -213,7 +213,7 @@ sub _did_doc_handle ($did_doc) {
 }
 
 sub _resolve_remote_did_doc ($c, $did) {
-  if (is_plc_did($did) && defined($c->app->settings->{plc_url}) && length($c->app->settings->{plc_url})) {
+  if (is_plc_did($did)) {
     my $did_doc = eval { refresh_plc_did_doc($c->app->settings, $did) };
     return $did_doc unless $@;
     return undef;

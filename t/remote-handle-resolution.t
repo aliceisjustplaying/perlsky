@@ -24,6 +24,7 @@ use Mojo::UserAgent;
 use Mojolicious;
 use Test::Mojo;
 use ATProto::PDS;
+use ATProto::PDS::Crypto::Secp256k1 qw(generate_keypair);
 
 my @mock_pids;
 END {
@@ -39,6 +40,9 @@ remove_tree($tmp) if -d $tmp;
 
 my $remote_handle = 'alice.mosphere.at';
 my $remote_did    = 'did:plc:pkktelaqretqiz2bddzzlv3t';
+my $remote_plc_handle = 'remote-plc.example.test';
+my $remote_plc_did    = 'did:plc:remoteplcdocument123456';
+my $remote_plc_keys   = generate_keypair();
 
 my $appview_app = Mojolicious->new;
 $appview_app->routes->get('/ready')->to(cb => sub {
@@ -64,6 +68,7 @@ $appview_app->routes->get('/xrpc/com.atproto.identity.resolveHandle')->to(cb => 
   my ($c) = @_;
   my $handle = lc($c->param('handle') // '');
   return $c->render(json => { did => $remote_did }) if $handle eq $remote_handle;
+  return $c->render(json => { did => $remote_plc_did }) if $handle eq $remote_plc_handle;
   $c->render(status => 404, json => {
     error   => 'HandleNotFound',
     message => "No DID found for handle $handle",
@@ -71,6 +76,29 @@ $appview_app->routes->get('/xrpc/com.atproto.identity.resolveHandle')->to(cb => 
 });
 
 my $appview_url = _start_mock_server($appview_app);
+my $plc_app = Mojolicious->new;
+$plc_app->routes->get('/ready')->to(cb => sub {
+  my ($c) = @_;
+  $c->render(text => 'ok');
+});
+$plc_app->routes->get('/*did/data')->to(cb => sub {
+  my ($c) = @_;
+  return $c->render(status => 404, json => { error => 'NotFound' })
+    unless ($c->param('did') // q()) eq $remote_plc_did;
+  $c->render(json => {
+    alsoKnownAs         => ["at://$remote_plc_handle"],
+    verificationMethods => {
+      atproto => $remote_plc_keys->{signing_key_did},
+    },
+    services => {
+      atproto_pds => {
+        type     => 'AtprotoPersonalDataServer',
+        endpoint => 'https://remote-plc.example.test',
+      },
+    },
+  });
+});
+my $plc_url = _start_mock_server($plc_app);
 my $remote_did_web = do {
   my $url = Mojo::URL->new($appview_url);
   'did:web:' . (($url->host_port // q()) =~ s/:/%3A/gr) . ':actor';
@@ -85,6 +113,7 @@ my $app = ATProto::PDS->new(
     jwt_secret            => 'remote-handle-secret',
     data_dir              => $tmp,
     db_path               => File::Spec->catfile($tmp, 'perlsky.sqlite'),
+    plc_url               => $plc_url,
     bsky_appview_url      => $appview_url,
   },
 );
@@ -109,6 +138,12 @@ $t->get_ok("/xrpc/com.atproto.identity.resolveDid?did=$remote_did_web")
   ->json_is('/didDoc/id' => $remote_did_web)
   ->json_is('/didDoc/service/0/serviceEndpoint' => 'https://actor.example.test');
 
+$t->get_ok("/xrpc/com.atproto.identity.resolveDid?did=$remote_plc_did")
+  ->status_is(200)
+  ->json_is('/didDoc/id' => $remote_plc_did)
+  ->json_is('/didDoc/alsoKnownAs/0' => "at://$remote_plc_handle")
+  ->json_is('/didDoc/service/0/serviceEndpoint' => 'https://remote-plc.example.test');
+
 {
   no warnings 'redefine';
   local *ATProto::PDS::Identity::_resolve_handle_dns = sub {
@@ -129,6 +164,18 @@ $t->get_ok("/xrpc/com.atproto.identity.resolveDid?did=$remote_did_web")
     ->json_is('/did' => $remote_did_web)
     ->json_is('/handle' => 'actor.example.test')
     ->json_is('/didDoc/id' => $remote_did_web);
+
+  $t->get_ok("/xrpc/com.atproto.identity.resolveIdentity?identifier=$remote_plc_did")
+    ->status_is(200)
+    ->json_is('/did' => $remote_plc_did)
+    ->json_is('/handle' => $remote_plc_handle)
+    ->json_is('/didDoc/id' => $remote_plc_did);
+
+  $t->get_ok("/xrpc/com.atproto.identity.resolveIdentity?identifier=$remote_plc_handle")
+    ->status_is(200)
+    ->json_is('/did' => $remote_plc_did)
+    ->json_is('/handle' => $remote_plc_handle)
+    ->json_is('/didDoc/id' => $remote_plc_did);
 }
 
 {
