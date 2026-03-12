@@ -46,6 +46,14 @@ use ATProto::PDS::Test::Differential::HTTP qw(
   post_json
 );
 
+sub normalize_swap_message ($message) {
+  return 'record-at-cid' if ($message // q()) =~ /\ARecord was at b/i;
+  return 'record-at-null' if ($message // q()) eq 'Record was at null';
+  return 'commit-at-cid' if ($message // q()) =~ /\ACommit was at b/i;
+  return 'commit-at-null' if ($message // q()) eq 'Commit was at null';
+  return $message // q();
+}
+
 my $root = File::Spec->rel2abs(File::Spec->catdir(dirname(__FILE__), '..'));
 my $tmp  = tempdir(CLEANUP => 1);
 my @children;
@@ -828,12 +836,85 @@ for my $name (sort keys %server) {
     created_record_reads => $created_record->is_success ? 1 : 0,
     created_text_ok      => (($created_record->json || {})->{value}{text} // q()) =~ /^put create validation / ? 1 : 0,
   };
+  $server{$name}{updated_record_cid} = ($update_res->json || {})->{cid};
 }
 
 check(
   same_hash($server{reference}{put_record}, $server{perlsky}{put_record}),
   'putRecord create-or-update semantics match the official reference PDS',
 );
+
+note('Comparing repo write swap preconditions');
+for my $name (sort keys %server) {
+  my $put_swap_commit = post_json($server{$name}{origin}, 'com.atproto.repo.putRecord', {
+    repo       => $server{$name}{did},
+    collection => 'app.bsky.feed.post',
+    rkey       => 'diffpost',
+    swapCommit => 'bafyreifakeheadmismatch',
+    record     => {
+      '$type'   => 'app.bsky.feed.post',
+      text      => "put swapCommit mismatch for $name",
+      createdAt => '2026-03-11T00:00:02Z',
+    },
+  }, auth_header($server{$name}{access}));
+
+  my $put_swap_record = post_json($server{$name}{origin}, 'com.atproto.repo.putRecord', {
+    repo       => $server{$name}{did},
+    collection => 'app.bsky.feed.post',
+    rkey       => 'diffpost',
+    swapRecord => 'bafyreifakecidmismatch',
+    record     => {
+      '$type'   => 'app.bsky.feed.post',
+      text      => "put swapRecord mismatch for $name",
+      createdAt => '2026-03-11T00:00:03Z',
+    },
+  }, auth_header($server{$name}{access}));
+
+  my $delete_swap_commit = post_json($server{$name}{origin}, 'com.atproto.repo.deleteRecord', {
+    repo       => $server{$name}{did},
+    collection => 'app.bsky.feed.post',
+    rkey       => 'diffpost',
+    swapCommit => 'bafyreifakeheadmismatch',
+  }, auth_header($server{$name}{access}));
+
+  my $delete_swap_record = post_json($server{$name}{origin}, 'com.atproto.repo.deleteRecord', {
+    repo       => $server{$name}{did},
+    collection => 'app.bsky.feed.post',
+    rkey       => 'diffpost',
+    swapRecord => $server{$name}{record_cid},
+  }, auth_header($server{$name}{access}));
+
+  $server{$name}{swap_preconditions} = {
+    put_swap_commit => {
+      status  => $put_swap_commit->code // 0,
+      error   => ($put_swap_commit->json || {})->{error} // q(),
+      message => normalize_swap_message(($put_swap_commit->json || {})->{message}),
+    },
+    put_swap_record => {
+      status  => $put_swap_record->code // 0,
+      error   => ($put_swap_record->json || {})->{error} // q(),
+      message => normalize_swap_message(($put_swap_record->json || {})->{message}),
+    },
+    delete_swap_commit => {
+      status  => $delete_swap_commit->code // 0,
+      error   => ($delete_swap_commit->json || {})->{error} // q(),
+      message => normalize_swap_message(($delete_swap_commit->json || {})->{message}),
+    },
+    delete_swap_record => {
+      status  => $delete_swap_record->code // 0,
+      error   => ($delete_swap_record->json || {})->{error} // q(),
+      message => normalize_swap_message(($delete_swap_record->json || {})->{message}),
+    },
+  };
+}
+
+if (!same_hash($server{reference}{swap_preconditions}, $server{perlsky}{swap_preconditions})) {
+  note('reference swap preconditions: ' . encode_json($server{reference}{swap_preconditions}));
+  note('perlsky swap preconditions: ' . encode_json($server{perlsky}{swap_preconditions}));
+  fail_check('repo write swap preconditions match the official reference PDS');
+} else {
+  pass('repo write swap preconditions match the official reference PDS');
+}
 
 note('Comparing moderation takedown behavior');
 for my $name (sort keys %server) {
@@ -1318,15 +1399,18 @@ for my $name (sort keys %server) {
   my $blob_cid = $blob->{ref}{'$link'};
   $server{$name}{list_blobs_since} = {
     ok                 => $res->is_success ? 1 : 0,
-    returns_blob       => grep { $_ eq $blob_cid } @{ $json->{cids} || [] } ? 1 : 0,
+    returns_blob       => (scalar grep { $_ eq $blob_cid } @{ $json->{cids} || [] }) ? 1 : 0,
     cursor_matches_tail => (($json->{cursor} // q()) eq (($json->{cids} || [])->[-1] // q())) ? 1 : 0,
   };
 }
 
-check(
-  same_hash($server{reference}{list_blobs_since}, $server{perlsky}{list_blobs_since}),
-  'listBlobs since semantics match the official reference PDS',
-);
+if (!same_hash($server{reference}{list_blobs_since}, $server{perlsky}{list_blobs_since})) {
+  note('reference listBlobs since: ' . encode_json($server{reference}{list_blobs_since}));
+  note('perlsky listBlobs since: ' . encode_json($server{perlsky}{list_blobs_since}));
+  fail_check('listBlobs since semantics match the official reference PDS');
+} else {
+  pass('listBlobs since semantics match the official reference PDS');
+}
 
 note('Comparing listMissingBlobs empty-state semantics');
 for my $name (sort keys %server) {

@@ -284,6 +284,7 @@ sub _proxy_remote_get_record ($c) {
 }
 
 sub _apply_single_write ($c, $body, $write, %args) {
+  _assert_optional_cid_string($body, 'swapCommit');
   my ($claims, $account) = _require_repo_owner($c, $body->{repo});
   _assert_oauth_write_permissions($claims, [$write]);
   my $commit = $c->repo_manager->apply_writes(
@@ -305,6 +306,8 @@ sub _apply_single_write ($c, $body, $write, %args) {
 }
 
 sub _put_record ($c, $body) {
+  _assert_optional_cid_string($body, 'swapCommit');
+  _assert_optional_cid_string($body, 'swapRecord');
   my ($claims, $account) = _require_repo_owner($c, $body->{repo});
   my $did = $account->{did};
   my $collection = $body->{collection};
@@ -355,6 +358,8 @@ sub _put_record ($c, $body) {
 }
 
 sub _delete_record ($c, $body) {
+  _assert_optional_cid_string($body, 'swapCommit');
+  _assert_optional_cid_string($body, 'swapRecord');
   my ($claims, $account) = _require_repo_owner($c, $body->{repo});
   my $current = $c->store->get_record($account->{did}, $body->{collection}, $body->{rkey});
   return {} unless $current;
@@ -527,6 +532,15 @@ sub _record_blob_cids ($value) {
     return @found;
   }
   return ();
+}
+
+sub _assert_optional_cid_string ($body, $field) {
+  return unless exists $body->{$field};
+  my $value = $body->{$field};
+  return unless defined $value && length $value;
+  eval { ATProto::PDS::Repo::CID->from_string($value) };
+  return unless $@;
+  xrpc_error(400, 'InvalidRequest', "Input/$field must be a cid string");
 }
 
 sub _normalize_apply_writes_input ($write) {

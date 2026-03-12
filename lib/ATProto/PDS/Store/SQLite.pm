@@ -805,7 +805,12 @@ sub list_blobs_by_did ($self, $did, %args) {
   if (defined $cursor && length $cursor) {
     @rows = grep { $_->{cid} gt $cursor } @rows;
   }
-  return _paginate(\@rows, $limit, 'cid');
+  my @items = @rows;
+  splice @items, $limit if @items > $limit;
+  return {
+    items  => \@items,
+    cursor => @items ? $items[-1]{cid} : undef,
+  };
 }
 
 sub count_blobs_by_did ($self, $did) {

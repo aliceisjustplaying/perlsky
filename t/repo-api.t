@@ -116,6 +116,7 @@ $t->post_ok('/xrpc/com.atproto.repo.createRecord' => { Authorization => "Bearer 
   },
 })->status_is(200)
   ->json_like('/cid' => qr/\Ab/);
+my $first_post_cid = $t->tx->res->json->{cid};
 
 $t->post_ok('/xrpc/com.atproto.repo.createRecord' => { Authorization => "Bearer $access" } => json => {
   repo       => $did,
@@ -179,7 +180,7 @@ $t->post_ok('/xrpc/com.atproto.repo.putRecord' => { Authorization => "Bearer $ac
   repo       => $did,
   collection => 'app.bsky.feed.post',
   rkey       => 'first-post',
-  swapCommit => 'bafyreifakeheadmismatch',
+  swapCommit => $first_post_cid,
   record     => {
     '$type'   => 'app.bsky.feed.post',
     text      => 'swapCommit mismatch should fail',
@@ -187,6 +188,20 @@ $t->post_ok('/xrpc/com.atproto.repo.putRecord' => { Authorization => "Bearer $ac
   },
 })->status_is(400)
   ->json_is('/error' => 'InvalidSwap');
+
+$t->post_ok('/xrpc/com.atproto.repo.putRecord' => { Authorization => "Bearer $access" } => json => {
+  repo       => $did,
+  collection => 'app.bsky.feed.post',
+  rkey       => 'first-post',
+  swapCommit => 'not-a-cid',
+  record     => {
+    '$type'   => 'app.bsky.feed.post',
+    text      => 'swapCommit syntax should fail',
+    createdAt => '2026-03-10T00:02:16Z',
+  },
+})->status_is(400)
+  ->json_is('/error' => 'InvalidRequest')
+  ->json_like('/message' => qr{Input/swapCommit must be a cid string});
 
 $t->post_ok('/xrpc/com.atproto.repo.putRecord' => { Authorization => "Bearer $access" } => json => {
   repo       => $did,
@@ -225,7 +240,7 @@ $t->post_ok('/xrpc/com.atproto.repo.putRecord' => { Authorization => "Bearer $ac
   repo       => $did,
   collection => 'app.bsky.feed.post',
   rkey       => 'first-post',
-  swapRecord => 'bafyreifakecidmismatch',
+  swapRecord => $first_post_cid,
   record     => {
     '$type'   => 'app.bsky.feed.post',
     text      => 'swap mismatch should fail',
@@ -233,6 +248,20 @@ $t->post_ok('/xrpc/com.atproto.repo.putRecord' => { Authorization => "Bearer $ac
   },
 })->status_is(400)
   ->json_is('/error' => 'InvalidSwap');
+
+$t->post_ok('/xrpc/com.atproto.repo.putRecord' => { Authorization => "Bearer $access" } => json => {
+  repo       => $did,
+  collection => 'app.bsky.feed.post',
+  rkey       => 'first-post',
+  swapRecord => 'not-a-cid',
+  record     => {
+    '$type'   => 'app.bsky.feed.post',
+    text      => 'swapRecord syntax should fail',
+    createdAt => '2026-03-10T00:03:01Z',
+  },
+})->status_is(400)
+  ->json_is('/error' => 'InvalidRequest')
+  ->json_like('/message' => qr{Input/swapRecord must be a cid string});
 
 $t->post_ok('/xrpc/com.atproto.repo.putRecord' => { Authorization => "Bearer $access" } => json => {
   repo       => $did,
@@ -359,6 +388,24 @@ $t->get_ok("/xrpc/com.atproto.sync.getCheckout?did=$did")
 $t->get_ok("/xrpc/com.atproto.sync.getHead?did=$did")
   ->status_is(200)
   ->json_like('/root' => qr/\Ab/);
+
+$t->post_ok('/xrpc/com.atproto.repo.deleteRecord' => { Authorization => "Bearer $access" } => json => {
+  repo       => $did,
+  collection => 'app.bsky.feed.post',
+  rkey       => 'first-post',
+  swapCommit => 'not-a-cid',
+})->status_is(400)
+  ->json_is('/error' => 'InvalidRequest')
+  ->json_like('/message' => qr{Input/swapCommit must be a cid string});
+
+$t->post_ok('/xrpc/com.atproto.repo.deleteRecord' => { Authorization => "Bearer $access" } => json => {
+  repo       => $did,
+  collection => 'app.bsky.feed.post',
+  rkey       => 'first-post',
+  swapRecord => 'not-a-cid',
+})->status_is(400)
+  ->json_is('/error' => 'InvalidRequest')
+  ->json_like('/message' => qr{Input/swapRecord must be a cid string});
 
 $t->post_ok('/xrpc/com.atproto.repo.deleteRecord' => { Authorization => "Bearer $access" } => json => {
   repo       => $did,

@@ -63,7 +63,7 @@ sub apply_writes ($self, $account, $writes, %opts) {
     die {
       status  => 400,
       error   => 'InvalidSwap',
-      message => 'swapCommit did not match the current repo head',
+      message => 'Commit was at ' . (defined($current) ? $current : 'null'),
     } unless defined $current && $current eq $opts{swap_commit};
   }
 
@@ -97,19 +97,19 @@ sub apply_writes ($self, $account, $writes, %opts) {
       die {
         status  => 400,
         error   => 'InvalidSwap',
-        message => 'swapRecord did not match the current record',
+        message => 'Record was at ' . (defined($current_cid) ? $current_cid : 'null'),
       } if $action eq 'create' && defined $swap_record;
       die {
         status  => 400,
         error   => 'InvalidSwap',
-        message => 'swapRecord did not match the current record',
+        message => 'Record was at ' . (defined($current_cid) ? $current_cid : 'null'),
       } if ($action eq 'update' || $action eq 'delete') && !defined $swap_record;
       my $mismatch = (defined($current_cid) || defined($swap_record))
         && (!defined($current_cid) || !defined($swap_record) || $current_cid ne $swap_record);
       die {
         status  => 400,
         error   => 'InvalidSwap',
-        message => 'swapRecord did not match the current record',
+        message => 'Record was at ' . (defined($current_cid) ? $current_cid : 'null'),
       } if $mismatch;
     }
 

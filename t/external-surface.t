@@ -191,7 +191,7 @@ $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.listBlobs')->query(
   limit => 1,
 ))->status_is(200)
   ->json_is('/cids/0' => $sorted_blob_cids[0])
-  ->json_is('/cursor' => undef);
+  ->json_is('/cursor' => $sorted_blob_cids[0]);
 
 $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.listBlobs')->query(
   did    => $did,
