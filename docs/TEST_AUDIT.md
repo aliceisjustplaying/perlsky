@@ -86,11 +86,11 @@ The current suite splits into three broad buckets:
 | `t/crypto-interop.t` | direct reference differential | pinned upstream crypto fixture coverage |
 | `t/email-confirmation.t` | audited local regression | intentionally testing-friendly email flow |
 | `t/event-stream.t` | audited local regression | wire-format, malformed frame, and event decoding coverage |
-| `t/extended-api.t` | audited local regression | broad XRPC behavior including invites and moderation-adjacent flows |
-| `t/external-surface.t` | audited local regression | external repo/account surface including missing-blob behavior; still mixes surface inventory with conformance assertions and should stay documented that way |
+| `t/extended-api.t` | audited local regression | broad XRPC behavior including invites and moderation-adjacent flows; still intentionally mixes conformance-ish happy paths with local-policy coverage |
+| `t/external-surface.t` | audited local regression | external repo/account surface including missing-blob behavior; intentionally broad, with order-insensitive assertions for label presence rather than brittle label ordering |
 | `t/firehose.t` | audited local regression | repo subscription lifecycle, cursor, and CAR behavior |
 | `t/identity.t` | local correctness/infrastructure | handle and DID identity flow coverage |
-| `t/import-repo.t` | audited local regression | import/snapshot restore behavior, including perlsky's intentionally tolerant malformed-record import semantics |
+| `t/import-repo.t` | audited local regression | import/snapshot restore behavior, including perlsky's intentionally tolerant malformed-record import semantics and explicit rollback to the imported snapshot |
 | `t/invite-gating.t` | audited local regression | self-service invite flag behavior |
 | `t/ipld-canonical.t` | local correctness/infrastructure | canonical IPLD encoding invariants |
 | `t/ipld-codecs.t` | local correctness/infrastructure | DAG-CBOR and codec coverage |
@@ -135,7 +135,7 @@ If the goal becomes "audit all tests" in the strongest possible sense, the next 
 2. extend `script/differential-validate` where automation is cheap and high value
 3. add a written mapping from each local-only suite to the protocol or product invariant it is meant to protect
 4. decide whether to tighten admin auth to reference semantics or document the bearer shortcut as a permanent extension
-5. move the testing-friendly email confirmation path behind an explicit smoke/dev switch instead of ambient behavior
+5. keep local testing-only toggles, like the email-confirmation bypass, pinned in focused suites instead of letting broad mixed suites depend on them implicitly
 6. keep narrowing the local `ServiceProxy` surface until every locally answered `app.bsky.*` field is either authoritative or explicitly documented as a local-only extension
 7. keep documenting broad suites like `t/extended-api.t`, `t/external-surface.t`, and `t/import-repo.t` as mixed conformance-plus-product coverage rather than over-claiming that every assertion is a pure reference check
 

@@ -271,12 +271,18 @@ $t->post_ok('/xrpc/com.atproto.admin.updateSubjectStatus' => {
 
 $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.label.queryLabels')->query(
   uriPatterns => "at://$did*",
-))->status_is(200)
-  ->json_is('/labels/0/val', '!hide');
+))->status_is(200);
+ok(
+  _find_label($t->tx->res->json->{labels}, val => '!hide'),
+  'queryLabels includes the takedown label',
+);
 
 $t->get_ok('/xrpc/com.atproto.temp.fetchLabels?limit=10')
-  ->status_is(200)
-  ->json_is('/labels/0/val', '!hide');
+  ->status_is(200);
+ok(
+  _find_label($t->tx->res->json->{labels}, val => '!hide'),
+  'fetchLabels includes the takedown label',
+);
 
 $t->post_ok('/xrpc/com.atproto.admin.updateSubjectStatus' => {
   Authorization => $admin_auth,
@@ -287,14 +293,18 @@ $t->post_ok('/xrpc/com.atproto.admin.updateSubjectStatus' => {
 
 $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.label.queryLabels')->query(
   uriPatterns => "at://$did*",
-))->status_is(200)
-  ->json_is('/labels/0/val', '!hide')
-  ->json_is('/labels/0/neg', JSON::PP::true);
+))->status_is(200);
+ok(
+  _find_label($t->tx->res->json->{labels}, val => '!hide', neg => JSON::PP::true),
+  'queryLabels includes the negated takedown label',
+);
 
 $t->get_ok('/xrpc/com.atproto.temp.fetchLabels?limit=10')
-  ->status_is(200)
-  ->json_is('/labels/0/val', '!hide')
-  ->json_is('/labels/0/neg', JSON::PP::true);
+  ->status_is(200);
+ok(
+  _find_label($t->tx->res->json->{labels}, val => '!hide', neg => JSON::PP::true),
+  'fetchLabels includes the negated takedown label',
+);
 
 $t->post_ok('/xrpc/com.atproto.sync.requestCrawl' => json => {
   hostname => 'relay.example.test',
@@ -310,3 +320,19 @@ $t->get_ok(Mojo::URL->new('/xrpc/com.atproto.sync.getHostStatus')->query(
   ->json_is('/hostname', 'relay.example.test');
 
 done_testing;
+
+sub _find_label {
+  my ($labels, %expected) = @_;
+  return 0 unless ref($labels) eq 'ARRAY';
+  for my $label (@$labels) {
+    next unless ref($label) eq 'HASH';
+    my $matches = 1;
+    for my $key (keys %expected) {
+      next if defined($label->{$key}) && "$label->{$key}" eq "$expected{$key}";
+      $matches = 0;
+      last;
+    }
+    return 1 if $matches;
+  }
+  return 0;
+}
