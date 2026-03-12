@@ -10,6 +10,7 @@ use Mojo::Parameters;
 use Mojo::Util qw(url_unescape);
 
 our @EXPORT_OK = qw(
+  oauth_expand_scope
   oauth_normalize_scope
   oauth_scope_allows
   oauth_scope_allows_permission
@@ -39,6 +40,36 @@ sub oauth_normalize_scope ($scope) {
 
 sub oauth_scope_has_atproto ($scope) {
   return _parse_scope($scope)->{static}{atproto} ? 1 : 0;
+}
+
+sub oauth_expand_scope ($scope, $resolver) {
+  my $normalized = oauth_normalize_scope($scope);
+  return undef unless defined $normalized;
+  return $normalized unless $normalized =~ /\binclude:/;
+  return undef unless ref($resolver) eq 'CODE';
+
+  my %seen;
+  my @expanded;
+  for my $token (grep { length } split /\s+/, $normalized) {
+    my $include = _include_scope_from_token($token);
+    if ($include) {
+      my $scopes = $resolver->($include);
+      return undef unless ref($scopes) eq 'ARRAY';
+      for my $scope_token (@$scopes) {
+        my $normalized_scope = _normalize_scope_token($scope_token);
+        return undef unless defined $normalized_scope;
+        return undef if _include_scope_from_token($normalized_scope);
+        next if $seen{$normalized_scope}++;
+        push @expanded, $normalized_scope;
+      }
+      next;
+    }
+
+    next if $seen{$token}++;
+    push @expanded, $token;
+  }
+
+  return join ' ', sort @expanded;
 }
 
 sub oauth_scope_allows ($scope, $required_scope) {
@@ -95,6 +126,10 @@ sub _normalize_scope_token ($token) {
     my $parsed = _parse_identity_scope($positional, $params) or return undef;
     return _format_identity_scope($parsed);
   }
+  if ($prefix eq 'include') {
+    my $parsed = _parse_include_scope($positional, $params) or return undef;
+    return _format_include_scope($parsed);
+  }
   if ($prefix eq 'repo') {
     my $parsed = _parse_repo_scope($positional, $params) or return undef;
     return _format_repo_scope($parsed);
@@ -115,6 +150,7 @@ sub _parse_scope ($scope) {
     static   => {},
     account  => [],
     blob     => [],
+    include  => [],
     identity => [],
     repo     => [],
     rpc      => [],
@@ -142,6 +178,11 @@ sub _parse_scope ($scope) {
     if ($prefix eq 'blob') {
       my $entry = _parse_blob_scope($positional, $params);
       push @{ $parsed->{blob} }, $entry if $entry;
+      next;
+    }
+    if ($prefix eq 'include') {
+      my $entry = _parse_include_scope($positional, $params);
+      push @{ $parsed->{include} }, $entry if $entry;
       next;
     }
     if ($prefix eq 'identity') {
@@ -242,6 +283,18 @@ sub _parse_identity_scope ($positional, $params) {
   return unless _allowed_params($params);
   return {
     attr => $positional,
+  };
+}
+
+sub _parse_include_scope ($positional, $params) {
+  return unless defined $positional && length $positional;
+  return unless _is_nsid($positional);
+  return unless _allowed_params($params, 'aud');
+  my $aud = _single_param($params, 'aud');
+  return unless !defined($aud) || _is_atproto_audience($aud);
+  return {
+    nsid => $positional,
+    (defined($aud) ? (aud => $aud) : ()),
   };
 }
 
@@ -442,6 +495,14 @@ sub _format_identity_scope ($parsed) {
   return "identity:$parsed->{attr}";
 }
 
+sub _format_include_scope ($parsed) {
+  my $scope = "include:$parsed->{nsid}";
+  return $scope unless defined $parsed->{aud} && length $parsed->{aud};
+  my $params = Mojo::Parameters->new;
+  $params->append(aud => $parsed->{aud});
+  return $scope . '?' . $params->to_string;
+}
+
 sub _format_repo_scope ($parsed) {
   my $scope = @{ $parsed->{collection} } == 1
     ? 'repo:' . $parsed->{collection}[0]
@@ -492,6 +553,12 @@ sub _is_nsid ($value) {
   return $value =~ /\A[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)+\z/ ? 1 : 0;
 }
 
+sub _is_atproto_audience ($value) {
+  return 0 unless defined($value) && length($value);
+  return 0 if $value =~ /\s/;
+  return $value =~ /\Adid:[a-z0-9]+:[^?#\s]+#[A-Za-z0-9._:-]+\z/i ? 1 : 0;
+}
+
 sub _is_accept ($value) {
   return 0 unless defined($value) && length($value);
   return 1 if $value eq '*/*';
@@ -515,6 +582,12 @@ sub _matches_any_accept ($accepts, $mime) {
     return 1 if $accept eq $mime;
   }
   return 0;
+}
+
+sub _include_scope_from_token ($token) {
+  my ($prefix, $positional, $params) = _scope_syntax($token);
+  return undef unless defined $prefix && $prefix eq 'include';
+  return _parse_include_scope($positional, $params);
 }
 
 1;

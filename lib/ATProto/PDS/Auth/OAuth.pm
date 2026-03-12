@@ -19,6 +19,7 @@ use ATProto::PDS::API::Helpers qw(find_account verify_login_password);
 use ATProto::PDS::API::Util qw(xrpc_error);
 use ATProto::PDS::Auth::JWT qw(decode_jwt encode_jwt);
 use ATProto::PDS::Auth::OAuthScope qw(
+  oauth_expand_scope
   oauth_normalize_scope
   oauth_scope_allows
   oauth_scope_has_atproto
@@ -31,6 +32,7 @@ use ATProto::PDS::Moderation qw(assert_login_allowed is_repo_takedown);
 use ATProto::PDS::Util::BaseX qw(base64url_decode base64url_encode);
 
 our @EXPORT_OK = qw(
+  oauth_expand_scope
   oauth_normalize_scope
   oauth_scope_allows
   oauth_scope_allows_permission
@@ -129,6 +131,8 @@ sub pushed_authorization_request ($self, $c) {
     unless defined $scope;
   return _oauth_json_error($c, 400, 'invalid_scope', 'scope must include atproto')
     unless oauth_scope_has_atproto($scope);
+  my $compiled_scope = eval { $self->_compile_token_scope($c, $scope) };
+  return _oauth_json_error($c, 400, 'invalid_scope', "$@") if $@;
   return _oauth_json_error($c, 400, 'invalid_request', 'redirect_uri is required')
     unless length $redirect_uri;
   return _oauth_json_error($c, 400, 'invalid_request', 'redirect_uri is not registered')
@@ -151,7 +155,7 @@ sub pushed_authorization_request ($self, $c) {
     client_name      => $client->{client_name},
     client_uri       => $client->{client_uri},
     redirect_uri     => $redirect_uri,
-    scope            => $scope,
+    scope            => $compiled_scope,
     state            => $body->{state},
     nonce            => $body->{nonce},
     login_hint       => $body->{login_hint},
@@ -693,6 +697,166 @@ sub _request_url_without_query ($self, $c) {
 sub _issuer ($self) {
   my $base = $self->settings->{base_url} // 'http://127.0.0.1:7755';
   return Mojo::URL->new($base)->path('')->query(undef)->fragment(undef)->to_string =~ s{/\z}{}r;
+}
+
+sub _compile_token_scope ($self, $c, $scope) {
+  my $expanded = oauth_expand_scope($scope, sub ($include) {
+    return $self->_permission_scopes_for_include($c, $include);
+  });
+  die 'scope contains unsupported values' unless defined $expanded;
+  return $expanded;
+}
+
+sub _permission_scopes_for_include ($self, $c, $include) {
+  my $permission_set = $self->_load_permission_set($c, $include->{nsid});
+  die 'unable to retrieve permission sets'
+    unless ref($permission_set) eq 'HASH';
+
+  my $authority = _include_authority($include->{nsid});
+  die 'unable to retrieve permission sets'
+    unless defined $authority && length $authority;
+
+  my @scopes;
+  for my $permission (@{ $permission_set->{permissions} || [] }) {
+    next unless ref($permission) eq 'HASH';
+    next unless ($permission->{type} // q()) eq 'permission';
+    if (($permission->{resource} // q()) eq 'repo') {
+      my $scope = _repo_scope_from_permission($authority, $permission);
+      push @scopes, $scope if defined $scope;
+      next;
+    }
+    if (($permission->{resource} // q()) eq 'rpc') {
+      my $scope = _rpc_scope_from_permission($authority, $include, $permission);
+      push @scopes, $scope if defined $scope;
+      next;
+    }
+  }
+
+  return \@scopes;
+}
+
+sub _load_permission_set ($self, $c, $nsid) {
+  state %cache;
+  return $cache{$nsid} if exists $cache{$nsid};
+
+  my $local = $c->app->lexicons->get($nsid);
+  if (_is_permission_set_lexicon($local, $nsid)) {
+    return $cache{$nsid} = $local->{defs}{main};
+  }
+
+  my $authority_handle = _nsid_authority_handle($nsid);
+  return $cache{$nsid} = undef unless defined $authority_handle && length $authority_handle;
+
+  my $appview_url = $c->config_value('bsky_appview_url', 'https://api.bsky.app');
+  return $cache{$nsid} = undef unless defined $appview_url && length $appview_url;
+
+  my $url = Mojo::URL->new($appview_url)->path('/xrpc/com.atproto.repo.getRecord')->query(
+    repo       => $authority_handle,
+    collection => 'com.atproto.lexicon.schema',
+    rkey       => $nsid,
+  );
+  my $tx = eval { $self->ua->get($url => { 'Accept-Encoding' => 'identity' }) };
+  return $cache{$nsid} = undef if $@ || !$tx;
+
+  my $res = $tx->result;
+  return $cache{$nsid} = undef unless $res && $res->is_success;
+  my $json = $res->json;
+  my $value = ref($json) eq 'HASH' ? $json->{value} : undef;
+  return $cache{$nsid} = undef unless _is_permission_set_lexicon($value, $nsid);
+  return $cache{$nsid} = $value->{defs}{main};
+}
+
+sub _is_permission_set_lexicon ($lexicon, $nsid) {
+  return 0 unless ref($lexicon) eq 'HASH';
+  return 0 unless ($lexicon->{id} // q()) eq $nsid;
+  return 0 unless ref($lexicon->{defs}) eq 'HASH';
+  return 0 unless ref($lexicon->{defs}{main}) eq 'HASH';
+  return 0 unless ($lexicon->{defs}{main}{type} // q()) eq 'permission-set';
+  return 1;
+}
+
+sub _repo_scope_from_permission ($authority, $permission) {
+  my @collections = _authority_scoped_nsids($authority, $permission->{collection});
+  return undef unless @collections;
+
+  my @actions = ref($permission->{action}) eq 'ARRAY'
+    ? @{ $permission->{action} }
+    : defined($permission->{action}) ? ($permission->{action}) : qw(create update delete);
+  my %valid_action = map { $_ => 1 } qw(create update delete);
+  return undef if grep { !$valid_action{$_} } @actions;
+
+  my %seen_action;
+  @actions = grep { !$seen_action{$_}++ } @actions;
+  my %default = map { $_ => 1 } qw(create update delete);
+  my $default_actions = @actions == 3 && !grep { !$default{$_} } @actions;
+
+  my $scope = @collections == 1
+    ? 'repo:' . $collections[0]
+    : do {
+        my $params = Mojo::Parameters->new;
+        $params->append(collection => $_) for @collections;
+        'repo?' . $params->to_string;
+      };
+  return $scope if $default_actions;
+
+  my $params = Mojo::Parameters->new;
+  if ($scope =~ /\?(.+)\z/) {
+    $params = Mojo::Parameters->new($1);
+    $scope =~ s/\?.+\z//;
+  }
+  $params->append(action => $_) for sort @actions;
+  return $scope . '?' . $params->to_string;
+}
+
+sub _rpc_scope_from_permission ($authority, $include, $permission) {
+  my @lxm = _authority_scoped_nsids($authority, $permission->{lxm});
+  return undef unless @lxm;
+
+  my $aud;
+  if ($permission->{inheritAud}) {
+    return undef if defined($permission->{aud}) && length($permission->{aud});
+    $aud = $include->{aud};
+  } else {
+    $aud = $permission->{aud};
+    return undef unless defined($aud) && length($aud) && $aud eq '*';
+  }
+  return undef unless defined($aud) && length($aud);
+  my $scope = @lxm == 1 ? 'rpc:' . $lxm[0] : 'rpc';
+  my $params = Mojo::Parameters->new;
+  if (@lxm > 1) {
+    $params->append(lxm => $_) for @lxm;
+  }
+  $params->append(aud => $aud);
+  return $scope . '?' . $params->to_string;
+}
+
+sub _authority_scoped_nsids ($authority, $value) {
+  my @values = ref($value) eq 'ARRAY'
+    ? @$value
+    : defined($value) ? ($value) : ();
+  return grep { _nsid_within_authority($authority, $_) } @values;
+}
+
+sub _include_authority ($nsid) {
+  return undef unless defined($nsid) && $nsid =~ /\./;
+  return $nsid =~ s/\.[^.]+\z//r;
+}
+
+sub _nsid_authority_handle ($nsid) {
+  my $authority = _include_authority($nsid);
+  return undef unless defined $authority && length $authority;
+  my @parts = split /\./, $authority;
+  return undef unless @parts >= 2;
+  return join '.', reverse @parts;
+}
+
+sub _nsid_within_authority ($authority, $value) {
+  return 0 unless defined($authority) && length($authority);
+  return 0 unless defined($value) && length($value);
+  return 0 if $value eq '*';
+  return 0 unless $value =~ /\A[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)+\z/;
+  return 0 unless length($value) > length($authority) + 1;
+  return $value =~ /\A\Q$authority\E\./ ? 1 : 0;
 }
 
 sub _jwt_secret ($self) {

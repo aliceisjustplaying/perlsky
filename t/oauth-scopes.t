@@ -17,6 +17,7 @@ BEGIN {
 }
 
 use ATProto::PDS::Auth::OAuthScope qw(
+  oauth_expand_scope
   oauth_normalize_scope
   oauth_scope_allows_permission
   oauth_scope_has_atproto
@@ -27,6 +28,32 @@ is(
   oauth_normalize_scope('atproto repo:app.bsky.feed.post?action=create&action=update transition:generic'),
   'atproto repo:app.bsky.feed.post?action=create&action=update transition:generic',
   'normalization preserves supported scope values',
+);
+is(
+  oauth_normalize_scope('atproto include:app.bsky.authManageNotifications?aud=did:web:api.bsky.app#bsky_appview'),
+  'atproto include:app.bsky.authManageNotifications?aud=did%3Aweb%3Aapi.bsky.app%23bsky_appview',
+  'normalization accepts include scopes and canonicalizes the audience encoding',
+);
+ok(
+  !defined oauth_normalize_scope('atproto include:app.bsky.authManageNotifications?aud=did:web:api.bsky.app'),
+  'include scopes require a full atproto audience',
+);
+
+is(
+  oauth_expand_scope(
+    'atproto include:app.bsky.authManageNotifications?aud=did:web:api.bsky.app#bsky_appview',
+    sub {
+      my ($include) = @_;
+      is($include->{nsid}, 'app.bsky.authManageNotifications', 'include resolver receives the lexicon nsid');
+      is($include->{aud}, 'did:web:api.bsky.app#bsky_appview', 'include resolver receives the decoded audience');
+      return [
+        'rpc:app.bsky.notification.getPreferences?aud=did:web:api.bsky.app#bsky_appview',
+        'rpc:app.bsky.notification.updateSeen?aud=did:web:api.bsky.app#bsky_appview',
+      ];
+    },
+  ),
+  'atproto rpc:app.bsky.notification.getPreferences?aud=did%3Aweb%3Aapi.bsky.app%23bsky_appview rpc:app.bsky.notification.updateSeen?aud=did%3Aweb%3Aapi.bsky.app%23bsky_appview',
+  'include scopes expand into concrete permission scopes',
 );
 
 ok(oauth_scope_has_atproto('atproto transition:generic'), 'atproto marker is detected');

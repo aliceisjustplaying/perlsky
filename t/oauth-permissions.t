@@ -66,6 +66,22 @@ my $client_metadata = {
       unless $client_id eq $client_metadata->{client_id};
     return $client_metadata;
   };
+  local *ATProto::PDS::Auth::OAuth::_load_permission_set = sub ($self, $c, $nsid) {
+    return {
+      permissions => [
+        {
+          type       => 'permission',
+          resource   => 'rpc',
+          inheritAud => JSON::PP::true,
+          lxm        => [
+            'app.bsky.notification.getPreferences',
+            'app.bsky.notification.updateSeen',
+          ],
+        },
+      ],
+    } if $nsid eq 'app.bsky.authManageNotifications';
+    return undef;
+  };
 
   my $t = Test::Mojo->new(ATProto::PDS->new(
     project_root => $root,
@@ -157,6 +173,24 @@ my $client_metadata = {
     $config->{base_url} . '/xrpc/app.bsky.actor.getPreferences',
   ))->status_is(200)
     ->json_is('/preferences' => []);
+
+  my $notifications_include = _oauth_tokens_for_scope(
+    $t,
+    $did,
+    'atproto include:app.bsky.authManageNotifications?aud=did:web:api.bsky.app#bsky_appview',
+  );
+  $t->get_ok('/xrpc/app.bsky.notification.getPreferences' => _oauth_headers(
+    $notifications_include->{access_token},
+    'GET',
+    $config->{base_url} . '/xrpc/app.bsky.notification.getPreferences',
+  ))->status_is(200)
+    ->json_has('/preferences');
+  $t->get_ok('/xrpc/app.bsky.actor.getPreferences' => _oauth_headers(
+    $notifications_include->{access_token},
+    'GET',
+    $config->{base_url} . '/xrpc/app.bsky.actor.getPreferences',
+  ))->status_is(403)
+    ->json_like('/message' => qr/rpc:app\.bsky\.actor\.getPreferences\?aud=did:web:api\.bsky\.app#bsky_appview/);
 
   $t->get_ok("/xrpc/com.atproto.server.getServiceAuth?aud=$chat_aud&lxm=chat.bsky.convo.getMessages" => _oauth_headers(
     $transition_generic->{access_token},
