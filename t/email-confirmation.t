@@ -46,6 +46,22 @@ $t->post_ok('/xrpc/com.atproto.server.createAccount' => json => {
 })->status_is(200);
 my $alice = $t->tx->res->json;
 
+$t->post_ok('/xrpc/com.atproto.server.createAppPassword' => {
+  Authorization => "Bearer $alice->{accessJwt}",
+} => json => {
+  name => 'email-helper',
+})->status_is(200)
+  ->json_like('/password' => qr/\w/);
+
+my $alice_app_password = $t->tx->res->json->{password};
+
+$t->post_ok('/xrpc/com.atproto.server.createSession' => json => {
+  identifier => 'alice.example.test',
+  password   => $alice_app_password,
+})->status_is(200);
+
+my $alice_app_session = $t->tx->res->json;
+
 ok(!$alice->{emailConfirmed}, 'new account email stays unconfirmed when testing auto-confirm is disabled');
 
 $t->post_ok('/xrpc/com.atproto.server.requestEmailUpdate' => {
@@ -57,11 +73,23 @@ $t->post_ok('/xrpc/com.atproto.server.requestEmailConfirmation' => {
   Authorization => "Bearer $alice->{accessJwt}",
 } => json => {})->status_is(200);
 
+$t->post_ok('/xrpc/com.atproto.server.requestEmailConfirmation' => {
+  Authorization => "Bearer $alice_app_session->{accessJwt}",
+} => json => {})->status_is(400)
+  ->json_is('/error' => 'InvalidToken')
+  ->json_is('/message' => 'Bad token scope');
+
 my $token = $app->store->latest_action_token(
   did     => $alice->{did},
   purpose => 'email_confirm',
 );
 ok($token, 'email confirmation token was created');
+
+$t->post_ok('/xrpc/com.atproto.server.requestEmailUpdate' => {
+  Authorization => "Bearer $alice_app_session->{accessJwt}",
+} => json => {})->status_is(400)
+  ->json_is('/error' => 'InvalidToken')
+  ->json_is('/message' => 'Bad token scope');
 
 $t->post_ok('/xrpc/com.atproto.server.confirmEmail' => json => {
   email => 'ALICE@example.test',
@@ -81,6 +109,15 @@ $t->post_ok('/xrpc/com.atproto.server.confirmEmail' => {
   token => $token->{token},
 })->status_is(400)
   ->json_is('/error' => 'InvalidEmail');
+
+$t->post_ok('/xrpc/com.atproto.server.confirmEmail' => {
+  Authorization => "Bearer $alice_app_session->{accessJwt}",
+} => json => {
+  email => 'ALICE@example.test',
+  token => $token->{token},
+})->status_is(400)
+  ->json_is('/error' => 'InvalidToken')
+  ->json_is('/message' => 'Bad token scope');
 
 ok(
   !defined $app->store->get_account_by_did($alice->{did})->{email_confirmed_at},

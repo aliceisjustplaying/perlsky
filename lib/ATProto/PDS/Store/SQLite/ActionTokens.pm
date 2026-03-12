@@ -9,6 +9,7 @@ use Exporter 'import';
 
 our @EXPORT_OK = qw(
   consume_action_token
+  consume_action_tokens_by_did
   create_action_token
   get_action_token
   latest_action_token
@@ -54,6 +55,23 @@ sub consume_action_token ($self, $token, %args) {
     $token,
   );
   return $self->get_action_token($token);
+}
+
+sub consume_action_tokens_by_did ($self, $did, %args) {
+  my @where = ('did = ?', 'consumed_at IS NULL');
+  my @bind = ($args{consumed_at} // time, $did);
+  if (my $purposes = $args{purposes}) {
+    if (ref($purposes) eq 'ARRAY' && @$purposes) {
+      push @where, 'purpose IN (' . join(', ', ('?') x @$purposes) . ')';
+      push @bind, @$purposes;
+    }
+  }
+  $self->dbh->do(
+    'UPDATE action_tokens SET consumed_at = ? WHERE ' . join(' AND ', @where),
+    undef,
+    @bind,
+  );
+  return;
 }
 
 sub latest_action_token ($self, %args) {

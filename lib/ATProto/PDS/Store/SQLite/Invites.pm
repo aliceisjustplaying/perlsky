@@ -11,6 +11,7 @@ our @EXPORT_OK = qw(
   create_invite_code
   disable_invite_codes
   get_invite_code
+  get_invited_by_for_account
   list_invite_code_uses
   list_invite_codes
   list_invite_codes_for_account
@@ -107,6 +108,25 @@ sub list_invite_codes_for_account ($self, $did) {
     { Slice => {} },
     $did,
   );
+}
+
+sub get_invited_by_for_account ($self, $did) {
+  my $rows = $self->dbh->selectall_arrayref(
+    q{
+      SELECT invite_codes.*, COUNT(all_uses.code) AS use_count_consumed
+      FROM invite_code_uses AS used
+      JOIN invite_codes ON invite_codes.code = used.code
+      LEFT JOIN invite_code_uses AS all_uses ON all_uses.code = invite_codes.code
+      WHERE used.used_by = ?
+      GROUP BY invite_codes.code, invite_codes.for_account, invite_codes.created_by,
+               invite_codes.use_count, invite_codes.disabled, invite_codes.note, invite_codes.created_at
+      ORDER BY used.used_at ASC, invite_codes.code ASC
+      LIMIT 1
+    },
+    { Slice => {} },
+    $did,
+  );
+  return $rows && @$rows ? $rows->[0] : undef;
 }
 
 sub record_invite_code_use ($self, %args) {

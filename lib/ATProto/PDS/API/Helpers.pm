@@ -10,16 +10,22 @@ use JSON::PP ();
 
 use ATProto::PDS::API::Util qw(iso8601 xrpc_error);
 use ATProto::PDS::Auth::Password qw(verify_password);
-use ATProto::PDS::Constants qw(TOKEN_AUD_ACCESS);
+use ATProto::PDS::Constants qw(
+  ACTION_TOKEN_EMAIL_CONFIRM
+  ACTION_TOKEN_EMAIL_UPDATE
+  TOKEN_AUD_ACCESS
+);
 use ATProto::PDS::Moderation qw(admin_authorization_status subject_key);
 
 our @EXPORT_OK = qw(
   account_view
+  admin_account_view
   find_account
   issue_account_action_token
   invite_code_view
   require_admin
   subject_key
+  update_account_email
   verify_account_password
   verify_login_password
 );
@@ -94,6 +100,29 @@ sub issue_account_action_token ($c, $account, %args) {
   return $token;
 }
 
+sub update_account_email ($c, $did, $email) {
+  eval {
+    $c->store->txn(sub ($dbh) {
+      $c->store->update_account(
+        $did,
+        email              => $email,
+        email_confirmed_at => undef,
+      );
+      $c->store->consume_action_tokens_by_did($did,
+        purposes    => [ACTION_TOKEN_EMAIL_CONFIRM, ACTION_TOKEN_EMAIL_UPDATE],
+        consumed_at => time,
+      );
+    });
+    1;
+  } or do {
+    my $err = $@;
+    xrpc_error(400, 'InvalidRequest', 'This email address is already in use, please use a different email.')
+      if !ref($err) && ($err // q()) =~ /UNIQUE constraint failed: accounts\.email/;
+    die $err;
+  };
+  return $c->store->get_account_by_did($did);
+}
+
 sub account_view ($account) {
   return {
     did             => $account->{did},
@@ -105,6 +134,28 @@ sub account_view ($account) {
     ($account->{invite_note} ? (inviteNote => $account->{invite_note}) : ()),
     (defined($account->{deactivated_at}) ? (deactivatedAt => iso8601($account->{deactivated_at})) : ()),
   };
+}
+
+sub admin_account_view ($store, $account, %args) {
+  my $view = {
+    did       => $account->{did},
+    handle    => $account->{handle},
+    indexedAt => iso8601($account->{created_at}),
+    ($account->{email} ? (email => $account->{email}) : ()),
+    (defined($account->{email_confirmed_at}) ? (emailConfirmedAt => iso8601($account->{email_confirmed_at})) : ()),
+    (defined($account->{deactivated_at}) ? (deactivatedAt => iso8601($account->{deactivated_at})) : ()),
+    ($account->{invite_note} ? (inviteNote => $account->{invite_note}) : ()),
+  };
+
+  unless ($args{entryway}) {
+    my $invited_by = $store->get_invited_by_for_account($account->{did});
+    my @invites = @{ $store->list_invite_codes_for_account($account->{did}) || [] };
+    $view->{invitesDisabled} = $account->{invites_disabled} ? JSON::PP::true : JSON::PP::false;
+    $view->{invitedBy} = invite_code_view($store, $invited_by) if $invited_by;
+    $view->{invites} = [ map { invite_code_view($store, $_) } @invites ];
+  }
+
+  return $view;
 }
 
 sub invite_code_view ($store, $row) {

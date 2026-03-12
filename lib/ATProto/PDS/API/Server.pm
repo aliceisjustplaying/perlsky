@@ -8,7 +8,7 @@ no warnings 'experimental::signatures';
 use Exporter 'import';
 use JSON::PP ();
 
-use ATProto::PDS::API::Helpers qw(find_account invite_code_view issue_account_action_token require_admin verify_account_password verify_login_password);
+use ATProto::PDS::API::Helpers qw(find_account invite_code_view issue_account_action_token require_admin update_account_email verify_account_password verify_login_password);
 use ATProto::PDS::API::Util qw(iso8601 xrpc_error);
 use ATProto::PDS::Auth::OAuth qw(
   oauth_scope_allows
@@ -290,7 +290,12 @@ sub register_server_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.server.listAppPasswords', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS, disallow_oauth => 1);
+    my (undef, $account) = require_auth(
+      $c,
+      audience       => TOKEN_AUD_ACCESS,
+      required_scope => 'full',
+      disallow_oauth => 1,
+    );
     my $rows = $c->store->list_app_passwords_by_did($account->{did});
     return {
       passwords => [
@@ -306,7 +311,12 @@ sub register_server_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.server.revokeAppPassword', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS, disallow_oauth => 1);
+    my (undef, $account) = require_auth(
+      $c,
+      audience       => TOKEN_AUD_ACCESS,
+      required_scope => 'full',
+      disallow_oauth => 1,
+    );
     my $body = $c->req->json || {};
     my $name = $body->{name} // q();
     xrpc_error(400, 'InvalidRequest', 'App password name is required') unless length $name;
@@ -424,7 +434,7 @@ sub register_server_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.server.requestEmailConfirmation', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth(
+    my ($claims, $account) = require_auth(
       $c,
       audience           => TOKEN_AUD_ACCESS,
       required_permission => {
@@ -433,6 +443,7 @@ sub register_server_handlers ($registry, $app) {
         action => 'manage',
       },
     );
+    _assert_full_non_oauth_access($claims);
     return {} unless $account->{email};
     issue_account_action_token(
       $c,
@@ -446,7 +457,7 @@ sub register_server_handlers ($registry, $app) {
 
   $registry->register('com.atproto.server.confirmEmail', sub ($c, $endpoint) {
     if (!$c->config_value('testing_allow_unauthenticated_email_confirm', 0)) {
-      require_auth(
+      my ($claims) = require_auth(
         $c,
         audience            => TOKEN_AUD_ACCESS,
         required_permission => {
@@ -455,6 +466,7 @@ sub register_server_handlers ($registry, $app) {
           action => 'manage',
         },
       );
+      _assert_full_non_oauth_access($claims);
     }
     my $body = $c->req->json || {};
     my $token = _require_action_token($c,
@@ -476,7 +488,7 @@ sub register_server_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.server.requestEmailUpdate', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth(
+    my ($claims, $account) = require_auth(
       $c,
       audience            => TOKEN_AUD_ACCESS,
       required_permission => {
@@ -485,6 +497,7 @@ sub register_server_handlers ($registry, $app) {
         action => 'manage',
       },
     );
+    _assert_full_non_oauth_access($claims);
     my $token_required = defined $account->{email_confirmed_at} ? 1 : 0;
     if ($token_required) {
       issue_account_action_token(
@@ -519,11 +532,7 @@ sub register_server_handlers ($registry, $app) {
         unless ($token->{did} // q()) eq $account->{did};
       $c->store->consume_action_token($token->{token});
     }
-    $c->store->update_account(
-      $account->{did},
-      email              => $body->{email},
-      email_confirmed_at => undef,
-    );
+    update_account_email($c, $account->{did}, $body->{email});
     return {};
   });
 
@@ -848,6 +857,13 @@ sub _scope_allows ($scope, $required_scope) {
   return $scope eq TOKEN_AUD_ACCESS || $scope eq 'app_password' || $scope eq 'app_password_privileged'
     if $required_scope eq 'standard';
   return 0;
+}
+
+sub _assert_full_non_oauth_access ($claims) {
+  return 1 if ($claims->{typ} // q()) eq 'oauth_access';
+  xrpc_error(400, 'InvalidToken', 'Bad token scope')
+    unless _scope_allows($claims->{scope}, 'full');
+  return 1;
 }
 
 sub _service_auth_method_requires_privileged_access ($lxm) {

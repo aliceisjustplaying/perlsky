@@ -123,7 +123,7 @@ sub register_misc_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.identity.submitPlcOperation', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth(
+    my ($claims, $account) = require_auth(
       $c,
       audience            => TOKEN_AUD_ACCESS,
       required_permission => {
@@ -131,6 +131,7 @@ sub register_misc_handlers ($registry, $app) {
         attr => '*',
       },
     );
+    _assert_full_non_oauth_access($claims);
     xrpc_error(400, 'InvalidRequest', 'PLC operations are only supported for did:plc accounts')
       unless is_plc_did($account->{did});
     my $body = $c->req->json || {};
@@ -157,7 +158,7 @@ sub register_misc_handlers ($registry, $app) {
   });
 
   $registry->register('com.atproto.identity.updateHandle', sub ($c, $endpoint) {
-    my (undef, $account) = require_auth(
+    my ($claims, $account) = require_auth(
       $c,
       audience            => TOKEN_AUD_ACCESS,
       required_permission => {
@@ -165,6 +166,7 @@ sub register_misc_handlers ($registry, $app) {
         attr => 'handle',
       },
     );
+    _assert_full_non_oauth_access($claims);
     my $body   = $c->req->json || {};
     my $domain = $c->config_value('service_handle_domain', 'localhost');
     my $handle = normalize_handle($body->{handle}, $domain);

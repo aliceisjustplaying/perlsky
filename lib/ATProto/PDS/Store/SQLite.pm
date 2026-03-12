@@ -24,6 +24,7 @@ use ATProto::PDS::Store::SQLite::Events qw(
 );
 use ATProto::PDS::Store::SQLite::ActionTokens qw(
   consume_action_token
+  consume_action_tokens_by_did
   create_action_token
   get_action_token
   latest_action_token
@@ -32,6 +33,7 @@ use ATProto::PDS::Store::SQLite::Invites qw(
   create_invite_code
   disable_invite_codes
   get_invite_code
+  get_invited_by_for_account
   list_invite_code_uses
   list_invite_codes
   list_invite_codes_for_account

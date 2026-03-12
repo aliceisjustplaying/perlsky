@@ -171,6 +171,14 @@ $t->post_ok('/xrpc/com.atproto.identity.updateHandle' => {
   handle => 'alice-renamed.test',
 })->status_is(200);
 
+$t->post_ok('/xrpc/com.atproto.identity.updateHandle' => {
+  Authorization => "Bearer $app_password_access",
+} => json => {
+  handle => 'alice-app-password.test',
+})->status_is(400)
+  ->json_is('/error', 'InvalidToken')
+  ->json_is('/message', 'Bad token scope');
+
 $t->post_ok('/xrpc/com.atproto.identity.requestPlcOperationSignature' => {
   Authorization => "Bearer $app_password_access",
 })->status_is(400)
@@ -228,6 +236,14 @@ is_deeply(
 );
 ok(length($signed->{sig} // q()) > 10, 'signed operation contains a signature');
 like($signed->{prev} // q(), qr/\Ab/, 'signed operation references the prior PLC op by CID');
+
+$t->post_ok('/xrpc/com.atproto.identity.submitPlcOperation' => {
+  Authorization => "Bearer $app_password_access",
+} => json => {
+  operation => $signed,
+})->status_is(400)
+  ->json_is('/error', 'InvalidToken')
+  ->json_is('/message', 'Bad token scope');
 
 $t->post_ok('/xrpc/com.atproto.identity.submitPlcOperation' => {
   Authorization => "Bearer $access",

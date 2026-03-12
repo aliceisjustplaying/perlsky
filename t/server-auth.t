@@ -160,6 +160,15 @@ $t->post_ok('/xrpc/com.atproto.server.createAppPassword' => { Authorization => "
 })->status_is(400)
   ->json_is('/error' => 'InvalidToken');
 
+$t->get_ok('/xrpc/com.atproto.server.listAppPasswords' => { Authorization => "Bearer $app_session->{accessJwt}" })
+  ->status_is(400)
+  ->json_is('/error' => 'InvalidToken');
+
+$t->post_ok('/xrpc/com.atproto.server.revokeAppPassword' => { Authorization => "Bearer $app_session->{accessJwt}" } => json => {
+  name => 'desktop',
+})->status_is(400)
+  ->json_is('/error' => 'InvalidToken');
+
 $t->get_ok('/xrpc/com.atproto.server.getAccountInviteCodes' => { Authorization => "Bearer $app_session->{accessJwt}" })
   ->status_is(400)
   ->json_is('/error' => 'InvalidToken');

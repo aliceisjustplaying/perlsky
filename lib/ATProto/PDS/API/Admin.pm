@@ -8,7 +8,7 @@ no warnings 'experimental::signatures';
 use Exporter 'import';
 use JSON::PP ();
 
-use ATProto::PDS::API::Helpers qw(account_view find_account invite_code_view require_admin subject_key);
+use ATProto::PDS::API::Helpers qw(account_view admin_account_view find_account invite_code_view require_admin subject_key update_account_email);
 use ATProto::PDS::API::Util qw(flatten_params xrpc_error);
 use ATProto::PDS::Auth::Password qw(hash_password);
 use ATProto::PDS::Constants qw(EVENT_TYPE_IDENTITY);
@@ -23,7 +23,7 @@ sub register_admin_handlers ($registry, $app) {
     require_admin($c);
     my $account = $c->store->get_account_by_did($c->param('did') // q());
     xrpc_error(404, 'AccountNotFound', 'Account was not found') unless $account;
-    return account_view($account);
+    return admin_account_view($c->store, $account, entryway => $c->config_value('entryway', 0));
   });
 
   $registry->register('com.atproto.admin.getAccountInfos', sub ($c, $endpoint) {
@@ -32,7 +32,7 @@ sub register_admin_handlers ($registry, $app) {
     my %accounts_by_did = map { $_->{did} => $_ } @{ $c->store->get_accounts_by_dids(\@dids) };
     return {
       infos => [
-        map { account_view($_) }
+        map { admin_account_view($c->store, $_, entryway => $c->config_value('entryway', 0)) }
         grep { defined }
         map { $accounts_by_did{$_} } @dids
       ],
@@ -180,11 +180,7 @@ sub register_admin_handlers ($registry, $app) {
     my $body = $c->req->json || {};
     my $account = find_account($c, $body->{account} // q());
     xrpc_error(404, 'AccountNotFound', 'Account was not found') unless $account;
-    $c->store->update_account(
-      $account->{did},
-      email              => $body->{email},
-      email_confirmed_at => undef,
-    );
+    update_account_email($c, $account->{did}, $body->{email});
     return {};
   });
 
