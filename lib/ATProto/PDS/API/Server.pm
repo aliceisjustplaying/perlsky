@@ -5,8 +5,11 @@ use warnings;
 use feature 'signatures';
 no warnings 'experimental::signatures';
 
+use Crypt::PK::ECC;
 use Exporter 'import';
 use JSON::PP ();
+use Mojo::URL;
+use Mojo::UserAgent;
 
 use ATProto::PDS::API::Helpers qw(find_account invite_code_view issue_account_action_token require_admin update_account_email verify_account_password verify_login_password);
 use ATProto::PDS::API::Util qw(iso8601 xrpc_error);
@@ -29,10 +32,11 @@ use ATProto::PDS::Constants qw(
   TOKEN_AUD_ACCESS
   TOKEN_AUD_REFRESH
 );
-use ATProto::PDS::Identity qw(account_did account_did_doc account_did_doc_valid_for_service normalize_handle service_did);
+use ATProto::PDS::Identity qw(account_did account_did_doc account_did_doc_valid_for_service did_to_path normalize_handle service_did);
 use ATProto::PDS::Moderation qw(assert_login_allowed is_repo_takedown);
 use ATProto::PDS::PLC qw(account_did_method create_plc_account is_plc_did refresh_plc_did_doc);
 use ATProto::PDS::Repo::CAR qw(read_car);
+use ATProto::PDS::Util::BaseX qw(base64url_decode decode_base58btc);
 
 our @EXPORT_OK = qw(register_server_handlers require_auth session_view);
 
@@ -83,6 +87,7 @@ sub register_server_handlers ($registry, $app) {
     my $account_id = random_hex(8);
     my $did_method = account_did_method($c->app->settings);
     my $did        = $body->{did};
+    my $migration  = defined($did) && length($did);
     my $reserved   = $body->{did} ? $c->store->get_reserved_signing_key($did) : undef;
     my $keys       = ($reserved && !defined $reserved->{claimed_at})
       ? {
@@ -93,6 +98,12 @@ sub register_server_handlers ($registry, $app) {
         }
       : $c->repo_manager->generate_signing_key;
     my $did_doc;
+    my $deactivated_at;
+    if ($migration) {
+      _assert_create_account_requester($c, $did, $endpoint->{id});
+      $did_doc = _resolve_migration_did_doc($c, $did) // { id => $did };
+      $deactivated_at = time;
+    }
     if (!$did) {
       if ($did_method eq 'did:plc') {
         my $plc = create_plc_account(
@@ -123,6 +134,7 @@ sub register_server_handlers ($registry, $app) {
       email_confirmed_at    => _initial_email_confirmed_at($c, $body->{email}),
       password_hash         => $password_record->{hash},
       password_salt         => $password_record->{salt},
+      deactivated_at        => $deactivated_at,
       did_doc               => $did_doc,
       private_key           => $keys->{private_key},
       public_key            => $keys->{public_key},
@@ -135,7 +147,11 @@ sub register_server_handlers ($registry, $app) {
       repo_commit_cid => $repo->{cid},
       repo_root_cid   => $repo->{root_cid},
       repo_rev        => $repo->{rev},
-      did_doc         => is_plc_did($account->{did}) ? refresh_plc_did_doc($c->app->settings, $account->{did}) : account_did_doc($c->app->settings, $account),
+      did_doc         => $migration
+        ? ($account->{did_doc} || $did_doc || { id => $account->{did} })
+        : is_plc_did($account->{did})
+          ? refresh_plc_did_doc($c->app->settings, $account->{did})
+          : account_did_doc($c->app->settings, $account),
     );
 
     $c->store->record_invite_code_use(
@@ -143,6 +159,7 @@ sub register_server_handlers ($registry, $app) {
       used_by => $account->{did},
     ) if $invite;
     $c->store->claim_reserved_signing_key($did) if $reserved && !defined $reserved->{claimed_at};
+    unless (defined $account->{deactivated_at}) {
     $c->append_event(
       did     => $account->{did},
       type    => EVENT_TYPE_IDENTITY,
@@ -181,6 +198,7 @@ sub register_server_handlers ($registry, $app) {
         did => $account->{did},
       },
     );
+    }
 
     return _issue_session($c, $account);
   });
@@ -780,6 +798,156 @@ sub _jwt_decode_error ($message) {
   return ('InvalidToken', 'Token is malformed')
     if $message =~ /three sections/i;
   return ('InvalidToken', 'Token is invalid');
+}
+
+sub _assert_create_account_requester ($c, $did, $lxm) {
+  my $message = "Missing auth to create account with did: $did";
+  my $requester = eval {
+    my (undef, $account) = require_auth($c, audience => TOKEN_AUD_ACCESS, required_scope => 'full');
+    return $account->{did};
+  };
+  return 1 if defined($requester) && _same_did($requester, $did);
+
+  $requester = _verify_migration_service_auth($c, $did, $lxm);
+  xrpc_error(401, 'AuthRequired', $message)
+    unless defined($requester) && _same_did($requester, $did);
+  return 1;
+}
+
+sub _verify_migration_service_auth ($c, $did, $lxm) {
+  my $auth = $c->req->headers->authorization // q();
+  return undef unless $auth =~ /\ABearer\s+(.+)\z/i;
+  my $token = $1;
+
+  my ($header_b64, $claims_b64, $sig_b64) = split /\./, $token, 3;
+  return undef unless defined $sig_b64;
+
+  my $header = eval { JSON::PP::decode_json(base64url_decode($header_b64)) };
+  return undef if $@ || ref($header) ne 'HASH';
+  return undef unless ($header->{alg} // q()) eq 'ES256K';
+
+  my $claims = eval { JSON::PP::decode_json(base64url_decode($claims_b64)) };
+  return undef if $@ || ref($claims) ne 'HASH';
+  return undef unless _same_did(($claims->{iss} // q()), $did);
+
+  my $now = time;
+  return undef if defined($claims->{nbf}) && $claims->{nbf} > $now;
+  return undef if defined($claims->{iat}) && $claims->{iat} > ($now + 60);
+  return undef if defined($claims->{exp}) && $claims->{exp} <= $now;
+  return undef unless _audience_matches_service($c, $claims->{aud});
+  return undef unless lc($claims->{lxm} // q()) eq lc($lxm // q());
+
+  my $did_doc = _resolve_migration_did_doc($c, $did) or return undef;
+  my $public_key = _did_doc_atproto_public_key($did_doc) or return undef;
+
+  my $pk = eval {
+    my $ecc = Crypt::PK::ECC->new;
+    $ecc->import_key_raw($public_key, 'secp256k1');
+    $ecc;
+  };
+  return undef if $@ || !$pk;
+
+  my $verified = eval {
+    $pk->verify_message_rfc7518(base64url_decode($sig_b64), "$header_b64.$claims_b64", 'SHA256');
+  };
+  return undef if $@ || !$verified;
+
+  return $claims->{iss};
+}
+
+sub _audience_matches_service ($c, $aud) {
+  my %acceptable = map { ($_ // q()) => 1 } grep { defined && length } (
+    service_did($c->app->settings),
+    $c->config_value('base_url'),
+  );
+  if (ref($aud) eq 'ARRAY') {
+    return scalar grep { $acceptable{$_ // q()} } @$aud;
+  }
+  return $acceptable{$aud // q()} ? 1 : 0;
+}
+
+sub _resolve_migration_did_doc ($c, $did) {
+  my $service_did = service_did($c->app->settings);
+  return {
+    id => $service_did,
+  } if _same_did($did, $service_did);
+
+  my $account = $c->store->get_account_by_did($did);
+  return $account->{did_doc} || account_did_doc($c->app->settings, $account)
+    if $account;
+
+  if (is_plc_did($did)) {
+    my $did_doc = eval { refresh_plc_did_doc($c->app->settings, $did) };
+    return $did_doc unless $@;
+    return undef;
+  }
+
+  return undef unless $did =~ /\Adid:web:/i;
+  my ($host, $path) = _web_did_origin_and_path($did);
+  return undef unless defined $host && defined $path;
+
+  state %ua_for_origin;
+  my $origin = lc($host);
+  my $ua = $ua_for_origin{$origin} //= do {
+    my $client = Mojo::UserAgent->new(max_redirects => 0);
+    $client->request_timeout(15);
+    $client->inactivity_timeout(15);
+    $client;
+  };
+
+  my $scheme = $host =~ /\A(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?\z/i ? 'http' : 'https';
+  my $url = Mojo::URL->new("$scheme://$host");
+  $url->path($path);
+
+  my $tx = eval { $ua->get($url) };
+  return undef if $@ || !$tx;
+  my $res = eval { $tx->result };
+  return undef if $@ || !$res || ($res->code // 0) != 200;
+  my $json = $res->json;
+  return undef unless ref($json) eq 'HASH' && _same_did(($json->{id} // q()), $did);
+  return $json;
+}
+
+sub _did_doc_atproto_public_key ($did_doc) {
+  return undef unless ref($did_doc) eq 'HASH';
+  my $did = $did_doc->{id} // q();
+  my ($verification_method) = grep {
+    ref($_) eq 'HASH'
+      && length($_->{publicKeyMultibase} // q())
+      && (
+        (($_->{id} // q()) eq "$did#atproto")
+        || (($_->{id} // q()) eq '#atproto')
+      )
+  } @{ $did_doc->{verificationMethod} || [] };
+  $verification_method //= (grep {
+    ref($_) eq 'HASH' && length($_->{publicKeyMultibase} // q())
+  } @{ $did_doc->{verificationMethod} || [] })[0];
+  return undef unless $verification_method;
+
+  my $multibase = $verification_method->{publicKeyMultibase} // q();
+  return undef unless $multibase =~ /\Az(.+)\z/;
+  return decode_base58btc($1);
+}
+
+sub _web_did_origin_and_path ($did) {
+  return unless defined $did;
+  my $copy = $did;
+  return unless $copy =~ s/\Adid:web://i;
+
+  my @parts = split /:/, $copy;
+  return unless @parts;
+  my $host = shift @parts;
+  $host =~ s/%3a/:/ig;
+  if (@parts && $parts[0] =~ /\A\d+\z/ && $host !~ /:/) {
+    $host .= ':' . shift @parts;
+  }
+  my $path = @parts ? '/' . join('/', map { s/%3A/:/igr } @parts) . '/did.json' : did_to_path($did);
+  return ($host, $path);
+}
+
+sub _same_did ($left, $right) {
+  return 0 unless defined($left) && defined($right);
+  return lc($left) eq lc($right) ? 1 : 0;
 }
 
 sub _issue_session ($c, $account, %opts) {

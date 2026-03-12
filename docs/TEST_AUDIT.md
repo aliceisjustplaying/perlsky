@@ -1,6 +1,6 @@
 # Test Audit Status
 
-As of 2026-03-12, the focused test-correctness and reference-audit pass is complete on rewritten history through `16c510b`.
+As of 2026-03-12, the focused test-correctness and reference-audit pass is complete on rewritten history through `9a3afbb`.
 
 That does not mean every test has been manually revalidated against every other PDS implementation line by line. It means:
 
@@ -13,7 +13,7 @@ That does not mean every test has been manually revalidated against every other 
 The current baseline for saying "the audited suite is green" is:
 
 - `prove -lr t`
-  - last full green result in the realigned Meridian worktree: `Files=44, Tests=2525`
+  - last full green result in the realigned Meridian worktree before the current migration-auth follow-up: `Files=48, Tests=2758`
 - `prove -lv t/server-auth.t`
 - `perl -c script/differential-validate`
 - `PERLSKY_RUN_REFERENCE_DIFF=1 prove -lv t/reference-differential.t`
@@ -54,6 +54,7 @@ When the official runtime and upstream comments disagree, the runtime behavior w
 - Remote `did:web` DID docs, conservative `resolveIdentity` handle validation, and external handle adoption all need explicit coverage because small resolver-policy drifts turn into visible interop bugs quickly.
 - `com.atproto.repo.getRecord` must honor `cid` when present, and `putRecord` / `deleteRecord` must actually enforce `swapRecord`; those negative edges are now covered directly.
 - `com.atproto.server.requestPasswordReset` and `com.atproto.server.deleteAccount` now follow the reference form-token flow, with focused regression coverage for missing-account and bearerless deletion semantics.
+- `com.atproto.server.createAccount` with an explicit `did` must behave like an authenticated migration flow: require auth from that same DID, keep the existing DID document, and start the new account deactivated until activation catches the DID document up to the new PDS.
 - `com.atproto.server.checkAccountStatus` must validate the stored DID document against the PDS service endpoint and signing key, and `com.atproto.repo.describeRepo` must derive `didDoc` / `handleIsCorrect` from that document instead of hardcoding success.
 - `com.atproto.sync.getBlob` should ship the same download-hardening headers as the reference PDS (`X-Content-Type-Options`, `Content-Disposition`, `Content-Security-Policy`).
 
@@ -82,6 +83,7 @@ The current suite splits into three broad buckets:
 | `t/api-util.t` | audited local regression | helper semantics, cursor validation, service-auth helper behavior |
 | `t/app-routes.t` | local correctness/infrastructure | app route exposure and startup wiring smoke |
 | `t/app.t` | audited local regression | application bootstrap plus malformed-handle rejection and startup hardening |
+| `t/account-migration-auth.t` | audited local regression | explicit-`did` account creation requires authenticated migration service-auth and preserves remote DID-doc state while starting deactivated |
 | `t/auth-jwt.t` | local correctness/infrastructure | JWT signing and validation behavior |
 | `t/browser-smoke.t` | local correctness/infrastructure | optional browser-driven end-to-end wrapper |
 | `t/catalog.t` | local correctness/infrastructure | lexicon/catalog exposure smoke |
