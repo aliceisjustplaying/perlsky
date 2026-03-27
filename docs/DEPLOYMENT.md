@@ -167,9 +167,21 @@ A minimal Caddy site looks like:
 ```caddy
 pds.example.com {
   encode gzip
-  reverse_proxy 127.0.0.1:7755
+  reverse_proxy 127.0.0.1:7755 {
+    transport http {
+      keepalive off
+    }
+  }
 }
 ```
+
+If you run `perlsky` behind Caddy using the single-process `script/perlsky daemon`
+listener shown above, disable Caddy's upstream keepalive reuse for that backend.
+The Mojolicious daemon closes idle backend sockets after a short timeout, and Caddy
+can otherwise reuse a stale upstream connection and surface intermittent `502`
+responses on requests such as `com.atproto.server.createSession`. If you use a
+different proxy, make sure its upstream keepalive behavior and idle timeouts are
+compatible with the backend, or disable upstream reuse there as well.
 
 For public user handles you also need a matching wildcard-capable site or on-demand TLS path for `*.pds.example.com`.
 
@@ -184,7 +196,11 @@ One practical Caddy pattern is on-demand TLS restricted to domains that `perlsky
 
 pds.example.com {
   encode gzip
-  reverse_proxy 127.0.0.1:7755
+  reverse_proxy 127.0.0.1:7755 {
+    transport http {
+      keepalive off
+    }
+  }
 }
 
 https:// {
@@ -195,7 +211,11 @@ https:// {
   @perlsky_handles host *.pds.example.com
   handle @perlsky_handles {
     encode gzip
-    reverse_proxy 127.0.0.1:7755
+    reverse_proxy 127.0.0.1:7755 {
+      transport http {
+        keepalive off
+      }
+    }
   }
 }
 ```
@@ -207,12 +227,20 @@ For Caddy that means putting the blob path on a plain proxy path before any `enc
 ```caddy
 @blob_download path /xrpc/com.atproto.sync.getBlob
 handle @blob_download {
-  reverse_proxy 127.0.0.1:7755
+  reverse_proxy 127.0.0.1:7755 {
+    transport http {
+      keepalive off
+    }
+  }
 }
 
 handle {
   encode gzip
-  reverse_proxy 127.0.0.1:7755
+  reverse_proxy 127.0.0.1:7755 {
+    transport http {
+      keepalive off
+    }
+  }
 }
 ```
 
