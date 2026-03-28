@@ -25,5 +25,6 @@ MYMETA.yml
 .tools/
 .vendor/
 .cache/
+*.locket/
 tools/reference
 tools/browser-automation/node_modules/
